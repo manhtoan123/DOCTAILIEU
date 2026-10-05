@@ -666,3 +666,8 @@ C2 chưa bảo đảm cross-tab settings hoặc reload đột ngột khi chưa c
 - Giới hạn còn lại; ID/phạm vi/test cụ thể của 1–3 việc tiếp.
 
 
+
+### 05/10/2026 14:01 ICT — xác nhận baseline
+Root tạo commit local a41f29a, 94 files, tên: Baseline local reader with validated A3 and explicit release gaps.
+Git status sạch ngay sau commit; chưa push/deploy. CI YAML có trong baseline nhưng chưa chạy remote.
+HANDOFF thêm hash để phiên sau review bằng Git; commit tài liệu tiếp theo chỉ ghi bằng chứng này.

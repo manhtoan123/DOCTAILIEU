@@ -1,6 +1,8 @@
 # Private Novel Reader — trạng thái hiện hành
 Cập nhật: 05/10/2026 (Asia/Saigon). Đây là điểm bắt đầu; không suy ra trạng thái từ checkbox lịch sử.
 
+Git baseline local: `a41f29a`. Đã loại secrets/generated/dữ liệu thật; chưa push hoặc deploy.
+
 ## Đọc theo thứ tự
 1. AGENTS.md → tài liệu này → WEB-READER-IMPLEMENTATION-PLAN.md.
 2. private-novel/docs/DECISIONS.md và docs/STATUS.md.
