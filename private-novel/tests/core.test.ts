@@ -1,0 +1,57 @@
+import {describe,it,expect} from 'vitest';
+import {StreamingSplitter,type Part} from '../src/splitter';
+import {LanguageEngine,boundedSuggestions} from '../src/language';
+import {parseEntry} from '../src/domain';
+import {sentences,tiktokVoices} from '../src/tts';
+function split(text:string,chunk=7,max=64000){const parts:Part[]=[];const s=new StreamingSplitter('Nguồn',p=>parts.push(p),undefined,max);for(let i=0;i<text.length;i+=chunk)s.feed(text.slice(i,i+chunk));s.feed('',true);return parts;}
+describe('TXT integrity',()=>{
+  it('preserves preface, short chapters, headings, trailing whitespace and CRLF across chunk boundaries',()=>{const raw='\uFEFFLời mở đầu\r\n\r\nChương 1: Một\r\nA\r\nChương 2: Hai\r\nB  \r';const p=split(raw,1);expect(p.map(p=>p.text).join('')).toBe(raw.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n'));expect(p).toHaveLength(3);expect(p[2].title).toBe('Chương 2: Hai');});
+  it('handles Chinese numeral headings',()=>{const p=split('序章\n短\n第一百章 开始\n原文。\n');expect(p).toHaveLength(2);expect(p[1].title).toBe('第一百章 开始');});
+  it('never discards data in huge lines or chapters without headings',()=>{const raw='文🙂'.repeat(50000)+'\n末尾';const p=split(raw,1024,64000);expect(p.map(p=>p.text).join('')).toBe(raw);expect(p.every(x=>x.text.length<=64000)).toBe(true);expect(p.length).toBeGreaterThan(1);});
+  it('does not treat a volume heading alone as a chapter',()=>{const p=split('第一卷 天地\n内容\n第一章 开始\n正文');expect(p).toHaveLength(2);expect(p[0].text).toContain('第一卷');});
+});
+describe('Convert and names',()=>{
+  it('chooses a longer Names2 phrase before a shorter Names prefix',()=>{
+    const e=new LanguageEngine();e.add('names','李=Lý');e.add('names2','李明=Minh Names2');
+    expect(e.convert('李明',[])[0]).toMatchObject({source:'李明',targetText:'Minh Names2',type:'names2'});
+  });
+  it('chooses a longer Names phrase before a shorter Names2 prefix',()=>{
+    const e=new LanguageEngine();e.add('names','李明=Minh Names');e.add('names2','李=Lý Names2');
+    expect(e.convert('李明',[])[0]).toMatchObject({source:'李明',targetText:'Minh Names',type:'names'});
+  });
+  it('gives Names2 priority over Names for the same key and book names priority over both',()=>{
+    const e=new LanguageEngine();e.add('names','李明=Names');e.add('names2','李明=Names2');
+    expect(e.convert('李明',[])[0]).toMatchObject({targetText:'Names2',type:'names2'});
+    expect(e.convert('李明',[{key:'李明',value:'Book'}])[0]).toMatchObject({targetText:'Book',type:'name'});
+    expect(e.convert('李明',[])[0]).toMatchObject({targetText:'Names2',type:'names2'});
+    expect(e.convert('李明',[{key:'李明',value:'Other book'}])[0].targetText).toBe('Other book');
+  });
+  it('does not let a shorter book name mask a longer name from either dictionary',()=>{
+    for(const kind of ['names','names2'] as const){
+      const e=new LanguageEngine();e.add(kind,'李明=Long name');
+      expect(e.convert('李明',[{key:'李',value:'Short book'}])[0]).toMatchObject({source:'李明',targetText:'Long name',type:kind});
+    }
+  });
+  it('protects name matches from longer VietPhrase matches',()=>{
+    const e=new LanguageEngine();e.add('names','李=Lý');e.add('vp','李明来到=long VP');
+    expect(e.convert('李明来到',[])[0]).toMatchObject({source:'李',targetText:'Lý',type:'names'});
+  });
+  it('keeps exact UTF-16 source ranges and emoji across longest name selection',()=>{
+    const e=new LanguageEngine();e.add('names','李=Lý');e.add('names2','李明=Minh');
+    const source='🙂李明\n🙂';const tokens=e.convert(source,[]);
+    expect(tokens.map(t=>({start:t.sourceStart,end:t.sourceEnd,source:t.source,type:t.type}))).toEqual([
+      {start:0,end:2,source:'🙂',type:'original'},
+      {start:2,end:4,source:'李明',type:'names2'},
+      {start:4,end:5,source:'\n',type:'original'},
+      {start:5,end:7,source:'🙂',type:'original'}
+    ]);
+    expect(tokens.map(t=>source.slice(t.sourceStart,t.sourceEnd)).join('')).toBe(source);
+    expect(tokens.map(t=>t.targetText).join('')).toBe('🙂Minh\n🙂');
+  });
+  it('preserves equals and multiple meanings',()=>{expect(parseEntry('\uFEFF名称=nghĩa=a/b;c')).toEqual(['名称','nghĩa=a/b;c']);expect(parseEntry('#note')).toBeNull();});
+  it('uses longest name and per-book override without polluting other books',()=>{const e=new LanguageEngine();e.add('names','李=Lý');e.add('names','李明=Lý Minh');e.add('vp','来到=đến');e.add('hanviet','山=sơn');expect(e.convert('李明来到山',[]).map(x=>x.targetText).join('')).toBe('Lý Minh đến sơn');expect(e.convert('李明',[{key:'李明',value:'Minh'}])[0].targetText).toBe('Minh');expect(e.convert('李明',[])[0].targetText).toBe('Lý Minh');});
+  it('source ranges cover original text exactly including surrogate pairs',()=>{const e=new LanguageEngine();e.add('vp','你好=xin chào');const source='你好🙂\n未';const tokens=e.convert(source,[]);expect(tokens.map(t=>source.slice(t.sourceStart,t.sourceEnd)).join('')).toBe(source);expect(tokens.at(-1)?.sourceEnd).toBe(source.length);});
+  it('bounds combinatorial expansion while generating, including seven large sets',()=>{const sets=Array.from({length:7},()=>Array.from({length:1000},(_,i)=>String(i)));expect(boundedSuggestions(sets)).toHaveLength(100);});
+  it('supports bounded single-capture rules, while preserving protected Names',()=>{const e=new LanguageEngine();e.add('vp','他=hắn');e.add('rules','不比{0}强=không mạnh bằng {0}');expect(e.convert('不比他强',[]).map(t=>t.targetText).join('')).toBe('không mạnh bằng hắn');expect(e.convert('不比他强',[{key:'他',value:'Hắn'}]).some(t=>t.type==='rule')).toBe(false);});
+});
+describe('TTS segmentation',()=>{it('returns bounded sentences with original text offsets',()=>{const text='Một câu.\n'+ 'abc '.repeat(200)+'!';const list=sentences(text);expect(list.every(s=>s.text.length<=240)).toBe(true);for(const s of list)expect(text.slice(s.start,s.end)).toBe(s.text);});it('exposes only Vietnamese TikTok voices',()=>{expect(tiktokVoices).toHaveLength(3);expect(tiktokVoices.every(v=>v.serverId.startsWith('tiktok:'))).toBe(true);});});

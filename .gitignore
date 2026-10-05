@@ -1,0 +1,14 @@
+# Local/private/generated content
+**/node_modules/
+**/dist/
+**/.wrangler/
+**/.dev.vars*
+**/.env*
+!**/.env.example
+**/test-results/
+**/playwright-report/
+**/*.tsbuildinfo
+**/local-data/
+**/backups/
+STV-NOVEL-INVENTORY.json
+

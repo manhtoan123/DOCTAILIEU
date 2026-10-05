@@ -1,0 +1,422 @@
+import 'fake-indexeddb/auto';
+import Dexie from 'dexie';
+import {beforeEach,describe,it,expect,vi} from 'vitest';
+import {db,deleteBook} from '../src/db';
+import {prepareBackup,stageBackup,restoreBackup,restoreInfo,hashBlob} from '../src/backup';
+import {hasUsableSourceData,usableSourceHashes} from '../src/source-data';
+import {acceptSourceHash,importFiles} from '../src/importer';
+
+beforeEach(async()=>{await db.delete();await db.open();});
+
+async function seed(){
+  await db.books.add({id:'book',title:'Truyện thử',author:'',status:'ready',createdAt:1,updatedAt:1,chapterCount:23,charCount:23*4});
+  await db.chapters.bulkAdd(Array.from({length:23},(_,order)=>({id:`c${order}`,bookId:'book',order,title:`Chương ${order}`,text:'文🙂\n',revision:1,sourceId:''})));
+  await db.names.add({id:'name',bookId:'book',key:'文',value:'văn'});
+  await db.progress.put({bookId:'book',chapterId:'c4',paragraph:0,offset:0,revision:1,updatedAt:1});
+}
+
+describe('backup/restore boundaries',()=>{
+  it('round-trips multiple packets, names and progress without replacing an existing book',async()=>{
+    await seed();
+    const plan=await prepareBackup('book');
+    expect(plan.total).toBe(2);
+    expect(plan.mode).toBe('compact');
+    const files=[];
+    for(let i=0;i<plan.total;i++){const p=await plan.part(i);files.push(new File([p.blob],p.name));}
+    const ids=await stageBackup(files,()=>{});
+    expect((await restoreInfo(ids[0])).complete).toBe(true);
+    const id=await restoreBackup(ids[0]);
+    expect(id).not.toBe('book');
+    expect(await db.books.count()).toBe(2);
+    expect(await db.chapters.where('bookId').equals(id).count()).toBe(23);
+    expect((await db.names.where('bookId').equals(id).first())?.value).toBe('văn');
+    const progress=await db.progress.get(id);
+    expect((await db.chapters.get(progress!.chapterId))?.order).toBe(4);
+  });
+
+  it('rejects corrupted data before staging',async()=>{
+    await seed();
+    const p=await(await prepareBackup('book')).part(0);
+    const packet=JSON.parse(await p.blob.text());
+    packet.body+=' ';
+    await expect(stageBackup([new File([JSON.stringify(packet)],'bad.json')],()=>{})).rejects.toThrow('Checksum');
+    expect(await db.restorePackets.count()).toBe(0);
+  });
+
+  it('does not commit a partial restore and can resume after receiving the missing packet',async()=>{
+    await seed();
+    const plan=await prepareBackup('book');
+    const p=await plan.part(1);
+    const[id]=await stageBackup([new File([p.blob],p.name)],()=>{});
+    expect((await restoreInfo(id)).complete).toBe(false);
+    await expect(restoreBackup(id)).rejects.toThrow('Chưa đủ');
+    const first=await plan.part(0);
+    await stageBackup([new File([first.blob],first.name)],()=>{});
+    expect((await restoreInfo(id)).complete).toBe(true);
+  });
+
+  it('cascade-deletes local records for one book only',async()=>{
+    await seed();
+    await deleteBook('book');
+    expect(await db.chapters.count()).toBe(0);
+    expect(await db.names.count()).toBe(0);
+    expect(await db.progress.count()).toBe(0);
+  });
+
+  it('round-trips portable backup with source files, dictionaries and reconnects chapters',async()=>{
+    await seed();
+    await db.sources.add({
+      id:'src-1',bookId:'book',name:'source.txt',relativePath:'source.txt',encoding:'utf-8',sha256:await hashBlob(new Blob(['Nội dung gốc'])),bytes:new Blob(['Nội dung gốc']).size,
+      blob:new Blob(['Nội dung gốc'])
+    });
+    await db.chapters.update('c0',{sourceId:'src-1'});
+    await db.dictionaries.put({
+      kind:'vp',name:'Vietphrase.txt',sha256:'sha-vp-456',blob:new Blob(['文=văn\n']),updatedAt:1
+    });
+
+    const plan=await prepareBackup('book',{mode:'portable'});
+    expect(plan.mode).toBe('portable');
+    expect(plan.manifest.hasSourceData).toBe(true);
+    expect(plan.manifest.hasDictionaryData).toBe(true);
+
+    const files=[];
+    for(let i=0;i<plan.total;i++){const p=await plan.part(i);files.push(new File([p.blob],p.name));}
+
+    // Reset database to simulate a clean second device
+    await db.delete();
+    await db.open();
+
+    const ids=await stageBackup(files,()=>{});
+    const info=await restoreInfo(ids[0]);
+    expect(info.mode).toBe('portable');
+    expect(info.complete).toBe(true);
+    expect(info.conflicts.bookExists).toBe(false);
+    expect(info.conflicts.missingDictionaries.length).toBe(0);
+    expect(info.conflicts.providedDictionaries.length).toBe(1);
+    expect(info.sources.length).toBe(1);
+    expect(info.sources[0].hasData).toBe(true);
+
+    const restoredId=await restoreBackup(ids[0]);
+    expect(restoredId).toBeDefined();
+
+    // Check book title preserved (no conflict on clean device)
+    const book=await db.books.get(restoredId);
+    expect(book?.title).toBe('Truyện thử');
+    expect(book?.status).toBe('ready');
+
+    // Check source file restored
+    const restoredSources=await db.sources.where('bookId').equals(restoredId).toArray();
+    expect(restoredSources.length).toBe(1);
+    expect(restoredSources[0].name).toBe('source.txt');
+    expect(await restoredSources[0].blob.text()).toBe('Nội dung gốc');
+
+    // Check chapter source link
+    const ch0=await db.chapters.where('bookId').equals(restoredId).filter(c=>c.order===0).first();
+    expect(ch0?.sourceId).toBe(restoredSources[0].id);
+
+    // Check dictionary restored
+    const dict=await db.dictionaries.get('vp');
+    expect(dict?.name).toBe('Vietphrase.txt');
+    expect(await dict?.blob.text()).toBe('文=văn\n');
+
+    // Check restoreJobs
+    const jobs=await db.restoreJobs.where('backupId').equals(ids[0]).toArray();
+    expect(jobs.length).toBe(1);
+    expect(jobs[0].status).toBe('committed');
+  });
+
+  it('detects book conflicts and supports atomic replace',async()=>{
+    await seed();
+    const plan=await prepareBackup('book',{mode:'compact'});
+    const files=[];
+    for(let i=0;i<plan.total;i++){const p=await plan.part(i);files.push(new File([p.blob],p.name));}
+    const ids=await stageBackup(files,()=>{});
+
+    const info=await restoreInfo(ids[0]);
+    expect(info.conflicts.bookExists).toBe(true);
+    expect(info.conflicts.existingBookTitle).toBe('Truyện thử');
+
+    // Restore with 'replace'
+    const newBookId=await restoreBackup(ids[0],{onConflict:'replace'});
+    expect(newBookId).toBeDefined();
+
+    // Only 1 book remains (the old one was replaced)
+    expect(await db.books.count()).toBe(1);
+    const book=await db.books.get(newBookId);
+    expect(book?.title).toBe('Truyện thử');
+    expect(await db.chapters.where('bookId').equals(newBookId).count()).toBe(23);
+  });
+
+  it('restores legacy version 1 packets gracefully with default compact mode',async()=>{
+    const body={
+      book:{id:'legacy-orig',title:'Truyện cổ',author:'Tác giả xưa',status:'ready',chapterCount:1,charCount:8,createdAt:100,updatedAt:100},
+      chapters:[{id:'c-leg-1',bookId:'legacy-orig',order:0,title:'Chương 1',text:'Cổ tích\n',revision:1,sourceId:''}],
+      names:[],
+      progress:undefined,
+      dictionaryRequirements:[]
+    };
+    const bodyStr=JSON.stringify(body);
+    const checksum=await hashBlob(new Blob([bodyStr]));
+    const v1Packet={
+      format:'thu-phong',
+      version:1,
+      backupId:'11111111-2222-3333-4444-555555555555',
+      index:0,
+      total:1,
+      checksum,
+      body:bodyStr
+    };
+
+    const[id]=await stageBackup([new File([JSON.stringify(v1Packet)],'v1.json')],()=>{});
+    const info=await restoreInfo(id);
+    expect(info.mode).toBe('compact');
+    expect(info.complete).toBe(true);
+    expect(info.title).toBe('Truyện cổ');
+
+    const bookId=await restoreBackup(id);
+    const restored=await db.books.get(bookId);
+    expect(restored?.title).toBe('Truyện cổ');
+    expect(await db.chapters.where('bookId').equals(bookId).count()).toBe(1);
+  });
+
+  it('rolls back staging records and logs failure when chapter content is corrupted on restore',async()=>{
+    await seed();
+    const plan=await prepareBackup('book');
+    const p0=await plan.part(0);
+    const p1=await plan.part(1);
+
+    // Corrupt part 1's chapter content (make title > 1000 chars)
+    const packet1=JSON.parse(await p1.blob.text());
+    const body1=JSON.parse(packet1.body);
+    body1.chapters[0].title='A'.repeat(1500); // Invalid title length (> 1000)
+    packet1.body=JSON.stringify(body1);
+    packet1.checksum=await hashBlob(new Blob([packet1.body]));
+
+    const[id]=await stageBackup([
+      new File([p0.blob],p0.name),
+      new File([JSON.stringify(packet1)],p1.name)
+    ],()=>{});
+
+    await expect(restoreBackup(id)).rejects.toThrow('Nội dung chương không hợp lệ.');
+
+    // Staging book should be cleaned up
+    expect(await db.books.where('status').equals('staging').count()).toBe(0);
+
+    // RestoreJob should be recorded as failed
+    const failedJobs=await db.restoreJobs.where('status').equals('failed').toArray();
+    expect(failedJobs.length).toBe(1);
+    expect(failedJobs[0].error).toContain('Nội dung chương không hợp lệ.');
+  });
+
+  it('protects existing local dictionary from being silently overwritten during portable restore',async()=>{
+    await seed();
+    // Prepare portable backup that includes a dictionary
+    await db.dictionaries.put({kind:'vp',name:'FromBackup.txt',sha256:'sha-backup-dict',blob:new Blob(['文=từ_sao_lưu\n']),updatedAt:1});
+    const plan=await prepareBackup('book',{mode:'portable'});
+    const files=[];
+    for(let i=0;i<plan.total;i++){const p=await plan.part(i);files.push(new File([p.blob],p.name));}
+
+    // Now user has their own local custom dictionary with different content
+    await db.dictionaries.put({kind:'vp',name:'MyLocalDict.txt',sha256:'sha-local-dict',blob:new Blob(['文=từ_của_tôi\n']),updatedAt:2});
+
+    const ids=await stageBackup(files,()=>{});
+    await restoreBackup(ids[0]);
+
+    // The user's local dictionary should NOT be overwritten!
+    const currentDict=await db.dictionaries.get('vp');
+    expect(currentDict?.name).toBe('MyLocalDict.txt');
+    expect(await currentDict?.blob.text()).toBe('文=từ_của_tôi\n');
+  });
+});
+
+async function seedSource(id='source',text='Original source bytes'){
+  const blob=new Blob([text]);
+  const source={id,bookId:'book',name:`${id}.txt`,relativePath:`${id}.txt`,encoding:'utf-8',sha256:await hashBlob(blob),bytes:blob.size,blob};
+  await db.sources.add(source);
+  await db.chapters.update('c0',{sourceId:id});
+  return source;
+}
+
+async function stagePlan(mode:'compact'|'portable'='compact',includeSources?:boolean){
+  const plan=await prepareBackup('book',{mode,includeSources});
+  const files:File[]=[];
+  for(let i=0;i<plan.total;i++){const part=await plan.part(i);files.push(new File([part.blob],part.name));}
+  const [id]=await stageBackup(files,()=>{});
+  return id;
+}
+
+describe('A2 source data preservation regressions',()=>{
+  it.each([['compact',undefined],['portable',false]] as const)('preserves actual bytes on %s replace when source data is omitted',async(mode,includeSources)=>{
+    await seed();const original=await seedSource();
+    const backupId=await stagePlan(mode,includeSources);
+    const restored=await restoreBackup(backupId,{onConflict:'replace'});
+    const source=await db.sources.where('bookId').equals(restored).first();
+    expect(await source!.blob.text()).toBe(await original.blob.text());
+    expect(source!.blob.size).toBe(original.bytes);
+    expect(hasUsableSourceData(source!)).toBe(true);
+    expect((await db.chapters.where('bookId').equals(restored).filter(c=>c.order===0).first())!.sourceId).toBe(source!.id);
+    expect(await db.sources.where('bookId').equals('book').count()).toBe(0);
+  });
+
+  it('carries unmatched original sources, including new bytes written after backup creation',async()=>{
+    await seed();await seedSource();const backupId=await stagePlan();
+    const unmatched=await seedSource('extra','Extra original data');
+    const restored=await restoreBackup(backupId,{onConflict:'replace'});
+    expect(await db.sources.where('bookId').equals(restored).count()).toBe(2);
+    const carried=await db.sources.get(unmatched.id);
+    expect(carried!.bookId).toBe(restored);
+    expect(await carried!.blob.text()).toBe('Extra original data');
+  });
+
+  it('carries actual original bytes even when legacy metadata has an invalid size or missing flag',async()=>{
+    await seed();const invalidSize=await seedSource('invalid-size','User file one');
+    const invalidFlag=await seedSource('invalid-flag','User file two');
+    await db.sources.update(invalidSize.id,{bytes:999});
+    await db.sources.update(invalidFlag.id,{dataStatus:'missing'});
+    const backupId=await stagePlan();const restored=await restoreBackup(backupId,{onConflict:'replace'});
+    for(const expected of [invalidSize,invalidFlag]){
+      const carried=await db.sources.get(expected.id);
+      expect(carried!.bookId).toBe(restored);
+      expect(await carried!.blob.text()).toBe(await expected.blob.text());
+      expect(hasUsableSourceData(carried!)).toBe(false);
+    }
+  });
+
+  it('reads original bytes at commit rather than copying stale bytes during staging',async()=>{
+    await seed();const original=await seedSource();const backupId=await stagePlan();
+    const latest=new Blob(['Updated original data']);expect(latest.size).toBe(original.bytes);
+    const realPut=db.progress.put.bind(db.progress);
+    const put=vi.spyOn(db.progress,'put').mockImplementation((...args:Parameters<typeof db.progress.put>)=>Dexie.Promise.resolve().then(async()=>{
+      await db.sources.update(original.id,{blob:latest});
+      return realPut(...args);
+    }));
+    let restored:string;
+    try{restored=await restoreBackup(backupId,{onConflict:'replace'});}
+    finally{put.mockRestore();}
+    const source=await db.sources.where('bookId').equals(restored!).first();
+    expect(await source!.blob.text()).toBe('Updated original data');
+  });
+
+  it.each(['old','staging','source','chapter'])('fails closed when %s records disappear before the final transaction',async(missing)=>{
+    await seed();const original=await seedSource();const backupId=await stagePlan();
+    const realPut=db.progress.put.bind(db.progress);
+    const put=vi.spyOn(db.progress,'put').mockImplementation((...args:Parameters<typeof db.progress.put>)=>Dexie.Promise.resolve().then(async()=>{
+      const stagedBookId=args[0].bookId!;
+      if(missing==='old')await deleteBook('book');
+      if(missing==='staging')await deleteBook(stagedBookId);
+      if(missing==='source')await db.sources.where('bookId').equals(stagedBookId).delete();
+      if(missing==='chapter')await db.chapters.where('bookId').equals(stagedBookId).delete();
+      return realPut(...args);
+    }));
+    try{await expect(restoreBackup(backupId,{onConflict:'replace'})).rejects.toThrow();}
+    finally{put.mockRestore();}
+    expect(await db.books.where('status').equals('staging').count()).toBe(0);
+    expect((await db.restoreJobs.toArray())[0].status).toBe('failed');
+    if(missing!=='old'){
+      expect((await db.books.get('book'))!.status).toBe('ready');
+      expect(await(await db.sources.get(original.id))!.blob.text()).toBe('Original source bytes');
+    }
+  });
+
+  it('marks clean compact restore as missing, permits real reimport, and never exports placeholders as portable data',async()=>{
+    await seed();const original=await seedSource();const backupId=await stagePlan();
+    await deleteBook('book');
+    const restored=await restoreBackup(backupId);
+    const source=await db.sources.where('bookId').equals(restored).first();
+    expect(source!.dataStatus).toBe('missing');
+    expect(source!.blob.size).toBe(0);
+    expect(acceptSourceHash(usableSourceHashes(await db.sources.toArray()),original.sha256)).toBe(true);
+    expect((await restoreInfo(backupId)).conflicts.sameHash).toBe(false);
+    const portable=await prepareBackup(restored,{mode:'portable'});
+    expect(portable.manifest.hasSourceData).toBe(false);
+    const packet=JSON.parse(await(await portable.part(0)).blob.text());
+    const metadata=JSON.parse(packet.body).sources[0];
+    expect(metadata.dataStatus).toBe('missing');expect(metadata.dataBase64).toBeUndefined();
+
+    // Exercise importFiles itself: a metadata-only row must not suppress its worker result.
+    class ImportWorker {
+      onmessage:((event:{data:unknown})=>void)|null=null;
+      onerror:unknown=null;
+      terminate(){}
+      postMessage(message:{type:string}){
+        if(message.type==='start')queueMicrotask(()=>this.onmessage?.({data:{type:'batch',parts:[{title:'Imported',text:'a'}]}}));
+        if(message.type==='ack')queueMicrotask(()=>this.onmessage?.({data:{type:'done',sha256:original.sha256,chars:1}}));
+      }
+    }
+    vi.stubGlobal('Worker',ImportWorker);
+    try{
+      const imported=await importFiles([new File([original.blob],'source.txt')],'Reimport','utf-8','',true,()=>{},new AbortController().signal);
+      expect(await db.sources.where('bookId').equals(imported.id).count()).toBe(1);
+    }finally{vi.unstubAllGlobals();}
+  });
+
+  it('ignores legacy empty placeholders while accepting legacy real and empty files',async()=>{
+    await seed();const original=await seedSource();
+    await db.sources.update(original.id,{blob:new Blob([])});
+    const backupId=await stagePlan();
+    expect((await restoreInfo(backupId)).conflicts.sameHash).toBe(false);
+    expect(usableSourceHashes(await db.sources.toArray()).has(original.sha256)).toBe(false);
+    const portable=await prepareBackup('book',{mode:'portable'});
+    expect(portable.manifest.hasSourceData).toBe(false);
+    expect(hasUsableSourceData({...original,blob:new Blob([]),bytes:0})).toBe(true);
+    expect(hasUsableSourceData(original)).toBe(true);
+    expect(hasUsableSourceData({...original,dataStatus:'missing'})).toBe(false);
+  });
+
+  it('rolls back carried bytes and old deletion when activation fails in the final transaction',async()=>{
+    await seed();const original=await seedSource();const backupId=await stagePlan();
+    const realUpdate=db.books.update.bind(db.books);
+    const update=vi.spyOn(db.books,'update').mockImplementation((...args:Parameters<typeof db.books.update>)=>{
+      if((args[1] as {status?:string}).status==='ready')throw new Error('Injected activation failure');
+      return realUpdate(...args);
+    });
+    try{await expect(restoreBackup(backupId,{onConflict:'replace'})).rejects.toThrow('Injected activation failure');}
+    finally{update.mockRestore();}
+    expect((await db.books.get('book'))!.status).toBe('ready');
+    expect(await(await db.sources.get(original.id))!.blob.text()).toBe('Original source bytes');
+    expect(await db.sources.count()).toBe(1);
+    expect(await db.books.where('status').equals('staging').count()).toBe(0);
+    expect((await db.restoreJobs.toArray())[0].status).toBe('failed');
+  });
+
+  it('preserves all original files during legacy v1 replace without sources metadata',async()=>{
+    await seed();const original=await seedSource();const extra=await seedSource('extra','Extra bytes');
+    const plan=await prepareBackup('book');const files:File[]=[];
+    for(let i=0;i<plan.total;i++){
+      const part=await plan.part(i);const packet=JSON.parse(await part.blob.text());
+      const body=JSON.parse(packet.body);delete body.sources;delete body.manifest;delete body.mode;
+      packet.version=1;delete packet.mode;packet.body=JSON.stringify(body);packet.checksum=await hashBlob(new Blob([packet.body]));
+      files.push(new File([JSON.stringify(packet)],part.name));
+    }
+    const [id]=await stageBackup(files,()=>{});const restored=await restoreBackup(id,{onConflict:'replace'});
+    for(const expected of [original,extra]){
+      const source=await db.sources.get(expected.id);
+      expect(source!.bookId).toBe(restored);expect(await source!.blob.text()).toBe(await expected.blob.text());
+    }
+  });
+
+  it('preserves originals when a legacy portable packet encodes an empty placeholder as supplied data',async()=>{
+    await seed();const original=await seedSource();const plan=await prepareBackup('book',{mode:'portable'});
+    const files:File[]=[];
+    for(let i=0;i<plan.total;i++){
+      const part=await plan.part(i);const packet=JSON.parse(await part.blob.text());const body=JSON.parse(packet.body);
+      if(i===0){body.sources[0].dataBase64='';delete body.sources[0].dataStatus;}
+      packet.body=JSON.stringify(body);packet.checksum=await hashBlob(new Blob([packet.body]));
+      files.push(new File([JSON.stringify(packet)],part.name));
+    }
+    const [id]=await stageBackup(files,()=>{});
+    expect((await restoreInfo(id)).sources[0].hasData).toBe(false);
+    const restored=await restoreBackup(id,{onConflict:'replace'});
+    const source=await db.sources.where('bookId').equals(restored).first();
+    expect(await source!.blob.text()).toBe(await original.blob.text());
+    expect(hasUsableSourceData(source!)).toBe(true);
+  });
+
+  it('respects existing explicit targetTitle semantics and leaves originals intact',async()=>{
+    await seed();const original=await seedSource();const backupId=await stagePlan();
+    const restored=await restoreBackup(backupId,{onConflict:'replace',targetTitle:'Chosen title'});
+    expect((await db.books.get(restored))!.title).toBe('Chosen title');
+    expect(await db.books.get('book')).toBeDefined();
+    expect(await(await db.sources.get(original.id))!.blob.text()).toBe('Original source bytes');
+  });
+});

@@ -1,0 +1,37 @@
+{
+  "name": "private-novel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "pages:dev": "wrangler pages dev dist",
+    "auth:hash": "node scripts/hash-password.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "dexie": "^4.2.0",
+    "dexie-react-hooks": "^4.2.0",
+    "hash-wasm": "^4.12.0",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/node": "^22.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0",
+    "fake-indexeddb": "^6.2.0",
+    "@playwright/test": "^1.55.0",
+    "wrangler": "^4.0.0",
+    "@cloudflare/workers-types": "latest"
+  }
+}

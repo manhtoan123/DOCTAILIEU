@@ -1,0 +1,330 @@
+import {createSHA256} from 'hash-wasm';
+import {db,deleteBook} from './db';
+import {
+  uid,
+  type Book,
+  type Chapter,
+  type NameEntry,
+  type Progress,
+  type DictKind,
+  type BackupMode,
+  type BackupOptions,
+  type RestoreOptions,
+  type RestoreConflict,
+  type RestoreJob,
+  type BackupSourceData,
+  type BackupDictionaryData,
+  type BackupManifest
+} from './domain';
+
+export async function hashBlob(blob:Blob){
+  const hash=await createSHA256();hash.init();
+  for(let at=0;at<blob.size;at+=262144)hash.update(new Uint8Array(await blob.slice(at,at+262144).arrayBuffer()));
+  return hash.digest('hex');
+}
+
+export function download(blob:Blob,name:string){
+  const href=URL.createObjectURL(blob);const a=document.createElement('a');
+  a.href=href;a.download=name;a.click();
+  setTimeout(()=>URL.revokeObjectURL(href),60000);
+}
+
+export async function blobToBase64(blob:Blob):Promise<string>{
+  if(typeof Buffer!=='undefined'){
+    const buf=Buffer.from(await blob.arrayBuffer());
+    return buf.toString('base64');
+  }
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onloadend=()=>{
+      const res=reader.result as string;
+      resolve(res.split(',')[1]||'');
+    };
+    reader.onerror=reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+export function base64ToBlob(base64:string,type='application/octet-stream'):Blob{
+  if(typeof Buffer!=='undefined'){
+    const buf=Buffer.from(base64,'base64');
+    return new Blob([buf],{type});
+  }
+  const bin=atob(base64);
+  const bytes=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+  return new Blob([bytes],{type});
+}
+
+interface Body {
+  manifest?: BackupManifest;
+  mode?: BackupMode;
+  book?: Book;
+  names?: NameEntry[];
+  progress?: Progress;
+  dictionaryRequirements?: {kind:DictKind;name:string;sha256:string}[];
+  sources?: BackupSourceData[];
+  dictionaries?: BackupDictionaryData[];
+  chapters: Chapter[];
+}
+
+interface Packet {
+  format:'thu-phong';
+  version:1|2;
+  backupId:string;
+  index:number;
+  total:number;
+  checksum:string;
+  body:string;
+  mode?:BackupMode;
+}
+
+export async function prepareBackup(bookId:string,options?:BackupOptions){
+  const mode:BackupMode=options?.mode||'compact';
+  const book=await db.books.get(bookId);
+  if(!book||book.status!=='ready')throw new Error('Truyện chưa sẵn sàng.');
+  const refs:{id:string;revision:number;order:number}[]=[];
+  await db.chapters.where('bookId').equals(bookId).each(c=>{refs.push({id:c.id,revision:c.revision,order:c.order});});
+  refs.sort((a,b)=>a.order-b.order);
+  const names=await db.names.where('bookId').equals(bookId).toArray();
+  const progress=await db.progress.get(bookId);
+  const dictionaryRequirements=(await db.dictionaries.toArray()).map(d=>({kind:d.kind,name:d.name,sha256:d.sha256}));
+  const sourceRows=await db.sources.where('bookId').equals(bookId).toArray();
+  const backupId=uid();
+  const total=Math.max(1,Math.ceil(refs.length/20));
+
+  let sourcesPayload:BackupSourceData[]|undefined;
+  let dictionariesPayload:BackupDictionaryData[]|undefined;
+
+  if(mode==='portable'){
+    if(options?.includeSources!==false&&sourceRows.length>0){
+      sourcesPayload=await Promise.all(sourceRows.map(async s=>({
+        id:s.id,name:s.name,relativePath:s.relativePath,encoding:s.encoding,sha256:s.sha256,bytes:s.bytes,
+        dataBase64:await blobToBase64(s.blob)
+      })));
+    }else{
+      sourcesPayload=sourceRows.map(s=>({id:s.id,name:s.name,relativePath:s.relativePath,encoding:s.encoding,sha256:s.sha256,bytes:s.bytes}));
+    }
+    if(options?.includeDictionaries!==false){
+      const allDicts=await db.dictionaries.toArray();
+      dictionariesPayload=await Promise.all(allDicts.map(async d=>({
+        kind:d.kind,name:d.name,sha256:d.sha256,dataBase64:await blobToBase64(d.blob)
+      })));
+    }
+  }else{
+    sourcesPayload=sourceRows.map(s=>({id:s.id,name:s.name,relativePath:s.relativePath,encoding:s.encoding,sha256:s.sha256,bytes:s.bytes}));
+  }
+
+  const manifest:BackupManifest={
+    format:'thu-phong',version:2,appVersion:'0.1.0',backupId,mode,createdAt:Date.now(),
+    book:{title:book.title,author:book.author,chapterCount:book.chapterCount,charCount:book.charCount,originalId:book.id},
+    dictionaryRequirements,
+    sources:(sourcesPayload||[]).map(s=>({id:s.id,name:s.name,encoding:s.encoding,sha256:s.sha256,bytes:s.bytes})),
+    hasSourceData:Boolean(sourcesPayload?.some(s=>Boolean(s.dataBase64))),
+    hasDictionaryData:Boolean(dictionariesPayload?.some(d=>Boolean(d.dataBase64)))
+  };
+
+  return {
+    title:book.title,total,mode,manifest,
+    async part(index:number){
+      if(index<0||index>=total)throw new Error('Phần sao lưu không hợp lệ.');
+      const slice=refs.slice(index*20,(index+1)*20);
+      const rows=await db.chapters.bulkGet(slice.map(c=>c.id));
+      if(rows.some((r,i)=>!r||r.revision!==slice[i].revision))throw new Error('Truyện đã thay đổi khi sao lưu. Hãy tạo bản sao lưu mới.');
+      const body:Body={
+        chapters:rows as Chapter[],
+        ...(index===0?{manifest,mode,book,names,progress,dictionaryRequirements,sources:sourcesPayload,dictionaries:dictionariesPayload}:{})
+      };
+      const json=JSON.stringify(body);
+      const checksum=await hashBlob(new Blob([json]));
+      const packet:Packet={format:'thu-phong',version:2,backupId,index,total,checksum,body:json,mode};
+      return {blob:new Blob([JSON.stringify(packet)],{type:'application/json'}),name:`thu-phong-${backupId}-${String(index+1).padStart(4,'0')}-of-${total}.tpbackup.json`};
+    }
+  };
+}
+
+function parsePacket(text:string):Packet{
+  const p=JSON.parse(text);
+  if(p.format!=='thu-phong'||(p.version!==1&&p.version!==2)||typeof p.backupId!=='string'||!/^[a-f0-9-]{36}$/i.test(p.backupId)||!Number.isInteger(p.index)||!Number.isInteger(p.total)||p.total<1||p.total>10000||p.index<0||p.index>=p.total||typeof p.body!=='string'||typeof p.checksum!=='string')throw new Error('Định dạng sao lưu không hợp lệ.');
+  return p;
+}
+
+export async function stageBackup(files:File[],notify:(s:string)=>void){
+  const ids=new Set<string>();
+  for(let i=0;i<files.length;i++) {
+    const f=files[i];if(f.size>16*1024*1024)throw new Error('Mỗi phần sao lưu phải nhỏ hơn 16 MB.');
+    const p=parsePacket(await f.text());
+    if(await hashBlob(new Blob([p.body]))!==p.checksum)throw new Error(`Checksum sai: ${f.name}`);
+    const old=await db.restorePackets.get(`${p.backupId}:${p.index}`);
+    if(old&&old.checksum!==p.checksum)throw new Error('Hai phần cùng số nhưng khác nội dung.');
+    await db.restorePackets.put({id:`${p.backupId}:${p.index}`,backupId:p.backupId,index:p.index,total:p.total,body:p.body,checksum:p.checksum});
+    ids.add(p.backupId);notify(`Đã kiểm tra ${i+1}/${files.length} phần`);
+  }
+  return [...ids];
+}
+
+export async function restoreInfo(id:string){
+  const rows:{index:number;total:number}[]=[];
+  let body:Body|undefined;
+  await db.restorePackets.where('backupId').equals(id).each(r=>{
+    rows.push({index:r.index,total:r.total});
+    if(r.index===0)body=JSON.parse(r.body) as Body;
+  });
+  rows.sort((a,b)=>a.index-b.index);
+  if(!rows.length)throw new Error('Không tìm thấy bản sao lưu.');
+  const total=rows[0].total;
+  if(rows.some(r=>r.total!==total))throw new Error('Các phần có manifest không nhất quán.');
+  const complete=rows.length===total&&rows.every((r,i)=>r.index===i);
+  const mode:BackupMode=body?.mode||body?.manifest?.mode||'compact';
+  const reqs=(body?.dictionaryRequirements||[]) as {kind:DictKind;name:string;sha256:string}[];
+
+  const currentDicts=await db.dictionaries.toArray();
+  const availableDictionaries:{kind:DictKind;name:string;sha256:string}[]=[];
+  const providedDictionaries:{kind:DictKind;name:string;sha256:string}[]=[];
+  const missingDictionaries:{kind:DictKind;name:string;sha256:string}[]=[];
+
+  for(const req of reqs){
+    const installed=currentDicts.find(d=>d.kind===req.kind&&d.sha256===req.sha256);
+    if(installed){
+      availableDictionaries.push(req);
+    }else{
+      const provided=body?.dictionaries?.find(d=>d.kind===req.kind&&Boolean(d.dataBase64));
+      if(provided)providedDictionaries.push(req);
+      else missingDictionaries.push(req);
+    }
+  }
+
+  const bookTitle=body?.book?.title||'Đang chờ phần đầu';
+  const currentBooks=await db.books.toArray();
+  const existingBook=currentBooks.find(b=>b.title===bookTitle);
+  const currentSources=await db.sources.toArray();
+  const backupSources=body?.sources||[];
+  const sameHash=backupSources.some(bs=>currentSources.some(cs=>cs.sha256===bs.sha256));
+
+  const conflicts:RestoreConflict={
+    bookExists:Boolean(existingBook),
+    existingBookId:existingBook?.id,
+    existingBookTitle:existingBook?.title,
+    sameHash,
+    missingDictionaries,
+    providedDictionaries,
+    availableDictionaries,
+    hasSourceFiles:backupSources.length>0
+  };
+
+  const sources=backupSources.map(s=>({
+    id:s.id,name:s.name,sha256:s.sha256,bytes:s.bytes,hasData:Boolean(s.dataBase64)
+  }));
+
+  return {
+    id,title:bookTitle,received:rows.length,total,complete,mode,requirements:reqs,conflicts,sources,manifest:body?.manifest
+  };
+}
+
+export async function restoreBackup(id:string,options?:RestoreOptions){
+  const info=await restoreInfo(id);
+  if(!info.complete)throw new Error(`Chưa đủ phần: ${info.received}/${info.total}. Hãy chọn thêm các file còn thiếu.`);
+
+  const jobId=uid();
+  const bookId=uid();
+  const restoreJob:RestoreJob={
+    jobId,backupId:id,bookId,mode:info.mode,status:'staging',conflicts:info.conflicts,updatedAt:Date.now()
+  };
+  await db.restoreJobs.add(restoreJob);
+
+  let count=0;let chars=0;
+  const chapterIds=new Map<string,string>();
+  const sourceIds=new Map<string,string>();
+  let progress:Progress|undefined;let expected:Book|undefined;
+  let replaceBookId:string|undefined;
+
+  try {
+    for(let i=0;i<info.total;i++) {
+      const row=await db.restorePackets.get(`${id}:${i}`);
+      if(!row||await hashBlob(new Blob([row.body]))!==row.checksum)throw new Error('Sao lưu không còn nguyên vẹn.');
+      const body=JSON.parse(row.body) as Body;
+      if(i===0){
+        const b=body.book;
+        if(!b||typeof b.title!=='string'||b.title.length>1000||!Number.isInteger(b.chapterCount)||!Number.isFinite(b.charCount))throw new Error('Metadata truyện không hợp lệ.');
+        expected=b;
+
+        let targetTitle=options?.targetTitle?.trim();
+        if(!targetTitle){
+          if(info.conflicts.bookExists){
+            if(options?.onConflict==='replace'){
+              targetTitle=b.title;
+              replaceBookId=info.conflicts.existingBookId;
+            }else{
+              targetTitle=`${b.title} (khôi phục)`;
+            }
+          }else{
+            targetTitle=b.title;
+          }
+        }
+
+        await db.books.add({...b,id:bookId,title:targetTitle,status:'staging',createdAt:Date.now(),updatedAt:Date.now()});
+
+        if(body.sources&&body.sources.length>0){
+          for(const s of body.sources){
+            const newSourceId=uid();
+            sourceIds.set(s.id,newSourceId);
+            const blob=s.dataBase64?base64ToBlob(s.dataBase64):new Blob([]);
+            await db.sources.add({
+              id:newSourceId,bookId,name:s.name,relativePath:s.relativePath||s.name,encoding:s.encoding,sha256:s.sha256,bytes:s.bytes,blob
+            });
+          }
+        }
+
+        if(options?.restoreDictionaries!==false&&body.dictionaries&&body.dictionaries.length>0){
+          for(const d of body.dictionaries){
+            if(d.dataBase64){
+              const existingDict=await db.dictionaries.get(d.kind);
+              // Bảo vệ dữ liệu người dùng: chỉ tự nạp nếu chưa có từ điển cho loại này
+              if(!existingDict){
+                const blob=base64ToBlob(d.dataBase64,'text/plain');
+                await db.dictionaries.put({kind:d.kind,name:d.name,sha256:d.sha256,blob,updatedAt:Date.now()});
+              }
+            }
+          }
+        }
+
+        progress=body.progress;
+        const names=body.names||[];
+        if(!Array.isArray(names)||names.length>100000||names.some(n=>typeof n.key!=='string'||typeof n.value!=='string'||n.key.length>256||n.value.length>4096))throw new Error('Name List không hợp lệ.');
+        await db.names.bulkAdd(names.map(n=>({...n,id:uid(),bookId})));
+      }
+
+      if(!Array.isArray(body.chapters)||body.chapters.length>20)throw new Error('Danh sách chương không hợp lệ.');
+      const chapters:Chapter[]=body.chapters.map(c=>{
+        if(typeof c.id!=='string'||chapterIds.has(c.id)||typeof c.text!=='string'||c.text.length>128000||typeof c.title!=='string'||c.title.length>1000)throw new Error('Nội dung chương không hợp lệ.');
+        const next=uid();chapterIds.set(c.id,next);chars+=c.text.length;
+        const mappedSourceId=(c.sourceId&&sourceIds.get(c.sourceId))||'';
+        return {...c,id:next,bookId,sourceId:mappedSourceId,order:count++,revision:1};
+      });
+      await db.chapters.bulkAdd(chapters);
+    }
+    if(!expected||count!==expected.chapterCount||chars!==expected.charCount)throw new Error('Thiếu chương hoặc tổng ký tự không khớp manifest.');
+    if(progress&&chapterIds.has(progress.chapterId)&&Number.isInteger(progress.paragraph)&&progress.paragraph>=0){
+      await db.progress.put({...progress,bookId,chapterId:chapterIds.get(progress.chapterId)!,revision:1,updatedAt:Date.now()});
+    }
+
+    // Cam kết nguyên tử (atomic commit): xóa bản cũ (nếu replace) và kích hoạt bản mới trong cùng transaction
+    await db.transaction('rw',[db.books,db.chapters,db.sources,db.progress,db.names,db.importJobs,db.restoreJobs],async()=>{
+      if(replaceBookId){
+        await db.chapters.where('bookId').equals(replaceBookId).delete();
+        await db.sources.where('bookId').equals(replaceBookId).delete();
+        await db.names.where('bookId').equals(replaceBookId).delete();
+        await db.progress.delete(replaceBookId);
+        await db.importJobs.where('bookId').equals(replaceBookId).delete();
+        await db.books.delete(replaceBookId);
+      }
+      await db.books.update(bookId,{status:'ready',chapterCount:count,charCount:chars,updatedAt:Date.now()});
+      await db.restoreJobs.update(jobId,{status:'committed',updatedAt:Date.now()});
+    });
+    return bookId;
+  }catch(err){
+    await deleteBook(bookId);
+    await db.restoreJobs.update(jobId,{status:'failed',error:err instanceof Error?err.message:String(err),updatedAt:Date.now()});
+    throw err;
+  }
+}
