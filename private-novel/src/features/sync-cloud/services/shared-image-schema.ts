@@ -1,0 +1,2 @@
+export interface SharedImage {sha256:string;bytes:number;mime:'image/png'|'image/jpeg'|'image/webp'}
+export function validateSharedImage(value:unknown):SharedImage{const v=value as SharedImage;if(!v||typeof v!=='object'||!/^[a-f0-9]{64}$/.test(v.sha256)||!Number.isSafeInteger(v.bytes)||v.bytes<1||v.bytes>8*1048576||!['image/png','image/jpeg','image/webp'].includes(v.mime))throw Error('Ảnh không hợp lệ; chọn PNG, JPEG hoặc WebP dưới 8 MiB.');return {sha256:v.sha256,bytes:v.bytes,mime:v.mime};}

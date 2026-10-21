@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto';
 import {beforeEach,describe,expect,it} from 'vitest';
-import {db,commitImport} from '../src/db';
-import {acceptSourceHash,throwIfImportAborted,importFiles} from '../src/importer';
-import {assertStorageBudget} from '../src/storage';
+import {db,commitImport} from '../src/core/db';
+import {acceptSourceHash,throwIfImportAborted,importFiles} from '../src/features/import-export/services/importer';
+import {assertStorageBudget} from '../src/core/storage';
 
 beforeEach(async()=>{await db.delete();await db.open();});
 

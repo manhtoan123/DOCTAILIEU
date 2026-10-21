@@ -1,0 +1,13 @@
+import {chromium,expect} from '@playwright/test';
+import {readFileSync,writeFileSync} from 'node:fs';
+const origin='https://thu-phong-private.pages.dev';
+const expected=readFileSync('dist/index.html','utf8').trim();expect((await (await fetch(origin)).text()).trim()).toBe(expected);
+const browser=await chromium.launch({channel:'msedge'}),context=await browser.newContext({viewport:{width:668,height:708},serviceWorkers:'block'});
+const calls=[];let childFailures=0,firstCalls=0;
+const complete=(model,result)=>({model,result,finishReason:'STOP',inputTokens:1,outputTokens:2});
+await context.route(`${origin}/api/**`,r=>{const path=new URL(r.request().url()).pathname;if(path==='/api/ai/translate'){const input=r.request().postDataJSON();calls.push({model:input.model,characters:input.text.length,first:input.text.includes('甲'),second:input.text.includes('乙')});if(input.model!=='gemini-2.5-flash')return r.fulfill({status:503,json:{error:'ai_upstream_error'}});if(input.text.length>600)return r.fulfill({status:504,json:{error:'ai_timeout'}});const second=input.text.includes('乙');if(second&&++childFailures<=2)return r.fulfill({status:503,json:{error:'ai_upstream_error'}});if(!second)firstCalls++;return r.fulfill({json:complete(input.model,second?'PHẦN HAI HOÀN CHỈNH':'PHẦN MỘT HOÀN CHỈNH')});}return r.fulfill({json:path==='/api/dictionaries'?{dictionaries:[]}:{books:[],deleted:[],public:true,prompts:[],items:[],revision:0,version:1}});});
+try{
+ const page=await context.newPage();await page.goto(origin,{waitUntil:'domcontentloaded'});await page.getByRole('button',{name:'＋ Thêm truyện TXT'}).click();await page.getByLabel('Tên truyện').fill('Synthetic AI recovery release');await page.getByLabel('Hoặc dán nội dung').fill('Chương 1: Thử\n'+'甲'.repeat(400)+'乙'.repeat(400));await page.getByRole('button',{name:'Nhập truyện'}).click();await page.getByRole('button',{name:'Dịch AI',exact:true}).click();
+ await expect.poll(()=>childFailures).toBeGreaterThan(0);await expect(page.locator('.prose')).not.toContainText('PHẦN MỘT HOÀN CHỈNH');await expect(page.locator('.prose')).toContainText('PHẦN MỘT HOÀN CHỈNH\nPHẦN HAI HOÀN CHỈNH');expect(calls).toHaveLength(8);expect(firstCalls).toBe(1);expect(childFailures).toBe(3);await expect(page.locator('.reader-convert-status')).toHaveCount(0);
+ const report={status:'passed',origin,bundle:expected.match(/src="([^"]+\.js)"/)[1],browser:browser.version(),viewport:{width:668,height:708},realAi:false,syntheticOnly:true,cloudWrites:false,calls,firstCalls,childAttempts:childFailures,completeOnly:true};writeFileSync('.dsh-tmp/ai-reader-fix/production-smoke.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+}finally{await context.close();await browser.close();}

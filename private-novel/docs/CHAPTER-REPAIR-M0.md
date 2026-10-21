@@ -1,0 +1,11 @@
+# CHAPTER-REPAIR-M0 — phương án dữ liệu cũ
+
+Trạng thái: đã có audit và preview, **chưa triển khai capability thay layout**. Người dùng đã cho phép tự đọc mục lục các truyện để chia lại. Không cần hỏi lại danh sách truyện; không coi snapshot revision1 là bằng chứng chưa có chỉnh sửa ở thiết bị khác.
+
+1. Lấy layout/source local đang dùng, trạng thái shared-chapter hiện hành và baseline cloud; chốt SHA nội dung, IDs/order/revisions và các chỉnh sửa. Giữ file gốc/bytes/SHA, Name, prompt, bìa, Album và metadata ngoài layout. EPUB không tham gia.
+2. Tạo kế hoạch gồm range trước/sau, tiêu đề, mapping IDs và những mốc chưa chắc chắn. Giữ cấu hình chia đã chọn; chỉ tự áp dụng mốc đã đối chiếu. SSS có preview 400 episode 1–400 + phần ghi chú. Các count khác chỉ là candidate, đặc biệt Luân hồi không thể re-split mù bằng mặc định.
+3. Dùng manifest layout version mới có checksum và CAS; range phải phủ toàn văn đúng một lần, không gap/overlap/reorder. Blob/manifest phải được kiểm trước khi publish, bị chặn nếu book đã xóa. Cơ chế shared-chapter hiện tại chỉ put/edit/split một root, **không đủ để gộp và loại bỏ nhiều root**; không ép dữ liệu vào cơ chế này.
+4. Áp dụng một transaction local sau khi xác nhận lại toàn bộ nguồn/revision/edits. Giữ ID cho range không đổi; range đổi cần revision/cache identity mới. Map vị trí đọc theo offset nguồn; xử lý cursor Convert/AI/TTS đúng mode, không tự phát âm thanh hoặc nhảy trang. Thay đổi đồng thời từ thiết bị khác phải giữ cả kế hoạch và dữ liệu hiện có để đối chiếu, không ghi đè.
+5. Giữ journal cấu trúc trước đó để khôi phục. Peers nhận manifest có kiểm baseline, đủ bytes/SHA và hỗ trợ version; không thay snapshot cũ theo cách khiến client add-only bỏ qua hoặc tạo bản trùng. Chỉ ACK khi local layout đã đúng; giải quyết progress/edits trước khi bỏ checkpoint cũ.
+
+Nghiệm thu cần review độc lập + regression về toàn văn/IDs, tiến độ tại chỗ bị gộp/chia, edits trước/sau, peers offline, concurrent edit/delete, cancellation/rollback, retry/reload và EPUB exclusion. Root full unit + build + E2E luồng áp dụng/khôi phục; production smoke chỉ dữ liệu tổng hợp cô lập cloud. Đây là thay đổi bulk/kiến trúc mới, không gộp vào bản sửa recognizer hiện tại.

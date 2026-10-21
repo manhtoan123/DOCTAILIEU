@@ -3,5 +3,28 @@
   "name": "thu-phong-private",
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2026-01-01",
-  "d1_databases": [{"binding":"DB","database_name":"thu-phong-auth","database_id":"00000000-0000-0000-0000-000000000000","migrations_dir":"migrations"}]
+  "vars": {
+    "PUBLIC_LIBRARY": "1",
+    "SHARED_STATE_ENABLED": "1"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "thu-phong-auth",
+      "database_id": "f19b2949-3987-424c-bd1b-2cd4624a8e9d",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "LIBRARY_BUCKET",
+      "bucket_name": "thu-phong-library"
+    }
+  ],
+  "services": [
+    {
+      "binding": "AI_TRANSLATOR",
+      "service": "thu-phong-ai"
+    }
+  ]
 }

@@ -1,59 +1,26 @@
 # Private Novel Reader — trạng thái hiện hành
-Cập nhật: 05/10/2026 (Asia/Saigon). Đây là điểm bắt đầu; không suy ra trạng thái từ checkbox lịch sử.
+21/10/2026.
 
-Git baseline local: `a41f29a`. Đã loại secrets/generated/dữ liệu thật; chưa push hoặc deploy.
+Chỉ mục: private-novel/{docs,src,scripts}/README.md. AGENTS.md quy định phạm vi/kiểm thử; log .dsh-tmp/.
 
-## Đọc theo thứ tự
-1. AGENTS.md → tài liệu này → WEB-READER-IMPLEMENTATION-PLAN.md.
-2. private-novel/docs/DECISIONS.md và docs/STATUS.md.
-3. Chỉ đọc phiên liên quan trong docs/HANDOFF-LOG.md khi cần bằng chứng.
+## Online
+https://thu-phong-private.pages.dev/ — Pagesf718d1d3 (index-BRXwBbI0.js), deploy21/10 sửa/xóa chương TXT. AIWorker giữ9a20f69f, không migration. Remote0001–0012; index13local chờ quota; SHARED_STATE_ENABLED=1. Alias/deployment SHA khớp dist; smoke online4/4 PASS desktop/android-layout, cloud API chặn. Rollback Pages48925bcb. Log private-novel/.dsh-tmp/chapter-manage/.
 
-## Quyết định sản phẩm
-- Người dùng chốt 05/10: **R0 đọc/Convert trước, chưa bắt buộc TTS**.
-- R1 thêm auth server và deploy private. Chưa deploy.
-- Không Gemini/content sync trong MVP local; TikTok cần gateway được phép, hiện chưa có.
-- Windows + Android; Android viewport trong Edge không phải Android thật.
-- Nguồn và bộ từ điển ở D: chỉ đọc, không copy/upload/chạy script.
-- Bộ mới: D:\linh tinh\tm\STV Novel\mới chưa sửa\Vietphrase-data.
+## Kiến trúc và chức năng
+React/Vite/Dexie + Pages/AIWorker/D1/R2. Refactor 144 file hoàn tất: features/{ai,reader,tts,names-convert,import-export,sync-cloud,library}; core/{db,storage,domain}; shared; workers. src gốc chỉ App.tsx/main.tsx/README; canonical diff 0 khi chuyển, production smoke PASS.
+Thư phòng truyện lẻ; /phong-toi chứa tác giả Album→Series→truyện→chương, grid/list, tìm chương, xóa leaf. Folder giữ phân cấp. Tuyển tập TXT: xem/sửa mốc, byte slices, cap2000 fail-closed, batch atomic.
+Local-first, chỉ nhập truyện được chọn; staging/cancel/bytes/SHA/atomicity; xóa cloud trước local; D chỉ đọc. Không tự tái nhập/sửa dữ liệu cũ.
 
-## Trạng thái và bằng chứng
-| ID | Trạng thái hiện hành | Bằng chứng / hạn chế |
-|---|---|---|
-| A2 | Đã qua nghiệm thu nhỏ | Giữ source khi Compact Replace; unit và review độc lập trong log 09:05–09:28 |
-| C1 | Đã kiểm thử | Longest Name giữa các tầng; 6 unit fixtures, chưa parity toàn engine |
-| C2 | Đã kiểm thử | Hydration/settings race; 30 E2E toàn bộ phiên trước; multi-tab chưa xác minh |
-| A3 | Đã qua nghiệm thu nhỏ | 14 regression mới; root75 unit; reviewer độc lập38/38 backup; native IndexedDB E2E qua |
-| A1/A4/A5/A6/A7 | Còn mở | Portable lớn, integrity, conflict, packet order, Unicode |
-| D1-alias | Đã kiểm thử fixture | DaiTuNhanXung.txt → names2; hai viewport E2E qua; chưa nhận bộ thật |
-| M0 | Chưa hoàn tất | Benchmark 43 MB, streaming backup, auth CPU và Android thật còn thiếu |
-| R0/R1 | Chưa đạt | Không dùng số tests hoặc baseline commit để tuyên bố release |
+## Đọc, AI, đồng bộ
+Name riêng→AI; Name chung/từ điển→Convert. STV [i]URL[/]Tên: caption AI/TTS, raw nguồn/DB/cloud/backup giữ.
+Split cùng model, tối đa 2 key/1 quota qua lease/cooldown; foreground ưu tiên prewarm. Form PromptFields chung; legacy hybrid vẫn lưu. Retry transient tối đa3; first60/idle30/hard180s/lease185s; cancel/partial/model pin. Tiến độ AI lấy chương hoàn tất cao nhất.
+TTS Weilbyte gateway, tối đa3 request, một audio + carrier Blob10s; chưa kiểm audio thật/Android nền. TTS seek A1 cũ xem TTS-BACKUP-STABILITY-1.md.
+Sync state/prompts CAS/delta/offline/tombstone/conflict; Names/profiles/reader/progress/cursor/Album/metadata/chapter edits/dictionaries/bìa/nền. DBv4 source revision/receipt index-only; 1000 truyện reload 0GET originals/0Blob reads. Stockdict chỉ tải khi Convert/chủ động.
 
-Kết quả mới: 75 unit, build pass; 4 E2E backup/alias và 6 lượt lặp settings qua.
-Lượt chạy mới và kết quả cuối được ghi riêng trong docs/VALIDATION-2026-10-05.md.
-A3 không được ghi hoàn thành chỉ vì ca smoke pass.
+## Dung lượng và giới hạn
+TXT40MiB; EPUB256MiB/expanded512MiB/entry16MiB/derived128MiB; import worker flush1MiB/32ch. Cloud JSON>64MiB gzip/decoded256MiB; original>64MiB dùng parts16MiB tuần tự/resume/full SHA trước ready; ledger9GB. Shared-files256MiB/3000 reservations, metadata64MiB/60k.
+Backup nguồn/từ điển xác minh SHA, packet≤16MiB, portable lớn chưa hỗ trợ; không chứa prompt/AI/cài đặt/cursor nghe. TXT append đã deploy: đầy đủ/chỉ chương mới; chia mặc định0, xem/tích/phân trang50, hiển thị cuối lên đầu nhưng commit thứ tự file. Khớp exact tự chọn; gợi ý tiêu đề hoặc thiếu mốc thì không chọn sẵn; khóa trùng ở service. Giữ bytes/ID/progress/CAS/atomic. Watchdog worker30s/conversion120s, hủy chặn ghi muộn. Review68 + full159file/1988test + build/E2E8 PASS. Log .dsh-tmp/tail-match/. PWA offline mở lại hoàn toàn chưa hoàn tất. Android thật chưa xác minh.
 
-## Ba việc tiếp theo
-1. **M0-BACKUP / A1**: spike backup streaming theo byte, định dạng/chunk và round-trip bộ lớn.
-   Chỉ prototype/tests trước; giữ fixtures A2/A3 và tương thích v1/v2 hoặc chốt migration riêng.
-   Bắt buộc source13MiB và dictionary43MB, giới hạn RAM/part, hủy và file thiếu/hỏng.
-2. **M0-DICT**: benchmark parser/Convert với dữ liệu người dùng chọn; đo thời gian, RAM, dòng hợp lệ/bị bỏ.
-   Giữ nguyên D:, không upload. PhienAm/HanViet là gợi ý loại, không chứng minh chất lượng từ điển.
-3. **M0-AUTH / DEVICE**: đo KDF trong runtime mục tiêu và kiểm Android thật trước phát hành.
-   Không hạ độ mạnh KDF để ép quota. Nếu chưa có thiết bị/runtime thì ghi chưa xác minh.
+Sửa/xóa TXT đã triển khai: bật Quản lý chương mới hiện Sửa/checkbox/xóa; Đã xóa để khôi phục cùng ID. Giữ row/file nguồn; active counts/Reader/search lọc hidden IDs. Shared chapter-state CAS + pending ACK trước local, backupv3/cloudv2 bảo toàn và remap; legacy đọc được. Chặn ghi muộn progress/TTS/cache, hết chương hủy AI. Full161file/2007test, review18, build, E2E4 PASS. Thiết kế tối giản docs/CHAPTER-EDIT-DELETE-DESIGN.md; log .dsh-tmp/chapter-manage/.
 
-Tạm hoãn tính năng mới trước khi đóng hoặc quyết định lại các spike M0.
-Không tự đổi schema/layout chỉ để giống kế hoạch; xem bảng lệch trong docs/STATUS.md.
-
-## Kiểm thử bắt buộc
-Chạy trong private-novel/: npm.cmd test; npm.cmd run build.
-Thay đổi UI/import/worker: npm.cmd run test:e2e -- --reporter=line.
-Audit: npm.cmd test -- --config audit/vitest.config.ts --reporter=verbose.
-Reviewer chạy targeted regression của phạm vi rủi ro; không chạy được thì chưa đủ nghiệm thu.
-E2E từng chập chờn cần --repeat-each=3 cho ca liên quan, ghi cả fail lẫn pass.
-
-## Bàn giao
-Lịch sử nguyên bản đã chuyển sang private-novel/docs/HANDOFF-LOG.md (append-only).
-Không xóa hoặc sửa số test của phiên cũ. Trạng thái hiện hành chỉ nằm ở đây và STATUS.md.
-Mỗi phiên thêm ngày giờ, model thực cấu hình, file/đoạn sửa, quyết định/lý do,
-lệnh + exit code/kết quả, review, giới hạn và nhiệm vụ tiếp theo theo mẫu trong log.
-
+Mã GitHub Private: https://github.com/manhtoan123/DOCTAILIEU; origin dùng HTTPS/GCM. Dữ liệu/secrets ngoài Git.

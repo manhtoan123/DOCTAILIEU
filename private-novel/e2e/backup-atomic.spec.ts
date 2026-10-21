@@ -3,7 +3,7 @@ import {test,expect} from '@playwright/test';
 test('failed portable replacement keeps original bytes and dictionary installation commits with the book',async({page})=>{
   await page.goto('/');
   const result=await page.evaluate(async()=>{
-    const dbPath='/src/db.ts';const backupPath='/src/backup.ts';
+    const dbPath='/src/core/db.ts';const backupPath='/src/features/import-export/services/backup.ts';
     const {db}=await import(/* @vite-ignore */dbPath);
     const {prepareBackup,stageBackup,restoreBackup,hashBlob}=await import(/* @vite-ignore */backupPath);
     const original=new Blob(['Original TXT bytes']);

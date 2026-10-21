@@ -138,3 +138,20 @@ Audit5known defects dùng it.fails trên invariant đúng; unexpected pass bắt
 Baseline local/CI YAML không đồng nghĩa release, remoteCI chưa chạy. TTS GET/query/route cũ
 đã xác minh là việc còn mở trước gateway thật; không tuyên bố đã sửa.
 
+
+
+## 20/10/2026 — AI-PARALLEL-PLAN: dịch chia phần song song thay thế hybrid nửa sau bằng Lite
+Người dùng yêu cầu hoàn thành AI-PARALLEL-PLAN.md thay thế cho "dịch nửa chương sau" và deploy nếu hoàn thành.
+- Đổi tùy chọn "Dịch nửa sau bằng Lite" thành "Dịch chia phần" (`splitParts: boolean`). Tất cả các phần dùng cùng một model ưu tiên chính của người dùng, loại bỏ phụ thuộc vào mô hình Lite phụ và không cần chờ nửa đầu làm mẫu.
+- Chương ngắn (<= 1.800 ký tự) giữ nguyên 1 request. Chương dài chia đoạn an toàn bảo vệ Name và Unicode (`AI_PART_CHARS = 1800`), context trước tối đa 300 ký tự. Kế hoạch `txt-parts-2` (TXT) và `epub-parts-2` (EPUB).
+- Giữ vững invariant concurrency: tối đa 2 request đồng thời trên toàn phiên đọc (`sharedAiControl`), hạ xuống 1 khi throttled (429/quota). Scheduler ưu tiên theo trọng số: foreground chapter (priority 0 + index) được cấp slot trước prewarm chapter (priority 100 + index).
+- Quota/Rate-limit: `AiRecovery` quản lý cooldown theo từng model độc lập. Feedback quota delay trong `AiPartsControl` giới hạn tối đa 30s để tránh làm treo các request độc lập hoặc sau `session.clear()`.
+- Tương thích ngược: cache cũ và cài đặt `hybrid` cũ được tự động phân giải thành `splitParts: true`; các unit test legacy hybrid vẫn chạy pass 100%. Không fan-out key, không thêm provider/billing.
+- Nghiệm thu: 634/634 test AI và EPUB pass, 12/12 E2E ai-parts pass trên chromium và android-layout, build sạch. Sẵn sàng deploy.
+
+## 20/10/2026 — Vị trí quyết định hiện hành
+Giữ file này để tra lịch sử. Quyết định mới được append tại ../../DECISIONS.md, gồm quyền dùng tối đa2 key song song theo yêu cầu người dùng và chuyển runtime từ hybrid sang splitParts.
+
+
+## 21/10/2026 — sửa/xóa chương tối giản
+Theo yêu cầu người dùng: mặc định ẩn thao tác, bật Quản lý chương mới hiện sửa/chọn xóa. Dùng visibility trên Book + shared chapter-state CAS/journal; giữ toàn bộ row/file nguồn, khôi phục cùng ID. Không trash snapshot hoặc CAS chung edit/state; split child mới được hiện độc lập. Backup v3/cloud snapshot v2 chỉ khi có hidden IDs; legacy vẫn đọc. Chi tiết CHAPTER-EDIT-DELETE-DESIGN.md.

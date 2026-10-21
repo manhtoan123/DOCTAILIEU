@@ -1,0 +1,13 @@
+# READER-UI-2 — yêu cầu 13/10/2026
+
+Folder hiện nhận cả TXT/EPUB, Album theo full direct-parent path. Reuse importer EPUB bounded64MiB (TXT40), whole selection256MiB; staging/rollback/cancel/atomic publication giữ. Folder dedupe:none giống TXT: mỗi file là một truyện, kể cả bytes trùng; source descriptor+row giữ webkitRelativePath/SHA/bytes. Legacy importFolderGroup vẫn TXT-only. Preview splitter chỉ TXT, EPUB giữ spine/layout.
+
+Bỏ sync badge ở tủ sách; startSharedStateSync vẫn tự chạy. Ảnh nền chọn/gỡ ở Cài đặt→Giao diện (/settings/appearance), dùng reader shared record hiện có. Menu Sửa/Xóa absolute overlay, không chiếm chiều cao thẻ.
+
+Convert EPUB tạo trusted text spans với exact token source ranges; forged attrs bị bỏ trước khi tạo. Bridge source/nonce guard; parent kiểm range có trong words hiện hành, rect finite bounded, Reader lookup exact displayToken trước sửa Name. TTS giữ offset gốc giữa text nodes; script/config không vào walker. Empty untranslated token giữ chữ nguồn để chọn khi từ điển offline; intentional blacklist/Name deletions giữ rỗng. Helpers dùng linear source cursor, Map node buckets và sourceLength một lần.
+
+EPUB áp dụng nền/chữ trung tính, font/cỡ chữ/giãn dòng/căn paragraph/width từ reader; giữ tỷ lệ cỡ heading, bold/italic, màu chữ riêng, ảnh và cấu trúc sách. Chỉ đổi DOM hiển thị, không source/layout lưu. Appearance enum/finite/canonical bounds8..100/.5..5 và CSS color validated, cached để không reapply toàn DOM khi đổi TTS sentence. Opaque sandbox không allow-same-origin, không mã sách/network ngoài.
+
+AI server timeout30s (trước60), transport grace40s (trước70). Hết deadline hủy upstream; model fallback/recovery/current/prewarm/cache/keys giữ tuần tự theo policy hiện có. UI chờ hiển thị model đang thử. Không gọi Gemini thật hoặc tải D trong kiểm tra lần này.
+
+Independent review folder7 +renderer6 pass; source fallback2 regression được reviewer đọc, root full chạy. Root full1260/91+build PASS; related E2E32 đạt scopedreruns, 2 actualfile skips; EPUB regression2 postdelta PASS. Pages e4a02e2e/master index-X9p-ldWH.js; AIWorker e7701ab5-c420-4acf-883b-03ec89efb626 active100%. Production2layouts/2contexts background edit/delete/lazyarchive/ảnh/AI mock/nooverflow/noerrors PASS, no realcloud writes/noGemini tokens. Logs .dsh-tmp/reader-ui-2-full-final.log, reader-ui-2-build-final.log, reader-ui-2-production-smoke.log và related scoped logs. Earlier E2Efail logs giữ: preview alert race narrowed to finaldialog error afterrollback; book geometry measured same browserturn; màu tùy chọn cần mở Hiển thị nâng cao. Chưa Android thật/4G; provider overload có thể vẫn gây fallback/chờ.

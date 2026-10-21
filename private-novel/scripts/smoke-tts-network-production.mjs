@@ -1,0 +1,27 @@
+import {chromium,devices,expect} from '@playwright/test';
+import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+const origin='https://thu-phong-private.pages.dev',dir='.dsh-tmp/tts-network-production';mkdirSync(dir,{recursive:true});
+const html=(await(await fetch(origin)).text()).trim();expect(html).toBe(readFileSync('dist/index.html','utf8').trim());
+const browser=await chromium.launch({channel:'msedge'}),context=await browser.newContext({...devices['Pixel 7'],serviceWorkers:'block'}),spoken=[];
+let offline=false,hold=false,holdText='',release;const gate=new Promise(resolve=>release=resolve);
+try{
+ await context.route(origin+'/api/**',r=>r.fulfill({status:503}));
+ await context.route(origin+'/api/ai/translate',r=>{const input=r.request().postDataJSON();return r.fulfill({json:{result:input.text,model:input.model,finishReason:'STOP',inputTokens:1,outputTokens:1}});});
+ await context.route('https://ottsy.weilbyte.dev/api/generation',async r=>{const text=r.request().postDataJSON().text;spoken.push(text);if(offline)return r.abort('internetdisconnected');if(hold&&text.includes(holdText))await gate;await r.fulfill({json:{success:true,data:'//PkxAAAAAAA'}}).catch(()=>{});});
+ await context.addInitScript(()=>{window.__audios=[];window.__plays=0;window.Audio=class{currentTime=0;playbackRate=1;constructor(){window.__audios.push(this);}removeAttribute(){}load(){}play(){window.__plays++;return Promise.resolve();}pause(){}};});
+ const page=await context.newPage();page.setDefaultTimeout(30000);await page.goto(origin);
+ await page.getByRole('button',{name:/Thêm truyện TXT/}).click();await page.getByLabel('Tên truyện',{exact:true}).fill('Kiểm tra TTS mất mạng');await page.getByLabel('Hoặc dán nội dung',{exact:true}).fill('Chương 1\n'+Array.from({length:20},(_,i)=>`Câu thử số ${i} để kiểm tra kết nối âm thanh.`).join('\n'));await page.getByRole('button',{name:'Nhập truyện',exact:true}).click();
+ await expect(page.locator('.reader-book-heading h1')).toHaveText('Kiểm tra TTS mất mạng');const bookId=page.url().split('/')[4],listen=page.getByRole('button',{name:'Nghe truyện nhanh',exact:true});
+ const dismiss=async()=>{const close=page.getByRole('button',{name:'Đóng thông báo',exact:true});if(await close.isVisible())await close.click();};
+ const cursor=()=>page.evaluate(id=>JSON.parse(localStorage.getItem('tts-cursor:v1:'+id)),bookId);
+ const advance=async()=>{const before=await page.evaluate(()=>{const count=window.__plays;window.__audios[0].onended?.();return count;});await expect.poll(()=>page.evaluate(()=>window.__plays)).toBeGreaterThan(before);};
+ const source=()=>page.evaluate(async()=>{const database=await new Promise((resolve,reject)=>{const r=indexedDB.open('thu-phong-v1');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});try{return await new Promise((resolve,reject)=>{const tx=database.transaction('chapters','readonly'),r=tx.objectStore('chapters').getAll();tx.oncomplete=()=>resolve(r.result.map(c=>({id:c.id,revision:c.revision,text:c.text})));tx.onerror=()=>reject(tx.error);});}finally{database.close();}});
+ const original=await source();await dismiss();await listen.click();await expect(listen).toHaveAttribute('title','Tạm dừng nghe');await expect.poll(()=>spoken.length).toBe(3);offline=true;
+ await advance();await advance();await page.evaluate(()=>window.__audios[0].onended?.());await expect(listen).toHaveAttribute('title','Tiếp tục nghe');const failed=await cursor(),failedText=(await page.locator('.speaking').innerText()).trim();expect(failed.offset).toBeGreaterThan(0);
+ offline=false;await dismiss();let count=spoken.length;await listen.click();await expect(listen).toHaveAttribute('title','Tạm dừng nghe');expect(spoken[count].trim()).toBe(failedText);expect((await cursor()).offset).toBe(failed.offset);
+ holdText=`Câu thử số ${Number(failedText.match(/Câu thử số (\d+)/)[1])+3} `;hold=true;await advance();await advance();await page.evaluate(()=>window.__audios[0].onended?.());await expect(listen).toHaveAttribute('title','Tạm dừng tải');await dismiss();await listen.click();await expect(listen).toHaveAttribute('title','Tiếp tục nghe');const paused=await cursor();expect(paused.offset).toBeGreaterThan(failed.offset);
+ hold=false;release();count=spoken.length;await listen.click();await expect(listen).toHaveAttribute('title','Tạm dừng nghe');expect(spoken[count]).toContain(holdText);expect((await cursor()).offset).toBe(paused.offset);expect(await page.evaluate(()=>window.__audios.length)).toBe(1);
+ await page.reload();await expect(listen).toHaveAttribute('data-resume','true');expect(await page.evaluate(()=>window.__plays)).toBe(0);count=spoken.length;await dismiss();await listen.click();await expect(listen).toHaveAttribute('title','Tạm dừng nghe');expect(spoken[count]).toContain(holdText);expect((await cursor()).offset).toBe(paused.offset);expect(await source()).toEqual(original);
+ await page.getByRole('button',{name:'Dừng đọc nhanh',exact:true}).click();expect(await cursor()).toBeNull();
+ const report={status:'passed',synthetic:true,androidLayout:true,realAndroid:false,mockedAiAndAudio:true,cloudWrites:false,errorRecoveryOffset:failed.offset,loadingCancelOffset:paused.offset,reloadOffset:paused.offset,explicitStopClears:true,singleAudio:true,sourceUnchanged:true,bundle:html.match(/src="([^"]+\.js)"/)[1]};writeFileSync(dir+'/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+}finally{release();await context.close();await browser.close();}

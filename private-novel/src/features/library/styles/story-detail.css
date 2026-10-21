@@ -1,0 +1,44 @@
+.story-detail{padding:20px 0 10px;min-width:0;color:#263c2c}
+.story-detail .story-back{margin-bottom:18px;background:#fff;border-color:#c4d2bf;color:#355b37}
+.story-summary{display:flex;gap:24px;padding:26px;background:#eff5e9;border:1px solid #cdddc4;border-radius:4px}
+.story-cover-mark{display:flex;align-items:center;justify-content:center;flex:0 0 94px;height:126px;background:#d6e5cd;border:1px solid #bfd1b3;border-left:7px solid #acc59e;color:#4c6940;font-size:19px;letter-spacing:2px}
+.story-summary-content{flex:1;min-width:0}
+.story-summary h1{font-size:27px;line-height:1.4;margin:0 0 12px;overflow-wrap:anywhere;color:#2c4c2a}
+.story-author{font-size:14px;margin-bottom:14px;overflow-wrap:anywhere}
+.story-metadata{display:flex;flex-wrap:wrap;gap:12px 28px;margin:0 0 14px;font-size:13px}
+.story-metadata div{display:flex;gap:7px;flex-wrap:wrap}
+.story-metadata dt{color:#556b4e}.story-metadata dd{margin:0;color:#283e28}
+.story-local{font-size:12px;color:#52664c;margin:0 0 18px}
+.story-read-actions{display:flex;flex-wrap:wrap;gap:10px}
+.story-detail .story-read-actions button{min-height:44px;border-color:#8ca980;background:#fff;color:#32532b}
+.story-detail .story-read-actions .story-read-first{background:#486c39;color:#fff;border-color:#486c39}
+.story-detail .story-read-actions .story-read-first:hover:not(:disabled){background:#37552b}
+.story-progress{margin:14px 0 0;font-size:13px;line-height:1.6;overflow-wrap:anywhere;color:#506247}
+.story-chapters{margin-top:24px;border:1px solid #d1dcca;background:#fff;border-radius:4px;overflow:hidden}
+.story-chapters-heading{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 20px;background:#f2f6ed;border-bottom:1px solid #d1dcca}
+.story-chapters-heading h2{font-size:19px;margin:0;color:#365530}
+.story-chapters-heading label{margin:0;font-size:12px;font-weight:400;gap:5px;width:280px;max-width:100%}
+.story-chapters-heading input{width:100%;min-width:0;border-color:#c6d5bd;background:#fff;font-size:14px}
+.story-chapter-count{font-size:12px;padding:12px 20px 0;margin:0;color:#596951}
+.story-chapter-list{list-style:none;padding:8px 0;margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.story-chapter-list li{min-width:0}
+.story-detail .story-chapter-list button{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:48px;text-align:left;padding:12px 20px;border:0;border-bottom:1px solid #edf1e9;border-radius:0;background:#fff;color:#2e4830;font-size:14px;line-height:1.5}
+.story-chapter-list button span{overflow-wrap:anywhere;min-width:0}
+.story-chapter-list button small{flex-shrink:0;color:#496b35;font-size:11px}
+.story-detail .story-chapter-list button[aria-current=true]{background:#e5efdc;font-weight:600}
+.story-detail .story-chapter-list button:hover{background:#f0f5e9}
+.story-chapter-list button:focus-visible{outline-offset:-3px}
+.story-pagination{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:12px;padding:16px;border-top:1px solid #d1dcca;font-size:13px}
+.story-pagination button{min-height:44px;font-size:13px}
+.story-empty{padding:28px 20px;margin:0;line-height:1.6;color:#53634d}
+@media(max-width:700px){.story-summary{gap:14px;padding:18px 14px}.story-cover-mark{flex-basis:50px;height:72px;font-size:12px;border-left-width:4px}.story-summary h1{font-size:22px}.story-metadata{gap:10px 18px}.story-chapters-heading{padding:14px}.story-chapters-heading label{width:100%}.story-chapter-list{grid-template-columns:minmax(0,1fr)}.story-detail .story-chapter-list button{padding:12px 14px}.story-chapter-count{padding-left:14px}.story-pagination{gap:8px;padding:12px 8px}.story-pagination button{padding:8px 10px}}
+@media(max-width:360px){.story-cover-mark{display:none}.story-read-actions button{flex:1}.story-pagination span{order:-1;width:100%;text-align:center}}
+
+.chapter-manage-actions{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;margin:1rem;}
+.story-chapter-list .chapter-manage-row{display:flex;align-items:center;gap:.5rem;padding:0 .5rem;}
+.story-chapter-list .chapter-manage-row>input{width:auto;flex:none;}
+.story-detail .story-chapter-list .chapter-manage-row>.chapter-edit-button{width:auto;flex:none;padding:.5rem;}
+.chapter-manage-row>button:last-child{flex:1;min-width:0;}
+.chapter-editor textarea{width:100%;box-sizing:border-box;resize:vertical;}
+
+.chapter-delete-preview{max-height:14rem;overflow:auto;overflow-wrap:anywhere;}

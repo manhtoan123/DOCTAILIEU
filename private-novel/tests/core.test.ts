@@ -1,8 +1,8 @@
 import {describe,it,expect} from 'vitest';
-import {StreamingSplitter,type Part} from '../src/splitter';
-import {LanguageEngine,boundedSuggestions} from '../src/language';
-import {parseEntry} from '../src/domain';
-import {sentences,tiktokVoices} from '../src/tts';
+import {StreamingSplitter,type Part} from '../src/features/import-export/services/splitter';
+import {LanguageEngine,boundedSuggestions} from '../src/features/names-convert/services/language';
+import {parseEntry} from '../src/core/domain';
+import {sentences,tiktokVoices} from '../src/features/tts/services/tts';
 function split(text:string,chunk=7,max=64000){const parts:Part[]=[];const s=new StreamingSplitter('Nguồn',p=>parts.push(p),undefined,max);for(let i=0;i<text.length;i+=chunk)s.feed(text.slice(i,i+chunk));s.feed('',true);return parts;}
 describe('TXT integrity',()=>{
   it('preserves preface, short chapters, headings, trailing whitespace and CRLF across chunk boundaries',()=>{const raw='\uFEFFLời mở đầu\r\n\r\nChương 1: Một\r\nA\r\nChương 2: Hai\r\nB  \r';const p=split(raw,1);expect(p.map(p=>p.text).join('')).toBe(raw.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n'));expect(p).toHaveLength(3);expect(p[2].title).toBe('Chương 2: Hai');});
@@ -53,5 +53,25 @@ describe('Convert and names',()=>{
   it('source ranges cover original text exactly including surrogate pairs',()=>{const e=new LanguageEngine();e.add('vp','你好=xin chào');const source='你好🙂\n未';const tokens=e.convert(source,[]);expect(tokens.map(t=>source.slice(t.sourceStart,t.sourceEnd)).join('')).toBe(source);expect(tokens.at(-1)?.sourceEnd).toBe(source.length);});
   it('bounds combinatorial expansion while generating, including seven large sets',()=>{const sets=Array.from({length:7},()=>Array.from({length:1000},(_,i)=>String(i)));expect(boundedSuggestions(sets)).toHaveLength(100);});
   it('supports bounded single-capture rules, while preserving protected Names',()=>{const e=new LanguageEngine();e.add('vp','他=hắn');e.add('rules','不比{0}强=không mạnh bằng {0}');expect(e.convert('不比他强',[]).map(t=>t.targetText).join('')).toBe('không mạnh bằng hắn');expect(e.convert('不比他强',[{key:'他',value:'Hắn'}]).some(t=>t.type==='rule')).toBe(false);});
+  it('supports LuatNhan prefix, suffix, and middle rules with priority over Vietphrase',()=>{
+    const e=new LanguageEngine();
+    e.add('vp','他=hắn');e.add('vp','人=người');e.add('vp','挡住=chặn lại');
+    e.add('rules','{0}的父亲=phụ thân của {0}');
+    e.add('rules','那些{0}=những {0} đó');
+    e.add('rules','把{0}挡住=ngăn cản {0}');
+    expect(e.convert('他的父亲',[]).map(t=>t.targetText).join('')).toBe('phụ thân của hắn');
+    expect(e.convert('那些人',[]).map(t=>t.targetText).join('')).toBe('những người đó');
+    expect(e.convert('把他挡住',[]).map(t=>t.targetText).join('')).toBe('ngăn cản hắn');
+  });
+  it('standardizes Chinese punctuation and applies sentence capitalization and spacing',()=>{
+    const e=new LanguageEngine();
+    e.add('vp','李明=Lý Minh');e.add('vp','来到=đi tới');e.add('vp','山门=sơn môn');
+    e.add('vp','他=hắn');e.add('vp','说道=nói');e.add('vp','你=ngươi');e.add('vp','来了=tới rồi');
+    e.add('vp','下一行=hạ một hàng');
+    const out1=e.convert('李明来到山门。',[],{standardizePunctuation:true}).map(t=>t.targetText).join('');
+    expect(out1).toBe('Lý Minh đi tới sơn môn.');
+    const out2=e.convert('他说道：“你来了。”\n下一行。',[],{standardizePunctuation:true,capitalize:true}).map(t=>t.targetText).join('');
+    expect(out2).toBe('Hắn nói: “Ngươi tới rồi.”\nHạ một hàng.');
+  });
 });
-describe('TTS segmentation',()=>{it('returns bounded sentences with original text offsets',()=>{const text='Một câu.\n'+ 'abc '.repeat(200)+'!';const list=sentences(text);expect(list.every(s=>s.text.length<=240)).toBe(true);for(const s of list)expect(text.slice(s.start,s.end)).toBe(s.text);});it('exposes only Vietnamese TikTok voices',()=>{expect(tiktokVoices).toHaveLength(3);expect(tiktokVoices.every(v=>v.serverId.startsWith('tiktok:'))).toBe(true);});});
+describe('TTS segmentation',()=>{it('returns bounded sentences with original text offsets',()=>{const text='Một câu.\n'+ 'abc '.repeat(200)+'!';const list=sentences(text);expect(list.every(s=>Array.from(s.text).length<=200)).toBe(true);for(const s of list)expect(text.slice(s.start,s.end)).toBe(s.text);});it('exposes only Vietnamese TikTok voices',()=>{expect(tiktokVoices).toHaveLength(3);expect(tiktokVoices.filter(v=>v.available).map(v=>v.serverId)).toEqual(['BV074_streaming','BV075_streaming']);expect(tiktokVoices[2].available).toBe(false);});});

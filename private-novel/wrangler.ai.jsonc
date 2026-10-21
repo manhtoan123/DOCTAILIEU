@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "thu-phong-ai",
+  "main": "server/ai-worker.ts",
+  "account_id": "97c5d65fbc80bb0ab8c78ad3b01b04b5",
+  "compatibility_date": "2026-01-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "placement": {
+    "region": "gcp:us-east4"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "thu-phong-auth",
+      "database_id": "f19b2949-3987-424c-bd1b-2cd4624a8e9d"
+    }
+  ]
+}

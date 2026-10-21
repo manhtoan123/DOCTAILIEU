@@ -12,3 +12,28 @@
 **/backups/
 STV-NOVEL-INVENTORY.json
 
+# Workspace-local runs and root command output
+/.dsh-tmp/
+/.vite/
+/*.log
+
+# Personal content, exports, local evidence and credentials
+**/.dsh-tmp/
+**/.vite/
+**/playwright/.auth/
+**/*.tpbackup.json
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.pem
+**/*.key
+**/credentials*.json
+/PPD-Settings-*.json
+/names-fixed.txt
+/private-novel/names-fixed.txt
+/test-after-fix.txt
+/test-fix2.txt
+/private-novel/docs/screenshots/
+

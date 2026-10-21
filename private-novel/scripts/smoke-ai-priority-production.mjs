@@ -1,0 +1,16 @@
+import {chromium,expect} from '@playwright/test';
+import {readFileSync,writeFileSync} from 'node:fs';
+const origin='https://thu-phong-private.pages.dev',dir='.dsh-tmp/model-priority';
+expect((await(await fetch(origin)).text()).trim()).toBe(readFileSync('dist/index.html','utf8').trim());
+const browser=await chromium.launch({channel:'msedge'}),context=await browser.newContext({viewport:{width:869,height:835},serviceWorkers:'block'}),calls=[];
+try{
+ await context.route(origin+'/api/**',r=>r.fulfill({status:503,json:{error:'isolated priority smoke'}}));
+ await context.route(origin+'/api/ai/translate',r=>{const input=r.request().postDataJSON();calls.push(input.model);return input.model==='gemini-3-flash-preview'?r.fulfill({json:{model:input.model,result:'Bản dịch bằng model dự phòng khá.',finishReason:'STOP',inputTokens:1,outputTokens:2}}):r.fulfill({status:503,json:{error:'ai_upstream_error'}});});
+ const page=await context.newPage();await page.goto(origin);await page.getByRole('button',{name:'＋ Thêm truyện TXT / EPUB',exact:true}).click();await page.getByLabel('Tên truyện',{exact:true}).fill('Kiểm tra thứ tự AI');await page.getByLabel('Hoặc dán nội dung',{exact:true}).fill('Chương 1: Kiểm tra\n林儿来了。');await page.getByRole('button',{name:'Nhập truyện',exact:true}).click();
+ await expect(page.locator('.prose [data-paragraph]')).toHaveCount(2);const raw=await page.locator('.prose [data-paragraph]').allTextContents();await page.getByRole('button',{name:'Tùy chỉnh prompt và model',exact:true}).click();await expect(page.getByRole('button',{name:'Lưu prompt',exact:true})).toBeEnabled();
+ expect((await page.getByLabel('Model',{exact:true}).locator('option').evaluateAll(options=>options.map(option=>option.value))).slice(0,4)).toEqual(['gemini-3.8-flash','gemini-3.7-flash','gemini-2.5-flash','gemini-3-flash-preview']);
+ await page.getByLabel('Model',{exact:true}).selectOption('gemini-3.7-flash');await page.getByLabel('Dịch sẵn chương kế tiếp').uncheck();await expect(page.getByText(/Tự chuyển khi model bận hoặc lỗi/)).toHaveText('Tự chuyển khi model bận hoặc lỗi: 2.5 Flash → 3 Flash (Preview).');await page.screenshot({path:dir+'/production-order.png'});
+ await page.getByRole('button',{name:'Lưu prompt',exact:true}).click();await page.getByRole('button',{name:'Ẩn Dịch AI',exact:true}).click();await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Bản dịch bằng model dự phòng khá.');expect(calls).toEqual(['gemini-3.7-flash','gemini-2.5-flash','gemini-3-flash-preview']);await expect(page.locator('.ai-model-notice')).toHaveText('Bản dịch: Gemini 3 Flash (Preview)');
+ await page.getByRole('button',{name:'Bản gốc',exact:true}).click();expect(await page.locator('.prose [data-paragraph]').allTextContents()).toEqual(raw);
+ const report={status:'passed',syntheticOnly:true,realAi:false,cloudWrites:false,rawPreserved:true,pickerOrderVerified:true,selectedModel:'gemini-3.7-flash',calls,bundle:readFileSync('dist/index.html','utf8').match(/src="([^"]+\.js)"/)[1]};writeFileSync(dir+'/production.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+}finally{await context.close();await browser.close();}

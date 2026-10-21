@@ -1,0 +1,25 @@
+.name-manager{font-size:14px;line-height:1.45;min-width:0}
+.name-manager button,.name-manager input,.name-manager textarea{font:inherit;min-width:0;max-width:100%;box-sizing:border-box}
+.name-manager button,.name-manager summary{min-height:44px;touch-action:manipulation}
+.name-manager button{white-space:normal;overflow-wrap:anywhere}
+.name-manager label{display:grid;gap:4px;min-width:0;margin:0}
+.name-manager input:not([type=file]){min-height:44px;width:100%;margin:0}
+.name-manager-search{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+.name-manager-editor{display:grid;gap:8px;margin:12px 0;padding:10px;border:1px solid var(--line,#ccc);border-radius:6px}
+.name-manager-save,.name-manager-bulk-actions,.name-manager-pager{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.name-manager-save small{font-size:12px}
+.name-manager-feedback,.name-manager-advanced p{font-size:13px;overflow-wrap:anywhere;margin:8px 0}
+.name-manager-advanced{margin:10px 0;border-block:1px solid var(--line,#ccc);padding:4px 0}
+.name-manager-advanced summary{cursor:pointer;padding:10px 0;box-sizing:border-box;overflow-wrap:anywhere}
+.name-manager-advanced textarea{display:block;width:100%;min-height:72px;max-height:160px;height:72px;resize:vertical;overflow:auto;margin:8px 0;line-height:1.45}
+.name-manager-advanced label{margin:8px 0}
+.name-manager-advanced input[type=file]{width:100%;font-size:12px}
+.name-manager-count{font-size:12px;margin:10px 0 6px}
+.name-manager-list{list-style:none;margin:0;padding:0}
+.name-manager-list li{display:grid;grid-template-columns:minmax(0,1fr) 44px;gap:4px;border-bottom:1px solid var(--line,#ccc)}
+.name-manager .name-manager-row{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:8px;text-align:left;align-items:center;padding:6px;background:transparent;border:0;border-radius:0}
+.name-manager-row span{overflow-wrap:anywhere;min-width:0}
+.name-manager-row[aria-pressed=true]{background:var(--line,#e5e5e5)}
+.name-manager .name-manager-delete{width:44px;padding:0;background:transparent;border:0;font-size:20px}
+.name-manager-pager{margin-top:10px}
+@media(max-width:360px){.name-manager-search{grid-template-columns:minmax(0,1fr)}.name-manager-search>button{justify-self:start}}

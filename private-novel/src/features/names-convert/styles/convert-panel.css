@@ -1,0 +1,23 @@
+.convert-workspace textarea{width:100%;box-sizing:border-box;resize:vertical;line-height:1.7;font-size:1rem;}
+.convert-workspace h3{margin:.25rem 0 .8rem;}
+.convert-columns{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:1rem;align-items:stretch;}
+.convert-source,.convert-names{min-width:0;border:1px solid var(--border,#d8d3c9);border-radius:.65rem;padding:1rem;}
+.convert-count{font-size:.8rem;font-weight:normal;white-space:nowrap;}
+.convert-toolbar{display:flex;align-items:flex-end;flex-wrap:wrap;gap:.65rem;margin:.8rem 0;}
+.convert-toolbar label{min-width:0;max-width:100%;}
+.convert-toolbar input[type=file]{max-width:100%;}
+.convert-check{display:flex;align-items:center;gap:.4rem;min-height:44px;}
+.convert-check input{width:auto;}
+.convert-output-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin:1rem 0 .5rem;flex-wrap:wrap;}
+.convert-output-heading h3{margin:0;}
+.convert-result{white-space:pre-wrap;overflow-wrap:anywhere;min-height:9rem;padding:1rem;border:1px solid var(--border,#d8d3c9);border-radius:.65rem;font-size:1.15rem;line-height:1.9;}
+.convert-result .convert-token{display:inline;min-height:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit;font:inherit;white-space:pre-wrap;text-align:inherit;}
+.convert-result .convert-token:hover,.convert-result .convert-token:focus-visible,.convert-result .convert-token.is-selected{background:#fff0a6;color:#28221c;outline:1px solid #b98c28;}
+.convert-lookup{margin:1rem 0;border:1px solid var(--border,#d8d3c9);border-radius:.65rem;padding:1rem;}
+.convert-lookup input{max-width:100%;width:100%;box-sizing:border-box;}
+.convert-expand{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.6rem;}
+.convert-expand strong{overflow-wrap:anywhere;min-width:0;}
+.convert-temporary{border-top:1px solid var(--border,#d8d3c9);margin-top:1rem;padding-top:.75rem;}
+.convert-temporary summary{cursor:pointer;min-height:44px;}
+@media(max-width:800px){.convert-columns{grid-template-columns:minmax(0,1fr);}.convert-names textarea{min-height:8rem;}.convert-source,.convert-names{padding:.75rem;}}
+@media(max-width:600px){.convert-toolbar{align-items:stretch;}.convert-toolbar>label{width:100%;}.convert-toolbar button,.convert-lookup button{min-height:44px;}.convert-result,.convert-lookup{padding:.65rem;}.convert-expand strong{flex-basis:100%;order:-1;}}

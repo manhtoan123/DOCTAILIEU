@@ -1,0 +1,14 @@
+import type {EpubLayout} from './epub-layout-schema';
+export {validateEpubLayout,validateEpubBook} from './epub-layout-schema';
+export type {EpubLayout,EpubBook} from './epub-layout-schema';
+const xmlEntities:Record<string,number>={nbsp:160,copy:169,reg:174,mdash:8212,ndash:8211,hellip:8230,lsquo:8216,rsquo:8217,ldquo:8220,rdquo:8221,bull:8226,laquo:171,raquo:187,ensp:8194,emsp:8195,thinsp:8201,shy:173};
+export function epubXml(text:string){if(text.length>1048576||/<!ENTITY|<!DOCTYPE[^>]*\[/i.test(text))throw Error('EPUB XML vượt giới hạn hoặc chứa khai báo entity không hỗ trợ.');const input=text.replace(/<!DOCTYPE[^>]*>/gi,'').replace(/&([a-z]+);/g,(raw,key)=>xmlEntities[key]?`&#${xmlEntities[key]};`:raw),doc=new DOMParser().parseFromString(input,'application/xml');if(doc.getElementsByTagName('parsererror').length)throw Error('EPUB XML/XHTML không hợp lệ.');return doc;}
+export const epubElements=(root:Document|Element,tag:string)=>Array.from(root.getElementsByTagNameNS('*',tag));
+const forbidden=new Set(['script','iframe','frame','frameset','object','embed','applet','base','form','input','textarea','button','select','meta','link','foreignobject','audio','video','source','animate','animatemotion','animatetransform','set','discard','use']);
+/** Detached XML, never attached to the parent DOM. Resource URLs become inert data attributes. */
+export function sanitizeEpubChapter(input:string,path:string):EpubLayout{
+ const doc=epubXml(input),body=epubElements(doc,'body')[0];if(!body)throw Error('EPUB thiếu nội dung chương.');const elements=epubElements(doc,'style');if(elements.length>30)throw Error('EPUB có quá nhiều stylesheet.');const styles=elements.map(s=>{const text=s.textContent??'';if(text.length>262144)throw Error('EPUB CSS vượt giới hạn.');return {path,text};});
+ for(const element of [body,...Array.from(body.querySelectorAll('*'))]){const tag=element.localName.toLowerCase();if(forbidden.has(tag)||tag==='style'){element.remove();continue;}for(const attr of Array.from(element.attributes)){const key=attr.localName.toLowerCase();if(key.startsWith('on')||['srcset','poster','data','action','formaction','target','download','autofocus','contenteditable'].includes(key)){element.removeAttribute(attr.name);continue;}if(['src','href','background'].includes(key)){element.setAttribute('data-epub-'+key.replace(':','-'),attr.value);element.removeAttribute(attr.name);}}}
+ const nodes:string[]=[],walker=doc.createTreeWalker(body,4);while(walker.nextNode()){const node=walker.currentNode as Text;if(!node.data.trim())continue;node.data=node.data.replace(/\r\n?/g,'\n');nodes.push(node.data);}if(nodes.length>10000||nodes.join('\n').length>128000)throw Error('Chương EPUB vượt giới hạn chữ; chưa nhập một phần.');
+ return {path,body:new XMLSerializer().serializeToString(body),styles,nodes};
+}

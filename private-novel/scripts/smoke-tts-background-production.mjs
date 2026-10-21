@@ -1,0 +1,22 @@
+import {chromium,devices,expect} from '@playwright/test';
+import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
+const origin='https://thu-phong-private.pages.dev',dir='.dsh-tmp/tts-background-production';mkdirSync(dir,{recursive:true});
+const html=(await(await fetch(origin)).text()).trim();expect(html).toBe(readFileSync('dist/index.html','utf8').trim());
+const browser=await chromium.launch({channel:'msedge'}),context=await browser.newContext({...devices['Pixel 7'],serviceWorkers:'block'}),spoken=[];
+try{
+ await context.route(origin+'/api/**',r=>r.fulfill({status:503}));
+ await context.route(origin+'/api/ai/translate',r=>{const input=r.request().postDataJSON();return r.fulfill({json:{result:input.text,model:input.model,finishReason:'STOP',inputTokens:1,outputTokens:1}});});
+ await context.route('https://ottsy.weilbyte.dev/api/generation',r=>{spoken.push(r.request().postDataJSON().text);return r.fulfill({json:{success:true,data:'//PkxAAAAAAA'}});});
+ await context.addInitScript(()=>{window.__audios=[];window.__plays=0;window.Audio=class{currentTime=0;playbackRate=1;constructor(){window.__audios.push(this);}removeAttribute(){}load(){}play(){window.__plays++;return Promise.resolve();}pause(){}};});
+ const page=await context.newPage();page.setDefaultTimeout(30000);await page.goto(origin);
+ await page.getByRole('button',{name:/Thêm truyện TXT/}).click();await page.getByLabel('Tên truyện',{exact:true}).fill('Kiểm tra TTS khi trang ẩn');await page.getByLabel('Hoặc dán nội dung',{exact:true}).fill('Chương 1\n'+Array.from({length:20},(_,i)=>`Câu thử số ${i} để kiểm tra chuyển âm thanh.`).join('\n'));await page.getByRole('button',{name:'Nhập truyện',exact:true}).click();
+ await expect(page.locator('.reader-book-heading h1')).toHaveText('Kiểm tra TTS khi trang ẩn');const bookId=page.url().split('/')[4];
+ const source=()=>page.evaluate(async()=>{const database=await new Promise((resolve,reject)=>{const r=indexedDB.open('thu-phong-v1');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});try{return await new Promise((resolve,reject)=>{const tx=database.transaction('chapters','readonly'),r=tx.objectStore('chapters').getAll();tx.oncomplete=()=>resolve(r.result.map(c=>({id:c.id,revision:c.revision,text:c.text})));tx.onerror=()=>reject(tx.error);});}finally{database.close();}});
+ const before=await source(),listen=page.getByRole('button',{name:'Nghe truyện nhanh',exact:true});await listen.click();await expect(listen).toHaveAttribute('title','Tạm dừng nghe');await expect.poll(()=>spoken.length).toBe(3);
+ await page.evaluate(()=>{window.__hidden=true;window.__followReads=0;Object.defineProperty(document,'hidden',{configurable:true,get:()=>window.__hidden});Object.defineProperty(document,'visibilityState',{configurable:true,get:()=>window.__hidden?'hidden':'visible'});const original=Element.prototype.getBoundingClientRect;Element.prototype.getBoundingClientRect=function(){if(this.classList.contains('speaking'))window.__followReads++;return original.call(this);};document.dispatchEvent(new Event('visibilitychange'));});
+ for(let i=1;i<=4;i++){const plays=await page.evaluate(()=>{const count=window.__plays;window.__audios[0].onended?.();return count;});await expect.poll(()=>page.evaluate(()=>window.__plays)).toBeGreaterThan(plays);await expect.poll(()=>spoken.length).toBe(i+3);}
+ await page.waitForTimeout(650);expect(await page.evaluate(()=>window.__followReads)).toBe(0);expect(await page.evaluate(()=>window.__audios.length)).toBe(1);expect(new Set(spoken).size).toBe(spoken.length);
+ expect(await page.evaluate(id=>JSON.parse(localStorage.getItem('tts-cursor:v1:'+id)).offset,bookId)).toBeGreaterThan(0);
+ await page.evaluate(()=>{window.__hidden=false;document.dispatchEvent(new Event('visibilitychange'));});await expect.poll(()=>page.evaluate(()=>window.__followReads)).toBeGreaterThan(0);await expect(listen).toHaveAttribute('title','Tạm dừng nghe');expect(await source()).toEqual(before);
+ const report={status:'passed',synthetic:true,androidLayout:true,realAndroidLock:false,mockedAiAndAudio:true,cloudWrites:false,sourceUnchanged:true,hiddenTransitions:4,hiddenLayoutReads:0,singleAudio:true,checkpointRetained:true,visibleFollowResumed:true,bundle:html.match(/src="([^"]+\.js)"/)[1]};writeFileSync(dir+'/report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+}finally{await context.close();await browser.close();}

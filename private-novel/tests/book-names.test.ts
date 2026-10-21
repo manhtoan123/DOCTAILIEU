@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
-import {db} from '../src/db';
-import {saveBookNames} from '../src/book-names';
+import {db} from '../src/core/db';
+import {saveBookNames} from '../src/features/names-convert/services/book-names';
 beforeEach(async()=>{await db.delete();await db.open();await db.books.bulkAdd(['a','b'].map(id=>({id,title:id,author:'',status:'ready' as const,createdAt:1,updatedAt:1,chapterCount:0,charCount:0})));await db.names.bulkAdd([{id:'a1',bookId:'a',key:'李',value:'Lý'},{id:'a2',bookId:'a',key:'王',value:'Vương'},{id:'b1',bookId:'b',key:'李',value:'Tên B'}]);});
 afterEach(()=>vi.restoreAllMocks());
 it('merges only this book, preserves omitted keys and existing identity; last duplicate wins',async()=>{

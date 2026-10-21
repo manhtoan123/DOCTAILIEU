@@ -1,0 +1,32 @@
+.bilingual-title,.title-primary,.title-original{display:block;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.title-original{font-size:12px;font-weight:400;line-height:1.5;color:var(--muted);opacity:.85;margin-top:4px}
+.album-card-info strong{white-space:normal;overflow:visible}
+.album-card-wrap .album-card-item{padding-right:14px}
+.room-footer{margin-top:32px;padding:4px 0 calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--border,#eee)}
+.room-footer a{display:flex;align-items:center;justify-content:flex-end;min-height:44px;max-width:720px;margin-left:auto;font-size:11px;line-height:1.5;font-weight:400;color:var(--muted,#777);text-align:right;text-decoration:none;overflow-wrap:anywhere}
+.room-footer a:hover{color:var(--muted,#777);text-decoration:none}
+.room-footer a:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.anthology-markers{max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:8px;margin:16px 0}
+.anthology-markers label{display:flex;flex-direction:row;align-items:flex-start;gap:10px;margin:0;padding:8px;min-height:44px;font-weight:400;overflow-wrap:anywhere}
+.anthology-markers input{flex-shrink:0;margin-top:4px}
+.album-title-group h1 .title-original{font-size:13px;margin-top:3px}
+.album-breadcrumbs{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin:6px 0 18px;font-size:13px;overflow-wrap:anywhere}
+.album-breadcrumbs>span{display:inline-flex;align-items:center;gap:4px;max-width:100%;min-width:0}
+.album-breadcrumbs .text-button{min-height:44px;text-align:left;padding:5px 8px;white-space:normal;overflow-wrap:anywhere}
+.album-breadcrumbs [aria-current="page"]{min-width:0}
+.book-detail h3>.text-button .title-original{font-size:12px}
+.library-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.library-toolbar .search{width:min(100%,440px);min-width:0}
+.library-view{flex-shrink:0}
+.library-view button{min-height:44px}
+.book-card .chapter-search-match{margin:10px 0;overflow-wrap:anywhere}
+.chapter-search-match>.text-button{display:block;text-align:left;padding:0;min-height:44px;white-space:normal;overflow-wrap:anywhere}
+.chapter-search-match>small{display:block}
+.book-grid.list-shelf{display:block;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.list-shelf .book-card{align-items:flex-start;padding:16px;gap:16px}
+.list-shelf .book-card:last-child{border-bottom:0}
+.list-shelf .book-detail{flex:1;min-width:0;padding:0}
+.list-shelf .cover{position:relative;flex-shrink:0;width:72px;min-width:72px;height:96px;overflow:hidden;border-radius:6px}
+.list-shelf .cover img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.list-shelf .book-detail>div{display:flex;justify-content:space-between;gap:12px}
+@media(max-width:700px){.library-toolbar{flex-direction:row}.library-toolbar .search{width:100%}.list-shelf .book-card{padding:12px;gap:12px}.list-shelf .cover{width:54px;min-width:54px;height:76px}}

@@ -1,0 +1,42 @@
+import {test,expect,type Page} from '@playwright/test';
+const book='minimal-book',chapter='minimal-one';
+async function seed(page:Page){
+ await page.route('**/api/**',r=>r.fulfill({status:503}));await page.goto('/');
+ await page.evaluate(async()=>{const {db}=await import('/src/core/db.ts'),{AI_DEFAULTS}=await import('/src/features/ai/services/ai-reading.ts');
+  await db.books.put({id:'minimal-book',title:'Truyện thử giao diện',author:'',status:'ready',createdAt:1,updatedAt:1,charCount:8,chapterCount:2});
+  await db.chapters.bulkPut([{id:'minimal-one',bookId:'minimal-book',title:'Chương 1',order:0,text:'你好世界',revision:1,sourceId:''},{id:'minimal-two',bookId:'minimal-book',title:'Chương 2',order:1,text:'再见世界',revision:1,sourceId:''}]);
+  await db.settings.put({key:'reader-options',value:{preloadAi:false}});
+  const profiles=[{id:'default',title:'Mặc định',updatedAt:1,settings:AI_DEFAULTS},{id:'clear',title:'Trong sáng',updatedAt:2,settings:{...AI_DEFAULTS,model:'gemini-2.5-flash',systemPrompt:'Dịch trong sáng.'}},{id:'natural',title:'Tự nhiên',updatedAt:3,settings:{...AI_DEFAULTS,model:'gemini-2.5-flash',systemPrompt:'Dịch tự nhiên.'}}];
+  await db.settings.put({key:'prompt-stock-v1',value:{version:1,defaultProfileId:'default',profiles}});
+  await db.settings.put({key:'ai-book-settings:minimal-book',value:{...profiles[1].settings,model:'gemini-3.5-flash',chosenProfileId:'clear'}});
+  await db.names.put({id:'minimal-name',bookId:'minimal-book',key:'世界',value:'thế giới',updatedAt:1});
+ });await page.goto(`/read/${book}/${chapter}`);await expect(page.locator('.reader-book-heading h1')).toHaveText('Truyện thử giao diện');
+}
+const open=async(page:Page)=>{await page.getByRole('button',{name:'Tùy chỉnh prompt và model',exact:true}).click();return page.getByRole('dialog',{name:'Dịch AI',exact:true});};
+
+test('reader has two compact model rows, identifies active prompt despite model override, and applies a chosen profile',async({page})=>{
+ await seed(page);let calls=0;await page.route('**/api/ai/translate',r=>{calls++;return r.fulfill({status:503});});const panel=await open(page);
+ await expect(panel.getByLabel('Chương này',{exact:true})).toContainText('Chưa dịch');await expect(panel.getByLabel('Chương sau',{exact:true})).toContainText('Đã tắt dịch sẵn');
+ await expect(panel.getByLabel('Chọn prompt',{exact:true})).toHaveValue('clear');await expect(panel.getByLabel('Chọn prompt').locator('option:checked')).toHaveText('Trong sáng');
+ await expect(panel.getByLabel('User Prompt Template',{exact:true})).toHaveCount(0);await expect(panel.getByLabel('System Prompt',{exact:true})).toHaveCount(0);await expect(panel.getByText('Thử prompt',{exact:true})).toHaveCount(0);await expect(panel.getByRole('button',{name:'Lưu prompt',exact:true})).toHaveCount(0);await expect(panel.locator('.ai-keys-details')).toHaveCount(0);
+ await expect(panel.getByLabel('Name riêng đưa vào AI')).toHaveCount(0);await panel.locator('.ai-book-names summary').click();await expect(panel.getByLabel('Name riêng đưa vào AI')).toHaveValue('世界=thế giới');
+ await panel.getByLabel('Chọn prompt').selectOption('natural');await expect.poll(()=>page.evaluate(async()=>{const {db}=await import('/src/core/db.ts');return (await db.settings.get('ai-book-settings:minimal-book'))?.value;})).toMatchObject({systemPrompt:'Dịch tự nhiên.',chosenProfileId:'natural'});expect(calls).toBe(0);
+ await panel.press('Escape');await expect(panel).toHaveCount(0);await expect(page.getByRole('button',{name:'Tùy chỉnh prompt và model',exact:true})).toBeFocused();
+});
+
+test('completed cache shows actual models of both chapters without issuing a translation',async({page})=>{
+ await seed(page);const saved=await page.evaluate(async()=>{const{db}=await import('/src/core/db.ts'),{readReadingAiSettings}=await import('/src/features/ai/services/ai-reading.ts'),{recommendedFallbackModels}=await import('/src/features/ai/services/ai-fallback.ts'),{writeAiReadingCache}=await import('/src/features/ai/services/ai-reading-cache.ts');const settings=readReadingAiSettings((await db.settings.get('ai-book-settings:minimal-book'))?.value),effective={...settings,fallbackModels:recommendedFallbackModels(settings.model)},names=await db.names.where('bookId').equals('minimal-book').toArray();return Promise.all(['minimal-one','minimal-two'].map(async(id,i)=>{const c=await db.chapters.get(id);return writeAiReadingCache({bookId:c!.bookId,id:c!.id,revision:c!.revision,text:c!.text},effective,names,{model:i?'gemini-2.5-flash':'gemini-3.5-flash',result:'Bản dịch đã lưu.',finishReason:'STOP',inputTokens:1,outputTokens:2});}));});expect(saved).toEqual([true,true]);
+ let calls=0;await page.route('**/api/ai/translate',r=>{calls++;return r.fulfill({status:503});});const panel=await open(page);await expect(panel.getByLabel('Chương này',{exact:true})).toContainText('Gemini 3.5 Flash');await expect(panel.getByLabel('Chương sau',{exact:true})).toContainText('Gemini 2.5 Flash');expect(calls).toBe(0);
+});
+
+test('configuration moves outside the reader, saves per book, and keys poll only while expanded',async({page})=>{
+ await seed(page);let keys=0;await page.route('**/api/ai/keys',r=>{keys++;return r.fulfill({json:{keys:[],stored:0,secretPool:1,active:1}});});const panel=await open(page);await panel.getByRole('button',{name:'Cài đặt dịch AI'}).click();await expect(page).toHaveURL(/\/settings\/ai\/minimal-book$/);await expect(page.getByLabel('Truyện cấu hình AI')).toHaveValue(book);const editor=page.getByRole('region',{name:'Cấu hình dịch AI'});await expect(editor.getByLabel('User Prompt Template',{exact:true})).toBeVisible();await expect(editor.getByLabel('Model',{exact:true})).toHaveValue('gemini-3.5-flash');await editor.getByRole('button',{name:'Nâng cao',exact:true}).click();await expect(editor.getByLabel('System Prompt',{exact:true})).toHaveValue('Dịch trong sáng.');await editor.getByLabel('System Prompt',{exact:true}).fill('Chỉ dịch tiếng Việt, giữ nghĩa.');await editor.getByRole('button',{name:'Lưu prompt',exact:true}).click();await expect(editor.getByText('Đã lưu cài đặt',{exact:true})).toBeVisible();expect(keys).toBe(0);
+ await editor.locator('.ai-keys-details>summary').click();await expect.poll(()=>keys).toBe(1);await editor.locator('.ai-keys-details>summary').click();await page.clock.install();await page.clock.runFor(6000);expect(keys).toBe(1);
+ await page.getByLabel('Truyện cấu hình AI').selectOption('');await expect(page).toHaveURL(/\/settings\/ai$/);await page.getByRole('button',{name:'Nâng cao',exact:true}).click();await expect(page.getByLabel('System Prompt',{exact:true})).not.toHaveValue('Chỉ dịch tiếng Việt, giữ nghĩa.');await page.getByLabel('Truyện cấu hình AI').selectOption(book);await page.getByRole('button',{name:'Nâng cao',exact:true}).click();await expect(page.getByLabel('System Prompt',{exact:true})).toHaveValue('Chỉ dịch tiếng Việt, giữ nghĩa.');
+ expect(await page.evaluate(async()=>{const{db}=await import('/src/core/db.ts');return (await db.chapters.get('minimal-one'))?.text;})).toBe('你好世界');
+});
+
+test('mobile panel fits a short viewport and uses reader theme; missing book settings cannot overwrite another book',async({page},info)=>{
+ await seed(page);await page.setViewportSize({width:360,height:500});await page.evaluate(async()=>{const {db}=await import('/src/core/db.ts');await db.settings.put({key:'reader',value:{...(await import('/src/core/domain.ts')).defaults,theme:'dark'}});});await page.reload();await expect(page.locator('.reader')).toHaveClass(/theme-dark/);const panel=await open(page);const bounds=await panel.boundingBox();expect(bounds).toBeTruthy();expect(bounds!.x).toBeGreaterThanOrEqual(0);expect(bounds!.y).toBeGreaterThanOrEqual(0);expect(bounds!.x+bounds!.width).toBeLessThanOrEqual(360);expect(bounds!.y+bounds!.height).toBeLessThanOrEqual(500);await expect(panel).toHaveJSProperty('scrollWidth',await panel.evaluate(e=>e.clientWidth));await expect(panel.getByRole('button',{name:'Cài đặt dịch AI'})).toBeVisible();await page.screenshot({path:`.dsh-tmp/ai-minimal-${info.project.name}.png`});
+ await page.goto('/settings/ai/missing-book');await expect(page.getByText('Chưa có truyện này trên thiết bị.',{exact:false})).toBeVisible();await expect(page.getByRole('region',{name:'Cấu hình dịch AI'})).toHaveCount(0);expect(await page.evaluate(async()=>{const{db}=await import('/src/core/db.ts');return await db.settings.get('ai-book-settings:missing-book');})).toBeUndefined();
+});

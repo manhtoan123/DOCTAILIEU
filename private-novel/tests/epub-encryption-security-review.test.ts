@@ -1,0 +1,21 @@
+import {build} from 'esbuild';
+import {zipSync} from 'fflate';
+import {chromium,type Browser,type Page} from '@playwright/test';
+import {beforeAll,afterAll,describe,it,expect} from 'vitest';
+
+let browser:Browser,page:Page;
+const utf8=(value:string)=>new TextEncoder().encode(value);
+const marker=(cipher:string)=>`<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:e="http://www.w3.org/2001/04/xmlenc#"><e:EncryptedData><e:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-ctr"/><e:CipherData>${cipher}</e:CipherData></e:EncryptedData></encryption>`;
+const ref=(uri:string)=>`<e:CipherReference URI="${uri}"/>`;
+function archive(encryption:string){return Array.from(zipSync({mimetype:utf8('application/epub+zip'),'META-INF/container.xml':utf8('<container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>'),'META-INF/encryption.xml':utf8(encryption),'OPS/book.opf':utf8('<package><metadata><title>Synthetic</title></metadata><manifest><item id="c" href="ch.xhtml" media-type="application/xhtml+xml"/><item id="css" href="style.css" media-type="text/css"/></manifest><spine><itemref idref="c"/></spine></package>'),'OPS/ch.xhtml':utf8('<html><head><link rel="stylesheet" href="style.css"/></head><body><p>Plaintext synthetic chapter</p></body></html>'),'OPS/style.css':utf8('p{color:blue}')},{level:0}));}
+async function open(encryption:string){return page.evaluate(async bytes=>{const api=(window as any).__epubEncryptionReview;try{const pkg=await api.openEpubPackage(new Blob([new Uint8Array(bytes)])),chapter=await api.readEpubChapter(pkg,pkg.spine[0].path);return {accepted:true,nodes:chapter.nodes,styles:chapter.styles};}catch(error){return {accepted:false,error:(error as Error).message};}},archive(encryption));}
+beforeAll(async()=>{const bundle=await build({stdin:{contents:"export {openEpubPackage,readEpubChapter} from './src/features/import-export/services/epub-package';",resolveDir:process.cwd(),sourcefile:'epub-encryption-review-entry.ts',loader:'ts'},bundle:true,write:false,format:'iife',globalName:'__epubEncryptionReview',platform:'browser',target:'es2022'});browser=await chromium.launch({channel:'msedge',headless:true});page=await browser.newPage();await page.route('https://epub-review.invalid/**',route=>route.abort());await page.addScriptTag({content:bundle.outputFiles[0].text});},30000);
+afterAll(async()=>{await browser?.close();});
+
+describe('independent EPUB dangling encryption metadata policy',()=>{
+ it('ignores only an absent referenced entry and reads unchanged plaintext chapter/CSS',async()=>{const result=await open(marker(ref('OPS/Styles/absent.css')));expect(result.accepted).toBe(true);expect(result.nodes).toEqual(['Plaintext synthetic chapter']);expect(result.styles).toEqual([{path:'OPS/style.css',text:'p{color:blue}'}]);});
+ it('refuses a present encrypted chapter, stylesheet or metadata entry even among dangling references',async()=>{for(const uri of ['OPS/ch.xhtml','OPS/style.css','META-INF/container.xml'])expect((await open(marker(ref('OPS/absent.css')+ref(uri)))).accepted,uri).toBe(false);});
+ it('refuses invalid and encoded paths instead of mistaking a referenced existing resource for a dangling marker',async()=>{for(const uri of ['', '../escape.css','/absolute.css','https://epub-review.invalid/encrypted.css','OPS/ch%2Exhtml','OPS/ch.xhtml#fragment','OPS/ch.xhtml?query','%2e%2e/escape.css'])expect((await open(marker(ref(uri)))).accepted,uri).toBe(false);});
+ it('refuses inline ciphertext or empty CipherData without a usable CipherReference',async()=>{for(const cipher of ['<e:CipherValue>AA==</e:CipherValue>',''])expect((await open(marker(cipher))).accepted).toBe(false);});
+ it('enforces encryption XML byte/parse/entity limits without fetching external references',async()=>{const requests:string[]=[];const listener=(request:{url():string})=>requests.push(request.url());page.on('request',listener);try{for(const xml of ['<encryption>', '<!DOCTYPE encryption [<!ENTITY x SYSTEM "https://epub-review.invalid/entity">]>'+marker(ref('OPS/absent.css')),marker(ref('OPS/absent.css'))+' '.repeat(65536)])expect((await open(xml)).accepted).toBe(false);expect(requests).toEqual([]);}finally{page.off('request',listener);}});
+});

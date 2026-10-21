@@ -1,0 +1,33 @@
+import {chromium,expect} from '@playwright/test';
+import {readFileSync} from 'node:fs';
+const origin='https://thu-phong-private.pages.dev';
+const html=await fetch(origin).then(r=>r.text());
+if(html.trim()!==readFileSync(new URL('../dist/index.html',import.meta.url),'utf8').trim())throw new Error('Canonical build differs from dist');
+const browser=await chromium.launch({channel:'msedge'});
+try{for(const viewport of [{width:1280,height:800},{width:510,height:530}]){
+ const context=await browser.newContext({viewport});
+ await context.route(origin+'/api/cloud/**',r=>r.fulfill({json:r.request().url().includes('dictionaries')?{version:1,dictionaries:[]}:{books:[]}}));
+ const page=await context.newPage();
+ await page.goto(origin+'/settings/prompts');await expect(page.getByLabel('Tên prompt')).toBeEnabled();
+ await page.getByLabel('Tên prompt').fill('Thử tổng hợp');
+ await page.getByLabel('System Prompt kho').fill('Dịch sang tiếng Việt, chỉ trả bản dịch. 林儿=Lâm Nhi.');
+ await page.getByRole('button',{name:'Lưu prompt',exact:true}).click();
+ await expect(page.getByLabel('Tên prompt')).toHaveValue('Thử tổng hợp');
+ await page.reload();await expect(page.getByLabel('Prompt trong kho').locator('option')).toContainText(['Thêm prompt','Mặc định','Thử tổng hợp']);
+ await page.goto(origin);await page.getByRole('button',{name:'＋ Thêm truyện TXT',exact:true}).click();
+ await page.getByLabel('Tên truyện',{exact:true}).fill('Prompt synthetic');
+ await page.getByLabel('Hoặc dán nội dung',{exact:true}).fill('第1章\n林儿笑着说：“你好。”');
+ await page.getByRole('button',{name:'Nhập truyện',exact:true}).click();
+ await page.getByRole('button',{name:'Tùy chỉnh prompt và model',exact:true}).click();
+ await page.getByLabel('Chọn prompt').selectOption({label:'Chung · Thử tổng hợp'});
+ await expect(page.getByLabel('System Prompt',{exact:true})).toHaveValue('Dịch sang tiếng Việt, chỉ trả bản dịch. 林儿=Lâm Nhi.');
+ await page.getByRole('button',{name:'Ẩn Dịch AI'}).click();
+ await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Lâm Nhi',{timeout:65000});
+ await page.reload();await page.getByRole('button',{name:'Tùy chỉnh prompt và model',exact:true}).click();
+ await expect(page.getByLabel('Chọn prompt')).not.toHaveValue('');
+ await expect(page.getByLabel('System Prompt',{exact:true})).toHaveValue('Dịch sang tiếng Việt, chỉ trả bản dịch. 林儿=Lâm Nhi.');
+ await page.getByRole('button',{name:'Ẩn Dịch AI'}).click();await page.getByRole('button',{name:'Bản gốc',exact:true}).click();
+ await expect(page.locator('.prose')).toContainText('林儿笑着说');
+ console.log(JSON.stringify({viewport,warehouseReload:true,oneSelect:true,bookSelectionReload:true,realGemini:true,rawPreserved:true,cloudMocked:true}));
+ await context.close();
+}}finally{await browser.close();}

@@ -1,0 +1,11 @@
+<!doctype html><html><body><div id="probe"></div><script type="module">
+import React from 'react';import {createRoot} from 'react-dom/client';import Dexie from 'dexie';
+import {db} from '/src/core/db.ts';import ImportDialog from '/src/features/import-export/components/ImportDialog.tsx';import BatchImportDialog from '/src/features/import-export/components/BatchImportDialog.tsx';import FolderImportDialog from '/src/features/import-export/components/FolderImportDialog.tsx';
+await db.books.put({id:'keep',title:'Existing',author:'',createdAt:1,updatedAt:1,status:'ready',chapterCount:0,charCount:0});
+await db.dictionaries.put({kind:'names',name:'synthetic',sha256:'synthetic',blob:new Blob(['测试=Thử']),updatedAt:1});
+const original=db.books.update.bind(db.books);db.books.update=(id,patch)=>{const promise=original(id,patch);if(patch.status==='ready')return promise.then(count=>Dexie.waitFor(new Promise(resolve=>{window.commitHeld=true;window.releaseCommit=()=>resolve(count);})));return promise;};
+const root=createRoot(document.querySelector('#probe'));window.probeDone=0;window.unmountProbe=()=>root.unmount();
+const mode=new URL(location.href).searchParams.get('mode');const props={onClose(){},onDone(){window.probeDone++;},initialAlbum:''};
+const text='第1章 起点\n你好。\n第2章 后来\n正文。';const files=['A','B'].map(name=>new File([text],name+'.txt'));
+root.render(React.createElement(mode==='batch'?BatchImportDialog:mode==='folder'?FolderImportDialog:ImportDialog,{...props,...(mode==='batch'?{files,encoding:'utf-8',pattern:''}:{})}));
+</script></body></html>

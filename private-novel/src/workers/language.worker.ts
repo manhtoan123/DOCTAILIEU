@@ -1,26 +1,19 @@
-import {LanguageEngine} from '../language';
-import type {DictKind} from '../domain';
+import {LanguageEngine} from '../features/names-convert/services/language';
+import type {DictKind} from '../core/domain';
+import {readDictionary} from '../features/names-convert/services/dictionary-reader';
 let engine=new LanguageEngine();
 self.onmessage=async(e:MessageEvent)=>{
   const {id,type}=e.data;
   try {
     if(type==='load') {
-      engine=new LanguageEngine();const stats=[];
+      const next=new LanguageEngine();const stats=[];
       for(const file of e.data.files as {kind:DictKind;blob:Blob;name:string}[]) {
-        let tail='';let valid=0;let invalid=0;let processed=0;
-        const decoder=new TextDecoder('utf-8',{fatal:true});
-        const line=(s:string)=>{if(!s.trim()||s.trim().startsWith('#'))return;engine.add(file.kind,s)?valid++:invalid++;};
-        for(let offset=0;offset<file.blob.size;offset+=262144){
-          const bytes=await file.blob.slice(offset,offset+262144).arrayBuffer();processed+=bytes.byteLength;
-          tail+=decoder.decode(bytes,{stream:true});let p:number;while((p=tail.indexOf('\n'))>=0){line(tail.slice(0,p));tail=tail.slice(p+1);}
-          if(tail.length>65536)throw new Error(`Dòng từ điển quá dài: ${file.name}`);
-          self.postMessage({id,type:'progress',message:`Đang nạp ${file.name}`,percent:Math.round(processed/file.blob.size*100)});
-        }
-        tail+=decoder.decode();if(tail)line(tail);stats.push({name:file.name,valid,invalid});
+        const kind=file.kind==='names2'&&/^(DaiTuNhanXung|Pronouns|DaiTu)\.txt$/i.test(file.name)?'pronouns':file.kind;
+        stats.push(await readDictionary(kind,file.blob,file.name,line=>{next.add(kind,line);},percent=>self.postMessage({id,type:'progress',message:`Đang mở từ điển đã lưu: ${file.name}`,percent})));
       }
+      engine=next;
       self.postMessage({id,type:'result',result:stats});
-    }else if(type==='convert')self.postMessage({id,type:'result',result:engine.convert(e.data.text,e.data.names)});
+    }else if(type==='convert')self.postMessage({id,type:'result',result:engine.convert(e.data.text,e.data.names,e.data.options)});
     else if(type==='lookup')self.postMessage({id,type:'result',result:engine.lookup(e.data.source)});
   }catch(error){self.postMessage({id,type:'error',message:error instanceof Error?error.message:String(error)});}
 };
-

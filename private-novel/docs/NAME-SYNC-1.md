@@ -1,0 +1,21 @@
+# NAME-SYNC-1 — nhận Name theo trang
+
+M0: API đang trả tối đa 99 bản ghi/trang, nhưng client mở một transaction và đọc/ghi toàn bộ replica cho từng Name. Panel AI đọc IndexedDB qua liveQuery; không tải từng ảnh để lấy Name. Đọc cloud của truyện được báo lỗi ngày 14/10: 1.243 Name còn hiệu lực, 13 trang/1.247 bản ghi, 11.792 ms trên kết nối máy kiểm tra (không phải phép đo máy người dùng).
+
+Phạm vi: gom các Name liên tiếp, không trùng ID trong một trang vào một transaction có giới hạn 99. Không đổi API, quota, nội dung Name, ID cũ, chiều gửi PUT, chu kỳ sync hay cấu trúc lưu trữ. Bản ghi khác và ID lặp tiếp tục tuần tự.
+
+Invariant: kiểm định scope/ID/revision trước ghi; kiểm tra lại bản local và trạng thái sách trong transaction; giữ local edit, tombstone và download baseline; cập nhật Name và replica nguyên tử; lỗi thì không tiến cursor; chỉ phát sự kiện sau commit. Không sửa dữ liệu truyện người dùng.
+
+Nghiệm thu: benchmark IndexedDB thật với 1.241 Name tổng hợp trước/sau (thời gian và số lần ghi replica); regression xung đột, xóa, rollback, revision cũ, phản hồi sai; review độc lập; full unit, build, E2E shared-state/Name; smoke bản phát hành bằng fixture cô lập. Không kết luận tốc độ Android thật hoặc chiều upload đã cải thiện.
+
+Đã đo trên Edge/IndexedDB thật với mạng giả lập: trước 15.636 ms, 1.256 lần ghi replica, 1.241 cập nhật liveQuery; sau 5.166 ms, 28 lần ghi, 14 cập nhật. Android-layout trên cùng máy 6.227 ms. Mỗi lượt 13 GET, không PUT Name; đủ 1.241 giá trị, giữ ID cũ và cú pháp ảnh. Log before-2.log/after.log trong `.dsh-tmp/name-sync/`. Đây là số đo fixture, không cộng với thời gian tải cloud thật để dự đoán máy khác.
+
+Review độc lập GPT-6.1 Sol/high: không phát hiện lỗi trong phạm vi; 76 regression + 5 ca độc lập PASS (revision cũ, scope/ID sai, sách bị xóa giữa snapshot/commit, event sau commit/không phát khi rollback). Test mới `tests/name-sync-independent-review.test.ts`; log review.log/independent-review-fixed.log. Lỗi đầu của fixture CustomEvent được sửa; log đầu được giữ.
+
+Lượt full đầu có timeout native EPUB/renderer/import ở concurrency mặc định, kèm ledger bị ảnh hưởng sau timeout. Không đổi test timeout/dependencies/logic EPUB; giữ full-unit.log và chạy lại toàn bộ với maxWorkers=2. Build đầu bắt implicit-any của snapshots và overload get trong mock, đã bổ sung type/cast; không đổi runtime. Kết quả cuối ghi bên dưới sau nghiệm thu.
+
+Nghiệm thu cuối: full `npm.cmd test -- --maxWorkers=2`: 109 files/1.436 tests PASS; build PASS (`build-fixed.log`). E2E: 24 ca shared-state/Name settings/ảnh + 2 benchmark đều có kết quả PASS trên desktop và Android-layout. Lượt 24 đầu 17 PASS/7 lỗi: 4 chờ load của Vite (trace một CSS mất ~51 s), 1 iframe selection flaky, 2 locator Model B cũ. Chỉ retry 7 lỗi với workers=1: 5 PASS; cập nhật fixture Model B thành chuỗi dự phòng hiển thị + đủ 3 model đúng thứ tự trong DB máy nhận (review độc lập không thấy assertion yếu đi). Android offline PASS; desktop có một timeout tại seed trước logic, chuyển 7 navigation của shared-state fixture sang domcontentloaded, giữ các assertion giao diện/dữ liệu: desktop offline/conflict 3 lần liên tiếp PASS. Không đổi product để né lỗi fixture. Log e2e.log/e2e-retry.log/offline-fixed.log/offline-desktop-dom.log giữ đủ.
+
+14/10/2026: Pages `6fa8cb8f/master`, bundle `index-nrr22fN1.js`, AI Worker không đổi. Production smoke trong context riêng, chỉ truyện tổng hợp/API giả lập: 1.241 Name/13 GET/7.497 ms, đúng tất cả giá trị và cú pháp ảnh, panel AI 1.241, Name PUT=0, cloud write thật=0, AI request thật=0; tab người dùng giữ nguyên. Script `scripts/smoke-name-sync-production.mjs`, production.json/production.png/production-complete.log. Smoke đầu dùng default expect.poll 5 s nên dừng ở 1.089 Name; đặt ngân sách 30 s cho toàn fixture (page default timeout không áp dụng cho standalone expect), không đổi assertion, giữ production.log.
+
+Giới hạn: nhận Name theo nhóm; chiều gửi vẫn một PUT/Name. Lần đầu trên máy khác vẫn cần tải cloud, và Name theo từng truyện được đồng bộ tuần tự. Không đo thiết bị/mạng của người dùng, không kiểm Android thật. Không tăng giới hạn số Name hoặc dung lượng, không sửa/tái nhập truyện cũ, không đổi bytes/SHA/snapshot/API/schema.

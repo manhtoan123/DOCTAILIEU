@@ -1,27 +1,34 @@
-# Private Novel Reader — hướng dẫn tiếp tục
+# Private Novel Reader — quy tắc hiện hành
 
-- Đọc `HANDOFF.md` trước khi làm việc, sau đó `WEB-READER-IMPLEMENTATION-PLAN.md`.
-- Dự án ứng dụng: `private-novel/`. Nguồn tham khảo và kho truyện ở ổ D: chỉ đọc; không tự sửa, xóa, đổi tên, chạy script hoặc đưa chúng lên mạng/Git.
-- Khi cần đối chiếu hành vi importer/splitter/reader/TTS hoặc từ điển, được tham khảo mã nguồn dưới `D:\linh tinh\tm` ở chế độ chỉ đọc; phải ghi nguồn tham khảo và không sao chép nguyên mã/dữ liệu vào MVP nếu chưa có quyết định phù hợp.
-- Thiết bị đích: Chrome/Edge Windows và Chrome Android. Local-first; chỉ nhập truyện người dùng chọn.
-- Không thêm Gemini hoặc đồng bộ nội dung cloud vào MVP nếu chưa hoàn thành các chức năng local. TikTok TTS chỉ được thêm theo yêu cầu đã xác nhận của người dùng, qua adapter/gateway được phép; không sao chép userscript hoặc gọi proxy nội bộ của bên khác như một API công khai. Không gắn secret vào VITE_* hay bundle.
-- Khi kết thúc một đợt công việc, cập nhật HANDOFF.md: chức năng thật sự chạy, lệnh kiểm thử và kết quả, hạn chế, việc tiếp theo. Ghi quyết định đáng kể vào private-novel/docs/DECISIONS.md.
-- Không đánh dấu hoàn thành chức năng chưa kiểm thử; phân biệt rõ test tự động và kiểm thử thiết bị thật. Không tuyên bố đã deploy khi chỉ build local.
-- Mỗi lần sửa phải ghi nhật ký chi tiết để AI khác tiếp tục được: danh tính người/AI thực hiện, ngày giờ, phạm vi phiên, từng file và khu vực đã sửa, lý do/quyết định, lệnh kiểm thử và kết quả, giới hạn còn lại, cùng bước tiếp theo cụ thể. Không chỉ ghi “đã sửa”.
-- Cuối mỗi phiên cập nhật HANDOFF.md ngắn gọn (khoảng 100 dòng, chỉ trạng thái hiện hành); thêm nhật ký vào private-novel/docs/HANDOFF-LOG.md (append-only). Nếu đổi kỹ thuật hoặc phạm vi, thêm DECISIONS.md. Không ghi đè lịch sử trong log.
-- Vì nhiều AI/model có năng lực khác nhau, không giao phạm vi mơ hồ và không để AI sau mặc định tin kết quả AI trước. Mỗi nhiệm vụ phải có phạm vi nhỏ, invariant/tiêu chí nghiệm thu, test bắt buộc và giới hạn quyền sửa.
-- Không merge thay đổi chỉ dựa vào lời tự nhận của AI. Phải kiểm tra diff, chạy test/build liên quan và nếu thay đổi rủi ro cao (database, backup/restore, auth, dữ liệu người dùng) thì cần review độc lập trước khi chấp nhận.
-- AI review phải kiểm tra riêng lỗi mất dữ liệu, race/cancellation, migration/backward compatibility, bảo mật, edge case và test còn thiếu. Nếu chưa đủ bằng chứng thì ghi `chưa xác minh`, không đánh dấu hoàn thành.
+## Khởi động nhẹ (quyết định người dùng 11/10/2026)
+- Đọc `HANDOFF.md` nếu chưa có trong ngữ cảnh; sau đó chỉ đọc file/đoạn liên quan yêu cầu. Không đọc lại tài liệu đã đọc trong cùng phiên nếu không đổi.
+- Không bắt buộc đọc toàn bộ kế hoạch, DECISIONS hoặc HANDOFF-LOG. Dùng `rg -n` tìm chủ đề rồi đọc đoạn cần; kế hoạch hiện hành là chỉ mục, lịch sử ở docs/archive/.
+- Sửa nhỏ: đi thẳng tới code, diff và kiểm tra phạm vi. Không tự mở audit toàn sản phẩm, đóng M0, lập kế hoạch dài, refactor ngoài yêu cầu hoặc giải quyết backlog. M0 chỉ cần khi thêm khả năng dung lượng/bulk/kiến trúc mới.
+- Mặc định một agent; không spawn cho CSS/copy/UI đơn giản. Review độc lập chỉ khi có rủi ro dữ liệu/bảo mật thực sự; giao rõ file/invariant/test, không fork toàn lịch sử. Giữ medium; không tự nâng effort/đổi model, không giả báo id model.
+- Reviewer độc lập mặc định GPT-6.1 Sol / high (`gpt-6.1-sol`, reasoning `high`), theo quyết định người dùng 12/10/2026. Đây là ngoại lệ mức medium chỉ cho reviewer; agent chính giữ cấu hình hiện hành. Không tự chuyển sang Astra hoặc nâng effort thêm. Giữ nguyên phạm vi/invariant/regression và nghiệm thu review.
+- Output ngắn: tìm bằng rg, đọc theo đoạn, redirect log dài vào file rồi lấy summary/exit; khi fail chỉ lấy lỗi liên quan. Không in toàn dirtytree/diff/log hay polling không đổi. Không đọc thư mục archive trừ khi cần tra lịch sử.
 
-## Quy tắc thực thi từ 05/10/2026
+## Phạm vi và bảo toàn
+- App `private-novel/`; Chrome/Edge Windows + Chrome Android; local-first, chỉ nhập truyện được chọn.
+- Phân cấp bắt buộc: tác giả (Album) → series (Album con) → truyện → chương. Folder con nằm trong Album cha, không làm phẳng đường dẫn thành các Album ngang hàng; không gộp truyện/chương hay sửa dữ liệu cũ chỉ để đổi cách hiển thị.
+- D: chỉ đọc; không sửa/xóa/rename/chạy script/copy/upload/Git. Tham khảo `D:\linh tinh\tm` khi cần, ghi nguồn, không chép nguyên mã/dữ liệu vào app.
+- Giữ bytes/SHA/validation/atomicity/cancellation và cloud-delete trước local-delete. Không tự sửa/tái nhập truyện cũ.
+- Không PIN/login/AIcode/confirm phụ. AI public dùng secret server; không key trong VITE/bundle/file/Git/log/URL. Chỉ key người dùng cấp; theo chỉ đạo 20/10/2026, dịch chia phần cùng model được dùng tối đa 2 key đồng thời cho các phần khác nhau trong một chương, qua lease/cooldown hiện có. Không tăng fan-out ngoài mức này, không thêm billing/provider.
+- TikTok TTS chỉ gateway đã được chấp nhận, không Web Speech fallback/userscript/private proxy. Không tự thêm provider/cloud feature ngoài yêu cầu.
+- Dirtytree có nhiều thay đổi cũ: không reset/clean/commit/push tự động; diff đúng phạm vi. Không upgrade deps/Wrangler/compat/paid tier để né lỗi.
 
-- R0 đọc/Convert trước, chưa bắt buộc TTS theo quyết định người dùng. Không tự nối Web Speech fallback. TTS thật cần gateway được phép và nghiệm thu riêng.
-- Sau thay đổi code, chạy từ private-novel/: `npm.cmd test` và `npm.cmd run build` (type-check app/server + build). UI/import/worker phải chạy E2E liên quan: `npm.cmd run test:e2e -- --reporter=line`.
-- Reviewer độc lập thay đổi rủi ro cao phải chạy targeted regression của chính phạm vi review và kiểm tra diff. Chỉ đọc, lỗi khởi động lệnh, hoặc kiểm cú pháp không đủ nghiệm thu; ghi lệnh chưa chạy/lý do. Root vẫn chạy lại kiểm tra tích hợp.
-- Ca E2E từng chập chờn: chạy ca liên quan với `--repeat-each=3`, giữ cả kết quả fail. Không nhận một lần xanh làm bằng chứng đã tìm đúng nguyên nhân.
-- Audit dùng invariant đúng; lỗi biết trước dùng `it.fails`. Khi lỗi đã sửa mà test trở thành unexpected pass, bỏ fails sau review. CI xanh không có nghĩa không còn lỗi expected-failure.
-- Nhiệm vụ rõ, hẹp: model mức trung. Backup format/atomicity/migration/auth/KDF: model mạnh nhất khả dụng cùng reviewer độc lập. Khảo sát chỉ đọc có thể dùng model thấp. Không quy lỗi cho model dựa vào một phiên chưa được kiểm soát; không coi effort giữa vendor/version là tương đương.
-- Khi model chạm quota: ghi tên cấu hình và công việc dở, root tiếp quản hoặc dùng model khả dụng thật; không giả vờ đổi model. Sonnet/Opus chỉ dùng khi công cụ thực sự cung cấp, không mặc định có sẵn.
-- Trước feature mới: hoàn tất hoặc quyết định lại spike M0 bằng số đo. Kế hoạch/schema dự kiến khác mã phải ghi bảng lệch, không tự migration chỉ để khớp tài liệu.
-- Git baseline chỉ chứa code/config/fixtures tổng hợp/tài liệu; loại secrets, nội dung thật, build và dependencies. Commit baseline ghi rõ lỗi còn mở, không là nghiệm thu và không tự push.
-- Nhật ký chỉ cần quyết định/lý do và ràng buộc ngắn; không yêu cầu chuỗi suy luận nội bộ. Mẫu log gồm giờ, model, phạm vi/file, invariant, lệnh/exit/kết quả, review, giới hạn, ID việc tiếp theo.
+## Kiểm thử theo rủi ro (thay quy tắc full suite mỗi sửa trước đây)
+- Chỉ tài liệu: kiểm diff, links, nội dung; không npm test/build/E2E/deploy.
+- CSS/copy/UI trình bày không đổi logic dữ liệu: build một lần; E2E/smoke đúng luồng nếu cần kiểm bố cục. Không tạo test chỉ lặp implementation, không full suite/reviewer mặc định.
+- Logic nhỏ: targeted unit + build; UI/import/worker chạy E2E đúng spec liên quan. `--repeat-each=3` chỉ ca đã flaky hoặc race/cancellation, không toàn nhóm vô điều kiện.
+- Database/import integrity/splitter/backup/restore/auth/secret/cloud-delete/migration: review độc lập đọc diff + chạy regression; root full `npm.cmd test` + build + E2E liên quan. Review không đủ bằng chứng ghi chưa xác minh.
+- Chạy các kiểm tra nặng tuần tự. Test pass chỉ chạy lại khi đổi code ảnh hưởng hoặc có nghi vấn chưa giải quyết; root không lặp toàn bộ targeted của reviewer nếu full integration đã bao phủ.
+- Từ private-novel: `npm.cmd test -- tests/<file>.test.ts`; `npm.cmd run build`; `npm.cmd run test:e2e -- e2e/<spec>.spec.ts --workers=4 --reporter=line`.
+- TEMP/TMP dùng thư mục riêng `.dsh-tmp/chapter-runtime` trong private-novel nếu Windows AccessDenied; tạo bằng New-Item rồi Resolve-Path. Không sửa deps để giấu lỗi runtime.
+- Giữ log fail; known bugs dùng it.fails với invariant đúng, unexpected pass cần review trước bỏ fails. Phân biệt automated/layout với Android thật; build không phải deploy. Deploy khi được yêu cầu/đã được phép, smoke bằng dữ liệu tổng hợp cô lập cloud.
+
+## Bàn giao
+- HANDOFF chỉ trạng thái hiện hành, tối đa khoảng 3.500 ký tự; không nhét lịch sử test/triển khai lặp lại. Bỏ mục đã xong khỏi backlog.
+- HANDOFF-LOG append-only: một entry ngắn giờ/AI hoặc model đã xác minh/phạm vi-file/lý do/invariant/lệnh-exit-summary/review/giới hạn/nextID; dẫn log thay vì chép output. Không chuỗi suy luận nội bộ.
+- DECISIONS append khi đổi quyết định kỹ thuật/quy trình. Không đọc log cũ để chỉ append entry mới.
+- Quy tắc nhẹ này supersede workflow nặng trước 11/10/2026, giữ nguyên ràng buộc dữ liệu/secrets và chỉ đạo trực tiếp người dùng.

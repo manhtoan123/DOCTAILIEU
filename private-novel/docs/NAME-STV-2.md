@@ -1,0 +1,11 @@
+# NAME-STV-2 — 13/10/2026
+
+Đối chiếu trực tiếp STV: mở rộng ghép nguyên token kề bên, hộp Name gồm Hán Việt/casing, tên Anh, Vietphrase và Name trong kho với nút Dùng; cuối hộp thêm tên Anh/Hán Việt. Không lưu/xóa dữ liệu trên STV trong khảo sát.
+
+App giữ một Model ưu tiên; bỏ A/B/C/D và checkbox fallback. Runtime current/prewarm/thử prompt tự dùng model ưu tiên rồi các model khác theo chất lượng 3.8→3.7→3.5→2.5, bỏ trùng. Khi ưu tiên3.7 lỗi sẽ thử3.8→3.5→2.5; không chờ model đã báo bận trước model kế tiếp. Cooldown và retry của session giữ. Backup metadata cũ vẫn đọc/sync nhưng không điều khiển lượt dịch mới; không rewrite profile. Save prompt vẫn áp dụng lượt sau, không dịch lại chương đang đọc.
+
+Name dialog450px responsive, gợi ý tên Anh/stock Names từ dictionary hiện có; tên Anh cho phép nhập, không tự suy đoán. Đổi nguồn làm mới gợi ý và bỏ bản nháp thuộc nguồn trước; sửa tay không bị lookup ghi đè. Phạm vi riêng truyện/chung dùng writer atomic hiện có. Xóa chỉ exact key của truyện hiện tại, kiểm ownership/revision/ready trong cùng transaction với tomb đồng bộ; không đụng global/stock/source. Mở rộng chặn dấu xuống dòng cả trong khoảng token bị thiếu; vô hiệu khi không có từ kề hoặc quá256 ký tự.
+
+Independent Sol/high review16 PASS (Name9/autoModels4/browserdialog3); root full1276/94 PASS (maxWorkers4 để tránh browser-hook contention), build PASS. E2E58 PASS across scoped rerun: 54 initial +4 corrected stale test expectations (timeout response must match attempted model; profile delete applies next request). Existing cache regressions use explicit[] to test out-of-chain response rejection now default chain includes higher models; no production cache guard weakened. Logs fail giữ.
+
+Pages e69fc645/master index-Dr-f_CxF.js; AIWorker unchanged e7701ab5. Canonical production smoke1280x800/412x915 PASS auto chain current+prewarm/save-defer/reset; synthetic EPUB Name Anh save/exactkey delete, RAW/AI/ảnh/lazyarchive/nền2contexts/nooverflow/noerrors. No realcloud writes/Gemini/D access. Screenshots docs/screenshots/name-stv-production-1280.png và -412.png. Logs .dsh-tmp/name-stv-full-final.log, name-stv-build-final.log, name-stv-e2e*.log, name-stv-deploy.log, name-stv-model-production.log, name-stv-name-production.log. Browser layout emulation; chưa Android thật.

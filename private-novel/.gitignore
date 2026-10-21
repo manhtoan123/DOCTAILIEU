@@ -9,3 +9,7 @@ test-results/
 *.tsbuildinfo
 local-data/
 backups/
+.dsh-tmp/
+
+# Legacy command output at the app root; keep fixtures elsewhere visible.
+/*.log

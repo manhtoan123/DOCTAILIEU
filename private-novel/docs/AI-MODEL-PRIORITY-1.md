@@ -1,0 +1,15 @@
+# Thứ tự model ưu tiên — 14/10/2026
+
+Theo yêu cầu sau khi kiểm Gemini/Gemma: **3.8 Flash → 3.7 Flash → 2.5 Flash → 3 Flash Preview**. Sau3.7 chỉ đến hai model đã trả bản dịch mức khá trong bài so sánh; bỏ3.5 khỏi chuỗi tự động. Lite/Pro/Gemma vẫn có thể chọn thủ công, không tự chen vào chuỗi.
+
+`recommendedFallbackModels` chỉ trả các model đứng sau model đã chọn, không quay về đầu: chọn3.7→2.5/Preview; chọn2.5→Preview; chọnPreview→không tự chuyển. Model ngoài nhóm ưu tiên dùng2.5/Preview làm dự phòng. Menu xếp bốn model này lên trước; giữ model đang lưu và DEFAULT_AI_MODEL hiện hành, không sửa hàng settings/prompt hoặc migration/cache/nguồn.
+
+Nút dịch lại toàn chương cũng chọn sau **model đang chạy thực tế**: preferred3.8 nhưng đã chốt phần bằng2.5 thì đề xuấtPreview, không quay lại3.7. Giữ model pin/parts đã dịch, không ghép hai model trong một bản hoàn chỉnh; đổi model là lượt toàn chương thủ công riêng. Chương sau dùng settings đã lưu, đọc hiện tại không tự dịch lại khi sửa prompt. Dòng mô tả dùng tên rõ ràng “3 Flash (Preview)” và hiển thị không tự chuyển khi hết chuỗi.
+
+Phạm vi src/ai-fallback.ts,src/ai-models.ts,src/ui/AiFallbackFields.tsx và nhãn/alternative củaReader; targeted fixtures/regression. Không đổi API/Worker/secret/lease/timeout/định dạng cache/deps/tier, không thêm model mới. Dữ liệu kiểm model và giới hạn mẫu ở AI-MODEL-COMPARISON-1.md; thứ tự là quyết định người dùng, không tuyên bố3.8 có tỷ lệ thành công cao hơn hai model mức khá.
+
+Nghiệm thu: **27 targeted unit PASS**, **38 ca E2E riêng biệt PASS** trên desktop+android-layout qua các lượt liên quan, buildfinal PASS. Fixture cũ cần đổi terminal-model từ2.5 sangPreview để giữ testretry/sibling/cancel bounds; old assertion sau saveprompt nhầm gộp prewarm của prompt mới với regeneratecurrent, sửa thành current4requests không tăng/next1lượt mới; ca nested-onlycheckpoint dùngnútThử lạiAI (chưa có top-levelpart hoàn thành) thay vìTiếp tục. Không sửa sản phẩm để né các lỗi fixture. Logs/tracesfail giữ trong .dsh-tmp/model-priority/ và failures/. Không fullsuite/reviewer mới cho thay đổi businesslogic scoped, native cache/recovery/abort được targeted regression bao phủ.
+
+Pages **3939eecc/master**, bundle **index-Cnghw6cy.js**; AI Worker giữ **559edb8b-e9a6-469b-9302-a2755b5cd30b**. Production smoke **PASS**: menu đúng thứ tự, lưu lựa chọn3.7 rồi gọi37→2.5→Preview, notice đúng tênPreview, RAW giữ; phiên riêng/dữ liệu tổng hợp, mockAI và chặn APIcloud, không đọc/ghi truyện người dùng. Harness cần lưu draft trước chạy và chờ RAWhydration trước snapshot; fail đầu được giữ. Không dùng bài smoke này làm bằng chứng tốc độ/thành côngGoogle. User tab chưa reload; Android-layout không Android thật.
+
+Bằng chứng .dsh-tmp/model-priority/unit-fixed.log,build-final.log,e2e.log(34PASS),e2e-fixed.log(2PASS),e2e-manual.log(4PASS đã bao phủ),e2e-manual-fixed.log(2ca mớiPASS),deploy.log,production.json,production-final.log,production-order.png. Spec mới kiểm selecting37 và fallback theo actualpinnedmodel; manualfallback/prewarm/budget giữ. Diffcheck PASS.

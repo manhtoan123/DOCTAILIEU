@@ -1,0 +1,6 @@
+import {it,expect} from 'vitest';
+import {convertedEpubNodes,convertedEpubWords} from '../src/features/import-export/services/epub-render';
+import type {Token} from '../src/features/names-convert/services/language';
+const token=(sourceStart:number,source:string,targetText:string,type='untranslated'):Token=>({sourceStart,sourceEnd:sourceStart+source.length,source,targetText,type,meanings:[],hanviet:''});
+it('keeps untranslated EPUB text visible and selectable when a dictionary is offline while preserving intentional deletions',()=>{const layout={path:'c.xhtml',body:'<body/>',styles:[],nodes:['林儿','noise']},tokens=[token(0,'林儿',''),token(2,'\n','\n','original'),token(3,'noise','','blacklist')];expect(convertedEpubNodes(layout,tokens,true)).toEqual(['林儿','']);expect(convertedEpubWords(layout,tokens,true)).toEqual([{node:0,start:0,end:2,sourceStart:0,sourceEnd:2}]);});
+it('keeps node offsets and complete target words consistent across source newlines',()=>{const layout={path:'c.xhtml',body:'<body/>',styles:[],nodes:['甲','乙']},tokens=[token(0,'甲','Giáp','name'),token(1,'\n','\n','original'),token(2,'乙','Ất','name')];expect(convertedEpubNodes(layout,tokens)).toEqual(['Giáp','Ất']);expect(convertedEpubWords(layout,tokens)).toEqual([{node:0,start:0,end:4,sourceStart:0,sourceEnd:1},{node:1,start:0,end:2,sourceStart:2,sourceEnd:3}]);});

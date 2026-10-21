@@ -1,0 +1,2 @@
+export function googleMeaningUrl(source:string){const url=new URL('https://www.google.com/search');url.searchParams.set('udm','50');url.searchParams.set('q',`"${source.trim()}" có nghĩa là gì?`);return url.href;}
+export function googleTranslationUrl(source:string,target:'vi'|'en'='vi'){const url=new URL('https://translate.google.com/');url.searchParams.set('sl','zh-CN');url.searchParams.set('tl',target);url.searchParams.set('text',source.trim());url.searchParams.set('op','translate');return url.href;}

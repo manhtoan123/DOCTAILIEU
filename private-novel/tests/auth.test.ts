@@ -1,6 +1,6 @@
 import {describe,it,expect,vi} from 'vitest';
 import {pbkdf2Sync} from 'node:crypto';
-import {handleAuth,verifyPassword,sha256,sameOrigin,type Env} from '../server/auth';
+import {handleAuth,verifyPassword,sha256,sameOrigin,secure,type Env} from '../server/auth';
 const salt='00112233445566778899aabbccddeeff';const hash=`pbkdf2-sha256:600000:${salt}:${pbkdf2Sync('a test password',Buffer.from(salt,'hex'),600000,32,'sha256').toString('hex')}`;
 function env(row:unknown=null){return {AUTH_PASSWORD_HASH:hash,DB:{prepare:vi.fn(()=>({bind:vi.fn().mockReturnThis(),first:vi.fn(async()=>row),run:vi.fn(async()=>({success:true}))})),batch:vi.fn(async()=>[])}} as unknown as Env;}
 describe('server access gate',()=>{
@@ -10,4 +10,10 @@ describe('server access gate',()=>{
   it('checks expiry and origin before allowing mutations',async()=>{const token='b'.repeat(64);const next=vi.fn(async()=>new Response('private'));expect((await handleAuth(new Request('https://example.test/',{headers:{Cookie:`__Host-session=${token}`}}),env({expires_at:0}),next)).status).toBe(303);expect((await handleAuth(new Request('https://example.test/action',{method:'POST',headers:{Cookie:`__Host-session=${token}`,Origin:'https://attacker.test'}}),env({expires_at:Date.now()+100000}),next)).status).toBe(403);expect(next).not.toHaveBeenCalled();});
   it('serves authenticated response with no-store and CSP',async()=>{const r=await handleAuth(new Request('https://example.test/',{headers:{Cookie:`__Host-session=${'c'.repeat(64)}`}}),env({expires_at:Date.now()+100000}),async()=>new Response('private'));expect(await r.text()).toBe('private');expect(r.headers.get('Cache-Control')).toContain('no-store');expect(r.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");});
   it('rejects cross-origin login before processing a password',async()=>{const r=await handleAuth(new Request('https://example.test/auth/login',{method:'POST',headers:{Origin:'https://bad.test'},body:'password=x'}),env(),async()=>new Response('bad'));expect(r.status).toBe(403);expect(sameOrigin(new Request('https://example.test/auth/login',{headers:{Origin:'https://example.test'}}))).toBe(true);expect(await sha256('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');});
+});
+
+it('permits only the explicit public TTS origin in connect-src while keeping executable/media boundaries',()=>{
+ const csp=secure(new Response('test')).headers.get('Content-Security-Policy')!;
+ expect(csp.split(';').map(s=>s.trim()).find(s=>s.startsWith('connect-src'))).toBe("connect-src 'self' https://ottsy.weilbyte.dev");
+ expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");expect(csp).toContain("media-src 'self' blob:");expect(csp).toContain("object-src 'none'");
 });

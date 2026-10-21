@@ -1,10 +1,11 @@
 import 'fake-indexeddb/auto';
 import Dexie from 'dexie';
 import {beforeEach,describe,it,expect,vi} from 'vitest';
-import {db,deleteBook} from '../src/db';
-import {prepareBackup,stageBackup,restoreBackup,restoreInfo,hashBlob} from '../src/backup';
-import {hasUsableSourceData,usableSourceHashes} from '../src/source-data';
-import {acceptSourceHash,importFiles} from '../src/importer';
+import {db,deleteBook} from '../src/core/db';
+import {prepareBackup,stageBackup,restoreBackup,restoreInfo,hashBlob} from '../src/features/import-export/services/backup';
+import {hasUsableSourceData,usableSourceHashes} from '../src/features/import-export/services/source-data';
+import {saveSharedChapter} from '../src/features/sync-cloud/services/shared-chapters';
+import {acceptSourceHash,importFiles} from '../src/features/import-export/services/importer';
 
 beforeEach(async()=>{await db.delete();await db.open();});
 
@@ -71,7 +72,7 @@ describe('backup/restore boundaries',()=>{
     });
     await db.chapters.update('c0',{sourceId:'src-1'});
     await db.dictionaries.put({
-      kind:'vp',name:'Vietphrase.txt',sha256:'sha-vp-456',blob:new Blob(['文=văn\n']),updatedAt:1
+      kind:'vp',name:'Vietphrase.txt',sha256:await hashBlob(new Blob(['文=văn\n'])),blob:new Blob(['文=văn\n']),updatedAt:1
     });
 
     const plan=await prepareBackup('book',{mode:'portable'});
@@ -211,7 +212,7 @@ describe('backup/restore boundaries',()=>{
   it('protects existing local dictionary from being silently overwritten during portable restore',async()=>{
     await seed();
     // Prepare portable backup that includes a dictionary
-    await db.dictionaries.put({kind:'vp',name:'FromBackup.txt',sha256:'sha-backup-dict',blob:new Blob(['文=từ_sao_lưu\n']),updatedAt:1});
+    await db.dictionaries.put({kind:'vp',name:'FromBackup.txt',sha256:await hashBlob(new Blob(['文=từ_sao_lưu\n'])),blob:new Blob(['文=từ_sao_lưu\n']),updatedAt:1});
     const plan=await prepareBackup('book',{mode:'portable'});
     const files=[];
     for(let i=0;i<plan.total;i++){const p=await plan.part(i);files.push(new File([p.blob],p.name));}
@@ -230,8 +231,8 @@ describe('backup/restore boundaries',()=>{
 });
 
 async function stageDictionaryBackup(mutate?:(body:any,index:number)=>void){
-  await db.dictionaries.put({kind:'vp',name:'Backup VP.txt',sha256:'backup-vp',blob:new Blob(['文=backup\n']),updatedAt:1});
-  await db.dictionaries.put({kind:'names',name:'Backup Names.txt',sha256:'backup-names',blob:new Blob(['李=Backup name\n']),updatedAt:1});
+  await db.dictionaries.put({kind:'vp',name:'Backup VP.txt',sha256:await hashBlob(new Blob(['文=backup\n'])),blob:new Blob(['文=backup\n']),updatedAt:1});
+  await db.dictionaries.put({kind:'names',name:'Backup Names.txt',sha256:await hashBlob(new Blob(['李=Backup name\n'])),blob:new Blob(['李=Backup name\n']),updatedAt:1});
   const plan=await prepareBackup('book',{mode:'portable'});const files:File[]=[];
   for(let i=0;i<plan.total;i++){
     const part=await plan.part(i);const packet=JSON.parse(await part.blob.text());const body=JSON.parse(packet.body);
@@ -313,17 +314,17 @@ describe('A3 atomic dictionary restore regressions',()=>{
     expect((await db.books.get(restored!))!.status).toBe('ready');
     const dictionary=await db.dictionaries.get('vp');
     expect(dictionary!.sha256).toBe('concurrent-local');expect(await dictionary!.blob.text()).toBe('文=local wins');
-    expect((await db.dictionaries.get('names'))!.sha256).toBe('backup-names');
+    expect((await db.dictionaries.get('names'))!.sha256).toBe(await hashBlob(new Blob(['李=Backup name\n'])));
   });
 
   it('serializes concurrent restores so only one dictionary for the same kind wins',async()=>{
     await seed();await seedSource();const first=await stageDictionaryBackup();
-    await db.dictionaries.put({kind:'vp',name:'Second VP.txt',sha256:'second-vp',blob:new Blob(['文=second']),updatedAt:1});
+    await db.dictionaries.put({kind:'vp',name:'Second VP.txt',sha256:await hashBlob(new Blob(['文=second'])),blob:new Blob(['文=second']),updatedAt:1});
     const second=await stagePlan('portable');await db.dictionaries.clear();
     const restored=await Promise.all([restoreBackup(first,{targetTitle:'First restored'}),restoreBackup(second,{targetTitle:'Second restored'})]);
     const dictionary=await db.dictionaries.get('vp');
-    expect(['backup-vp','second-vp']).toContain(dictionary!.sha256);
-    expect(await dictionary!.blob.text()).toBe(dictionary!.sha256==='backup-vp'?'文=backup\n':'文=second');
+    expect([await hashBlob(new Blob(['文=backup\n'])),await hashBlob(new Blob(['文=second']))]).toContain(dictionary!.sha256);
+    expect(await dictionary!.blob.text()).toBe(dictionary!.sha256===await hashBlob(new Blob(['文=backup\n']))?'文=backup\n':'文=second');
     expect(await db.dictionaries.where('kind').equals('vp').count()).toBe(1);
     for(const bookId of restored)expect((await db.books.get(bookId))!.status).toBe('ready');
     expect(await db.restoreJobs.where('status').equals('committed').count()).toBe(2);
@@ -336,21 +337,22 @@ describe('A3 atomic dictionary restore regressions',()=>{
   });
 
   it('keeps the first supplied dictionary when a packet repeats the same kind',async()=>{
+    const duplicateHash=await hashBlob(new Blob(['later=duplicate']));
     await seed();await seedSource();const id=await stageDictionaryBackup((body,index)=>{
-      if(index===0)body.dictionaries.push({...body.dictionaries[0],sha256:'duplicate-later',dataBase64:btoa('later=duplicate')});
+      if(index===0)body.dictionaries.push({...body.dictionaries[0],sha256:duplicateHash,dataBase64:btoa('later=duplicate')});
     });
     await restoreBackup(id,{onConflict:'replace'});
-    expect((await db.dictionaries.get('names'))!.sha256).toBe('backup-names');
+    expect((await db.dictionaries.get('names'))!.sha256).toBe(await hashBlob(new Blob(['李=Backup name\n'])));
     expect(await(await db.dictionaries.get('names'))!.blob.text()).toBe('李=Backup name\n');
   });
 
   it('a failed concurrent restore cannot change the dictionary installed by a successful restore',async()=>{
     await seed();await seedSource();const failed=await stageDictionaryBackup((body,index)=>{if(index===0)body.book.chapterCount++;});
-    await db.dictionaries.put({kind:'vp',name:'Successful VP.txt',sha256:'successful-vp',blob:new Blob(['文=successful']),updatedAt:1});
+    await db.dictionaries.put({kind:'vp',name:'Successful VP.txt',sha256:await hashBlob(new Blob(['文=successful'])),blob:new Blob(['文=successful']),updatedAt:1});
     const successful=await stagePlan('portable');await db.dictionaries.clear();
     const results=await Promise.allSettled([restoreBackup(failed,{targetTitle:'Failed copy'}),restoreBackup(successful,{targetTitle:'Successful copy'})]);
     expect(results[0].status).toBe('rejected');expect(results[1].status).toBe('fulfilled');
-    expect((await db.dictionaries.get('vp'))!.sha256).toBe('successful-vp');
+    expect((await db.dictionaries.get('vp'))!.sha256).toBe(await hashBlob(new Blob(['文=successful'])));
     expect(await(await db.dictionaries.get('vp'))!.blob.text()).toBe('文=successful');
     expect(await db.dictionaries.count()).toBe(1);
     expect(await db.restoreJobs.where('status').equals('failed').count()).toBe(1);
@@ -556,5 +558,27 @@ describe('A2 source data preservation regressions',()=>{
     expect((await db.books.get(restored))!.title).toBe('Chosen title');
     expect(await db.books.get('book')).toBeDefined();
     expect(await(await db.sources.get(original.id))!.blob.text()).toBe('Original source bytes');
+  });
+});
+
+describe('split-chapter backup compatibility',()=>{
+  it('restores its own backup after a reader split inserted a fractional chapter order',async()=>{
+    vi.stubGlobal('location',{origin:'https://synthetic.example'});
+    try{
+    await db.books.add({id:'split-book',title:'Split book',author:'',status:'ready',createdAt:1,updatedAt:1,chapterCount:2,charCount:6});
+    await db.chapters.bulkAdd([
+      {id:'split-first',bookId:'split-book',order:0,title:'First',text:'abcd',revision:1,sourceId:''},
+      {id:'split-last',bookId:'split-book',order:1,title:'Last',text:'ef',revision:1,sourceId:''}
+    ]);
+    const before=(await db.chapters.get('split-first'))!;
+    await saveSharedChapter(before,'abXY',2);
+    expect((await db.chapters.where('bookId').equals('split-book').sortBy('order')).map(c=>c.order)).toEqual([0,0.5,1]);
+    const backup=await prepareBackup('split-book'),part=await backup.part(0);
+    const [id]=await stageBackup([new File([part.blob],part.name)],()=>{});
+    const restored=await restoreBackup(id);
+    const chapters=await db.chapters.where('bookId').equals(restored).sortBy('order');
+    expect(chapters.map(c=>c.order)).toEqual([0,1,2]);
+    expect(chapters.map(c=>c.text)).toEqual(['ab','XY','ef']);
+    }finally{vi.unstubAllGlobals();}
   });
 });
