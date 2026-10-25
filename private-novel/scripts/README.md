@@ -15,6 +15,10 @@ Chạy từ thư mục `private-novel/`. Các script giữ nguyên đường d�
 | `plan-library-import.mjs` | Chuẩn bị nhập thư viện theo cấu hình của script |
 | `setup-cloud-device.mjs`, `seed-default-dictionaries.mjs`, `cleanup-cloud-smoke.mjs` | Thao tác thiết bị, từ điển hoặc cleanup; đọc phạm vi dữ liệu trước khi dùng |
 | `hash-password.mjs` | Công cụ hash qua `npm.cmd run auth:hash`, dùng khi yêu cầu cấu hình liên quan |
+| `configure-capcut-session.mjs` | Kiểm file phiên cục bộ; chỉ gửi vào Pages secret khi có `--publish`; không nhận cookie qua chat/Git |
+| `smoke-capcut-runtime.mjs`, `smoke-album-names-runtime.mjs` | Regression workerd/D1 cục bộ có upstream/fixture cô lập; đọc script trước khi chạy |
+| `prepare/export/pack/profile-server-convert-probe.mjs` | Chuỗi chuẩn bị/đóng gói/đo corpus Convert; dữ liệu đầu ra nằm ngoài Git, không chạy nối tiếp tự động |
+| `smoke-server-convert-worker.mjs`, `benchmark-server-convert-remote.mjs` | Kiểm/đo Worker Convert; phân biệt cấu hình local và remote, không gọi remote chỉ để lưu Git |
 
 Các file `.ts` không có chung một runner trong `package.json`; dùng lệnh đã ghi trong tài liệu của tính năng và kiểm imports/env trước khi chạy. Không suy ra rằng mọi script chạy được bằng cùng một lệnh `node`.
 
@@ -28,6 +32,8 @@ npm.cmd run test:e2e -- e2e/tts-resume.spec.ts --workers=4 --reporter=line
 ```
 
 Chọn lệnh theo mức rủi ro; không bắt buộc chạy cả bốn. `build` tạo `dist/`, không deploy. CI hiện được định nghĩa ở [ci.yml](../../.github/workflows/ci.yml).
+
+Production nghe sách dùng cờ **không phải secret** `VITE_TTS_GATEWAY=capcut-v2` lúc build. Build mặc định giữ gateway cũ để tương thích regression; không dùng nhầm artifact mặc định để triển khai CapCut. Hướng dẫn phiên, build và smoke: [CAPCUT-TTS-SETUP.md](../docs/CAPCUT-TTS-SETUP.md). Chỉ lưu Git không cần build lại hoặc deploy server.
 
 ## Lưu output
 

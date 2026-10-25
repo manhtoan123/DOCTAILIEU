@@ -5,6 +5,7 @@
   "compatibility_date": "2026-01-01",
   "vars": {
     "PUBLIC_LIBRARY": "1",
+    "CAPCUT_SESSION_PERSISTENCE": "1",
     "SHARED_STATE_ENABLED": "1"
   },
   "d1_databases": [
@@ -22,6 +23,7 @@
     }
   ],
   "services": [
+    {"binding":"NAME_CONVERTER","service":"thu-phong-convert"},
     {
       "binding": "AI_TRANSLATOR",
       "service": "thu-phong-ai"

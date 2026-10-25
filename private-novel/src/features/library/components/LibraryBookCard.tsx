@@ -6,6 +6,7 @@ import type {ChapterMatch} from '../services/library-search';
 
 interface LibraryBookCardProps {
   book: Book;
+  compact?: boolean;
   index: number;
   displayTitle: string;
   isLocal: boolean;
@@ -22,6 +23,7 @@ interface LibraryBookCardProps {
 // Chỉ hiển thị dữ liệu; App quyết định cách mở, sửa và xóa truyện.
 export function LibraryBookCard({
   book,
+  compact=false,
   index,
   displayTitle,
   isLocal,
@@ -34,6 +36,12 @@ export function LibraryBookCard({
   chapterMatch,
   onReadChapter,
 }: LibraryBookCardProps) {
+  if(compact)return <article className="book-card compact-book-row">
+    <h3><button className="text-button" disabled={opening} onClick={onOpenDetails} title={book.title}>{displayTitle||book.title}</button></h3>
+    <span className="compact-chapter-count">{book.chapterCount} chương</span>
+    {chapterMatch&&<div className="chapter-search-match"><button className="text-button" disabled={opening} onClick={()=>onReadChapter?.(chapterMatch.chapterId)}>Chương: {chapterMatch.displayTitle}</button></div>}
+  </article>;
+
   let sourceLabel = 'KHO CHUNG · MỞ ĐỂ ĐỌC';
   if (deletedOnCloud) {
     sourceLabel = 'BẢN THIẾT BỊ · KHO ĐÃ XÓA';

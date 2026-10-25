@@ -52,7 +52,7 @@ it('session review: snapshots source, settings and individual Names before async
   const pending=session.request(input,settings,mutableNames);
   input.text='changed';settings.model='gemini-3.8-flash';mutableNames[0].value='changed';read.resolve(undefined);await pending;
   expect(translate).toHaveBeenCalledWith({text:source.text,...AI_DEFAULTS,names:{林儿:'Lâm Nhi'}},expect.any(AbortSignal),expect.any(Function));
-  expect(cache.write).toHaveBeenCalledWith(source,AI_DEFAULTS,names,result,expect.any(AbortSignal));
+  expect(cache.write).toHaveBeenCalledWith(source,AI_DEFAULTS,names,{...result,division:{version:1,parts:1,reasons:[]}},expect.any(AbortSignal));
 });
 
 it('session review: real database survives close/new session and changed matched Name misses',async()=>{

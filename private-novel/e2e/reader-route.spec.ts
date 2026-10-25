@@ -3,7 +3,7 @@ test('chapter URLs survive reload, browser back and forward without changing sou
   await page.route('**/api/**',route=>route.fulfill({status:503,body:'{}'}));
   await page.goto('/');
   await page.getByRole('button',{name:'Đọc truyện mẫu →'}).click();
-  await expect(page).toHaveURL(/\/read\/[^/]+\/[^/]+$/);
+  await expect(page).toHaveURL(/\/r\/[A-Za-z0-9_-]{22}\/[A-Za-z0-9_-]{22}$/);
   const first=page.url();
   const source=await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);return db.chapters.toArray();});
   await page.getByRole('button',{name:'Chương sau →'}).first().click();
@@ -48,11 +48,31 @@ test('cloud-only chapter deep link restores the selected book through checked sn
   });
   await page.goto(`/read/${fixture.id}/${fixture.chapterId}`);
   await expect(page.locator('.prose')).toContainText('Nguồn cloud giữ nguyên.');
-  await expect(page).toHaveURL(new RegExp(`/read/${fixture.id}/${fixture.chapterId}$`));
+  await expect(page).toHaveURL(/\/r\/[A-Za-z0-9_-]{22}\/[A-Za-z0-9_-]{22}$/);
+  expect(await page.evaluate(async()=>{const {parseReaderRoute}=await import('/src/features/reader/services/reader-route.ts');return parseReaderRoute(location.pathname);})).toEqual({kind:'read',bookId:fixture.id,chapterId:fixture.chapterId});
   await page.reload();await expect(page.locator('.prose')).toContainText('Nguồn cloud giữ nguyên.');
 });
 
 test('direct chapter entry returns to original entry after internal next and browser back',async({page})=>{
- await page.route('**/api/**',r=>r.fulfill({status:503,body:'{}'}));await page.goto('/');await page.getByRole('button',{name:'Đọc truyện mẫu →'}).click();await expect(page).toHaveURL(/\/read\/[^/]+\/[^/]+$/);const first=page.url();await page.goto(first);await expect(page.locator('.prose')).toContainText('Một chỗ ngồi bên cửa sổ');await page.keyboard.press('ArrowRight');await expect(page.locator('.prose')).toContainText('Lối mòn trong vườn');await page.goBack();await expect(page).toHaveURL(first);await expect(page.locator('.prose')).toContainText('Một chỗ ngồi bên cửa sổ');
+ await page.route('**/api/**',r=>r.fulfill({status:503,body:'{}'}));await page.goto('/');await page.getByRole('button',{name:'Đọc truyện mẫu →'}).click();await expect(page).toHaveURL(/\/r\/[A-Za-z0-9_-]{22}\/[A-Za-z0-9_-]{22}$/);const first=page.url();await page.goto(first);await expect(page.locator('.prose')).toContainText('Một chỗ ngồi bên cửa sổ');await page.keyboard.press('ArrowRight');await expect(page.locator('.prose')).toContainText('Lối mòn trong vườn');await page.goBack();await expect(page).toHaveURL(first);await expect(page.locator('.prose')).toContainText('Một chỗ ngồi bên cửa sổ');
 });
 
+
+
+test('legacy UUID link becomes short without inserting a history entry or following a different bookmark',async({page})=>{
+ await page.route('**/api/**',r=>r.fulfill({status:503,body:'{}'}));
+ await page.goto('/');await page.getByRole('button',{name:'Đọc truyện mẫu →'}).click();
+ await expect(page).toHaveURL(/\/r\/[A-Za-z0-9_-]{22}\/[A-Za-z0-9_-]{22}$/);
+ const first=page.url();
+ const legacy=await page.evaluate(async()=>{
+  const {parseReaderRoute}=await import('/src/features/reader/services/reader-route.ts');
+  const {db}=await import('/src/core/db.ts');const route=parseReaderRoute(location.pathname);if(route.kind!=='read')throw Error('Expected reader');
+  const chapters=await db.chapters.where('bookId').equals(route.bookId).sortBy('order');
+  await db.progress.put({bookId:route.bookId,chapterId:chapters[1].id,revision:1,paragraph:0,offset:0,updatedAt:Date.now()});
+  return `/read/${route.bookId}/${route.chapterId}`;
+ });
+ await page.goto('/');await page.goto(legacy);
+ await expect(page).toHaveURL(first);await expect(page.locator('.prose')).toContainText('Một chỗ ngồi bên cửa sổ');
+ await page.reload();await expect(page).toHaveURL(first);await expect(page.locator('.prose')).toContainText('Một chỗ ngồi bên cửa sổ');
+ await page.goBack();await expect(page).toHaveURL(/\/$/);
+});

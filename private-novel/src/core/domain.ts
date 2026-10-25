@@ -2,7 +2,7 @@ export interface Book { id: string; title: string; author: string; displayTitle?
 export const isHiddenChapter=(book:Pick<Book,'hiddenChapterIds'>|undefined,id:string)=>book?.hiddenChapterIds?.includes(id)??false;
 export interface Chapter { id: string; bookId: string; order: number; title: string; text: string; revision: number; sourceId: string; displayTitle?: string; epub?:import('../features/import-export/services/epub-layout-schema').EpubLayout }
 export interface SourceFile { id: string; bookId: string; name: string; relativePath: string; encoding: string; sha256: string; bytes: number; blob: Blob; dataStatus?: 'missing'; displayName?: string; syncRevision?: string }
-export interface Progress { bookId: string; chapterId: string; paragraph: number; offset: number; revision: number; updatedAt: number; mode?:'ai' }
+export interface Progress { bookId: string; chapterId: string; paragraph: number; offset: number; revision: number; updatedAt: number; mode?:'ai'; reading?:true }
 export interface NameEntry { id: string; bookId: string; key: string; value: string }
 export const dictionaryKinds=['vp','names','names2','hanviet','rules','chapter','number','pronouns','blacklist','english'] as const;
 export type DictKind = typeof dictionaryKinds[number];

@@ -5,11 +5,21 @@ import {AiRequestAttempts} from '../types/ai-request-attempts';
 export const AI_CHAPTER_LIMITS={durationMs:240_000,sends:24};
 export const EPUB_AI_CHAPTER_LIMITS={durationMs:600_000,sends:256};
 export const AI_CACHE_READ_MS=2000,AI_CACHE_WRITE_MS=1000;
-export interface AiChapterBudget {id:string;createdAt:number;deadline:number;sends:number}
+export interface AiChapterBudget {id:string;createdAt:number;deadline:number;sends:number;recoveryAt?:number}
 export function createAiChapterBudget(limits=AI_CHAPTER_LIMITS):AiChapterBudget{const createdAt=Date.now();return {id:crypto.randomUUID(),createdAt,deadline:createdAt+limits.durationMs,sends:0};}
 const requestAttempts=new WeakMap<AiChapterBudget,AiRequestAttempts>();
 /** A new cooled-down recovery round may retry a failed request. Total sends and deadline stay unchanged. */
 export function resumeAiChapterBudget(budget:AiChapterBudget){requestAttempts.delete(budget);}
+
+export const AI_RECOVERY_ROUND_WAIT_MS=60_000;
+/** Renewal is allowed only for exhausted budgets, after a cooling interval. */
+export function selectAiChapterBudget(previous:AiChapterBudget|undefined,limits=AI_CHAPTER_LIMITS,options:{automatic?:boolean;renewBudget?:boolean}={}):AiChapterBudget{
+  if(!options.automatic||!previous)return createAiChapterBudget(limits);
+  const exhausted=Date.now()>=previous.deadline||previous.sends>=limits.sends;
+  const eligible=previous.recoveryAt??previous.deadline+AI_RECOVERY_ROUND_WAIT_MS;
+  if(options.renewBudget&&exhausted&&Date.now()>=eligible)return createAiChapterBudget(limits);
+  resumeAiChapterBudget(previous);return previous;
+}
 
 /** One chapter, including cache, model fallback, child retries and cooldowns. */
 export class AiChapterJob {
@@ -18,9 +28,10 @@ export class AiChapterJob {
   private failure?:AiTranslateClientError;
   constructor(private limits=AI_CHAPTER_LIMITS,readonly metrics?:AiRunMetrics,budget?:AiChapterBudget){this.budget=budget??createAiChapterBudget(limits);}
   private exhaust(reason:'chapter_deadline'|'send_limit'){
+    this.budget.recoveryAt??=Date.now()+AI_RECOVERY_ROUND_WAIT_MS;
     this.failure??=new AiTranslateClientError('ai_recovery_exhausted',reason==='chapter_deadline'
-      ?'Dịch AI đã dừng vì vượt thời gian chờ. Hãy thử lại AI.'
-      :'Dịch AI đã dừng sau nhiều lần thử lỗi. Hãy thử lại AI.',undefined,reason);
+      ?'Đợt dịch vượt thời gian chờ; đang giữ tiến độ để tự phục hồi.'
+      :'Đợt dịch đã dùng hết lượt thử; đang giữ tiến độ để tự phục hồi.',undefined,reason);
     this.controller.abort();return this.failure;
   }
   check(){

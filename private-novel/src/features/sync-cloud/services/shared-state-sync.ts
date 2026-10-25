@@ -27,7 +27,7 @@ const normalized=(current:SharedRecord|undefined,d:Descriptor)=>current??{...d,v
 const immutableAppend=(r:Descriptor)=>r.kind==='chapter-append'||r.kind==='chapter-append-packet';
 const ignoredAppendKey=(id:string)=>'shared-append-ignored:'+id;
 async function ignoredAppend(id:string,hash:string,revision:number|undefined){const ignored=(await db.settings.get(ignoredAppendKey(id)))?.value as {hash?:string;revision?:number}|undefined;return ignored?.hash===hash&&ignored?.revision===revision;}
-function recordHash(record:SharedRecord){let value=record.value;if(value&&['progress','tts-cursor'].includes(record.kind)){const {updatedAt:_,...position}=value as Record<string,unknown>;value=position;}return ttsHash(JSON.stringify({...record,value}));}
+function recordHash(record:SharedRecord){let value=record.value;if(value&&['progress','tts-cursor'].includes(record.kind)&&!(record.kind==='progress'&&(value as Progress).reading)){const {updatedAt:_,...position}=value as Record<string,unknown>;value=position;}return ttsHash(JSON.stringify({...record,value}));}
 function publish(next:SharedSyncStatus){status=next;if(typeof window!=='undefined')window.dispatchEvent(new Event(SHARED_STATE_EVENT));}
 export function sharedSyncStatus(){return status;}
 interface PendingChapterState {record:SharedRecord;id:string;baseRevision:number;operationId:string;ack?:SharedStateRow}

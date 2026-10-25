@@ -4,6 +4,7 @@ import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {db} from '../src/core/db';
 import {ALBUM_REGISTRY_KEY,getAlbumRegistry,readStoredAlbumRegistry,createAlbum,renameAlbum,removeAlbum,moveBookToAlbum} from '../src/features/library/services/album-registry';
 import type {Book} from '../src/core/domain';
+import {saveScopedBookNames,deleteScopedBookName} from '../src/features/names-convert/services/scoped-names';
 
 const book=(id:string,album?:string):Book=>({id,title:id,author:'Original',status:'ready',chapterCount:1,charCount:8,createdAt:1,updatedAt:2,...album===undefined?{}:{album}});
 beforeEach(async()=>{await db.delete();await db.open();});
@@ -35,14 +36,23 @@ it('a stale original label does not merge descendants or equal leaves during ren
   expect((await getAlbumRegistry()).albums.find(p=>p.id===a.id)!.name).toBe('Again');
 });
 
-it('native book write abort rolls back previously changed members and registry',async()=>{
-  await db.books.bulkPut([book('a','Group'),book('b','Group')]);const registry=await getAlbumRegistry(),before=await db.books.toArray();
-  const original=db.books.put.bind(db.books);let writes=0;
-  vi.spyOn(db.books,'put').mockImplementation((...args:Parameters<typeof db.books.put>)=>{
-    const result=original(...args);if(++writes===2)Dexie.currentTransaction!.abort();return result;
+it.each(['Group','Root/Group'])('native book write abort for %s rolls back earlier members, registry and Album Name pool',async album=>{
+  await db.books.bulkPut([book('a',album),book('b',album)]);const registry=await getAlbumRegistry(),before=await db.books.toArray();
+  await saveScopedBookNames('a','甲=Live\n乙=Deleted');await deleteScopedBookName('a','乙');
+  const settingsBefore=await db.settings.toArray(),mutated=new Set<string>();
+  function abortAfterSecondMember(id:string|undefined){if(!id)throw Error('Expected explicit Book ID');mutated.add(id);if(mutated.size===2)Dexie.currentTransaction!.abort();}
+  const put=db.books.put.bind(db.books),update=db.books.update.bind(db.books);
+  const putSpy=vi.spyOn(db.books,'put').mockImplementation((...args:Parameters<typeof db.books.put>)=>{
+    const result=put(...args);abortAfterSecondMember(args[0].id);return result;
   });
-  await expect(renameAlbum(registry.albums[0].id,'New')).rejects.toThrow();expect(await db.books.toArray()).toEqual(before);
+  const updateSpy=vi.spyOn(db.books,'update').mockImplementation((...args:Parameters<typeof db.books.update>)=>{
+    const result=update(...args);abortAfterSecondMember(typeof args[0]==='string'?args[0]:args[0].id);return result;
+  });
+  await expect(renameAlbum(registry.albums[0].id,'New')).rejects.toThrow();
+  expect([...mutated]).toEqual(['a','b']);expect(album==='Group'?updateSpy:putSpy).toHaveBeenCalled();
+  expect(await db.books.toArray()).toEqual(before);
   expect((await db.settings.get(ALBUM_REGISTRY_KEY))!.value).toEqual(registry);
+  expect(await db.settings.toArray()).toEqual(settingsBefore);
 });
 
 it('registry transaction reads latest metadata committed by another native connection',async()=>{

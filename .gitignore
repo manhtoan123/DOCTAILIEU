@@ -30,6 +30,8 @@ STV-NOVEL-INVENTORY.json
 **/*.pem
 **/*.key
 **/credentials*.json
+**/*.har
+**/capcut-session*.json
 /PPD-Settings-*.json
 /names-fixed.txt
 /private-novel/names-fixed.txt

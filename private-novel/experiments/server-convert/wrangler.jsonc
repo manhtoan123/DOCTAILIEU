@@ -1,0 +1,16 @@
+{
+  "name": "thu-phong-convert-probe",
+  "account_id": "97c5d65fbc80bb0ab8c78ad3b01b04b5",
+  "main": "worker.ts",
+  "compatibility_date": "2026-01-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": { "PROBE_STORAGE": "packed", "PROBE_SQL_CANDIDATES": "1" },
+  "d1_databases": [{
+    "binding": "PROBE_DB",
+    "database_name": "thu-phong-convert-probe",
+    "database_id": "083752ea-454a-4fa4-aa10-98c64a1086e5",
+    "preview_database_id": "083752ea-454a-4fa4-aa10-98c64a1086e5"
+  }],
+  "observability": { "enabled": true, "logs": { "invocation_logs": true } }
+}

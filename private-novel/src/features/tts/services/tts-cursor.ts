@@ -1,3 +1,4 @@
+import {ttsVoiceIds} from '../../../shared/constants/capcut-voices';
 import {db} from '../../../core/db';
 import {queueAiSettings} from '../../ai/services/ai-reading';
 export type TtsMode='raw'|'convert'|'ai';
@@ -6,7 +7,7 @@ export const ttsCursorKey=(bookId:string)=>`tts-cursor:v1:${bookId}`;
 export async function ttsHash(text:string){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))),v=>v.toString(16).padStart(2,'0')).join('');}
 export function readTtsCursor(bookId:string):TtsCursor|undefined{
   try{const raw=localStorage.getItem(ttsCursorKey(bookId));if(!raw)return;if(raw.length>4096){mirrorTtsCursor(bookId,null);return;}const c=JSON.parse(raw) as TtsCursor;
-    if(c.version!==1||c.grouping!==undefined&&!['natural','sentence'].includes(c.grouping)||c.bookId!==bookId||typeof c.chapterId!=='string'||c.chapterId.length>200||!['raw','convert','ai'].includes(c.mode)||!Number.isSafeInteger(c.revision)||c.revision<0||![c.sourceHash,c.semanticHash,c.renderedHash].every(s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s))||!['tiktok-female-1','tiktok-male-1'].includes(c.voiceId)||!Number.isFinite(c.rate)||c.rate<0.5||c.rate>5||!Number.isSafeInteger(c.offset)||c.offset<0||!Number.isFinite(c.audioTime)||c.audioTime<0||c.audioTime>86400||!Number.isFinite(c.updatedAt)){mirrorTtsCursor(bookId,null);return;}
+    if(c.version!==1||c.grouping!==undefined&&!['natural','sentence'].includes(c.grouping)||c.bookId!==bookId||typeof c.chapterId!=='string'||c.chapterId.length>200||!['raw','convert','ai'].includes(c.mode)||!Number.isSafeInteger(c.revision)||c.revision<0||![c.sourceHash,c.semanticHash,c.renderedHash].every(s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s))||!ttsVoiceIds.includes(c.voiceId)||!Number.isFinite(c.rate)||c.rate<0.5||c.rate>5||!Number.isSafeInteger(c.offset)||c.offset<0||!Number.isFinite(c.audioTime)||c.audioTime<0||c.audioTime>86400||!Number.isFinite(c.updatedAt)){mirrorTtsCursor(bookId,null);return;}
     return c;
   }catch{mirrorTtsCursor(bookId,null);return;}
 }

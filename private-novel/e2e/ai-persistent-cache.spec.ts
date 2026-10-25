@@ -21,10 +21,10 @@ test('completed AI survives shelf remount and reload without another network tra
   const after=await page.evaluate(async()=>{const{db}=await import('/src/core/db.ts');return {chapter:await db.chapters.get('persistent-chapter'),progress:await db.progress.get('persistent-book')};});
   expect(after.chapter).toEqual(before.chapter);expect(after.progress?.paragraph).toBe(before.progress?.paragraph);
 });
-test('changed matched Name misses disk cache while an unused Name does not trigger translation',async({page})=>{
+test('changed matched Name misses disk cache in the next session while an unused Name does not trigger translation',async({page})=>{
   let calls=0;await page.route('**/api/ai/translate',r=>{calls++;const req=r.request().postDataJSON();return r.fulfill({json:result(`${req.names['林儿']} đến sơn môn.`,req.model)});});
   await seed(page);await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Lâm Nhi đến');
-  await page.evaluate(async()=>{const{db}=await import('/src/core/db.ts');await db.names.update('cache-name',{value:'Tên Mới'});});await expect(page.locator('.prose')).toContainText('Tên Mới đến');expect(calls).toBe(2);expect(await cacheCount(page)).toBe(2);
+  await page.evaluate(async()=>{const{db}=await import('/src/core/db.ts');await db.names.update('cache-name',{value:'Tên Mới'});});await expect(page.locator('.prose')).toContainText('Lâm Nhi đến');expect(calls).toBe(1);await page.reload();await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Tên Mới đến');expect(calls).toBe(2);expect(await cacheCount(page)).toBe(2);
   await page.evaluate(async()=>{const{db}=await import('/src/core/db.ts');await db.names.put({id:'unused-name',bookId:'persistent-book',key:'未出现',value:'Unused'});});
   await page.reload();await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Tên Mới đến');expect(calls).toBe(2);
 });

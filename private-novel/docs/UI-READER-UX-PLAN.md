@@ -1,5 +1,164 @@
 # UI Reader: đọc được tên truyện, đọc thoải mái, sửa Name liền mạch
 
+<a id="ke-hoach-reader-ai-2026-10-24"></a>
+
+## Kế hoạch hiện hành — 24/10/2026
+
+**Trạng thái 24/10: D1–D2 và phần component thuần D6 đã triển khai; Pages `d0eb3dc5`. D3–D5 và controller AI D6 chưa triển khai.** Phạm vi là sáu đề xuất cải tiến Reader/AI vừa được nghiên cứu, không mở audit toàn sản phẩm. Các mục và kết quả từ ngày 08/10 ở phần sau là hồ sơ cũ, không phải backlog tự chạy lại hoặc bằng chứng kiểm thử mới.
+
+### Mục tiêu và nền hiện có
+
+- Bảng AI đã có hai dòng chương hiện tại/chương sau, số phần và lý do; đã bỏ footer cài đặt. Điều hướng chương có vùng bấm tối thiểu 48px; mục lục mở trang chứa chương hiện tại và có nhãn Đang đọc. Giữ các hành vi này.
+- Hoàn thiện tính nhất quán giữa trạng thái chạy, tiến độ và metadata; thu hẹp vùng ước lượng khi chọn Name sau phục hồi; xử lý dấu kết thúc có căn cứ; cải thiện tìm chương và chia nhỏ trách nhiệm trong Reader.
+- Giữ UI tối giản: tận dụng hai dòng model, ô tìm chương và nút dừng hiện có; không thêm dashboard, hàng nút cố định hoặc mũi tên chọn nguồn.
+
+### Ràng buộc xuyên suốt
+
+1. Giữ nguyên bytes nguồn, Name, tiêu đề gốc, revision và bookmark. Prewarm chỉ chuẩn bị/cache, không ghi đè vị trí đang đọc. Không tự sửa/tái nhập truyện cũ.
+2. Giữ model/prompt đã chọn, tối đa hai key hiện có qua lease/cooldown; không thêm provider, billing hoặc tăng fan-out. Thông tin UI phải dựa vào sự kiện thật, không suy từ số phần rằng hai request/key đang chạy.
+3. Stop hủy đúng job và timer/callback muộn; giữ các phần đã hoàn thành và cursor. Không tự tiếp tục sau khi người dùng đã dừng, không autoplay sau reload.
+4. Cache là tùy chọn: dữ liệu cũ/sai/thiếu metadata vẫn dùng được bản dịch hợp lệ và ghi chưa biết; không xóa cache, ép dịch lại hoặc giảm kiểm tra ownership/source/settings/Names để lấy hit.
+5. Giữ identity đối tượng phản hồi gốc ở các đường đang có hợp đồng này. Metadata dùng wrapper/sidecar, không sửa trực tiếp response dùng chung. Không lưu credential, toàn bộ prompt hay bản sao nguồn chỉ để hiển thị trạng thái.
+6. Không thêm schema DB/server, chỉ mục toàn thư viện hoặc khả năng dung lượng mới trong kế hoạch này. Nếu phát sinh nhu cầu đó, tách phạm vi và đánh giá trước, không gộp vào sửa UI.
+
+### Thứ tự và phụ thuộc
+
+| Đợt | Kết quả cần bàn giao | Phụ thuộc | Mức rủi ro chính |
+|---|---|---|---|
+| D1 | Một nguồn facts cho kết quả AI ở RAM, cache và UI | Hợp đồng hiện có | Metadata/cache, ownership và compatibility |
+| D2 | Trạng thái, tiến độ và đối tượng của nút Dừng rõ ràng | D1 | Retry/Stop/prewarm, hai hệ đếm phần |
+| D3 | Ánh xạ nguồn–dịch tới các nhánh phục hồi | D1 | Offset, Unicode, cache/resume |
+| D4 | Quy tắc dấu kết thúc khi ghép kết quả | D3 | Chuỗi kết quả, map, TTS/cursor |
+| D5 | Tìm chương không dấu, phân biệt số chương/vị trí | Độc lập với D1–D4 | Truy vấn hiển thị, điều hướng |
+| D6 | Tách component thuần, rồi tách điều phối AI | D1–D2 cho component; sau D3–D4 cho AI hook | Ownership, mount/unmount, lifecycle |
+
+Thực hiện từng đợt và nghiệm thu trước khi chuyển tiếp. D2 không phải chờ D3. D5 có thể làm riêng; không chạy kiểm tra nặng đồng thời. Người dùng đã triển khai D1 → D2, sau đó chọn D6 và bỏ D3 lúc này. D6 làm component thuần; controller giữ điều kiện sau D3–D4.
+
+### D1 — Đồng nhất facts của một chương AI
+
+**Code liên quan:** `src/features/ai/services/{ai-reading,ai-reading-cache,ai-division}.ts`, `src/features/import-export/services/epub-ai.ts`, phần nhận kết quả trong `src/features/reader/components/Reader.tsx`.
+
+- Tạo hợp đồng wrapper/sidecar gồm response gốc và facts theo đúng request key/chapter/revision. RAM, kết quả đọc cache và hai dòng model lấy facts qua cùng adapter.
+- Phân biệt thông tin đã biết với không có dữ liệu. Tác vụ mới một phần phải giữ được facts một phần cả khi dùng lại RAM và sau reload; không suy số phần của aggregate cũ từ dấu `♾` hoặc cấu hình hiện tại.
+- Dữ liệu bền vững chỉ gồm facts kết quả được xác minh, như `division`/`textMap`. Trạng thái chạy, countdown, lease và Stop thuộc runtime, không phục hồi thành một job đang chạy chỉ vì đọc cache.
+- Giữ định dạng cache cũ đọc được. Whitelist, validation và giới hạn kích thước vẫn áp dụng; metadata không hợp lệ không làm mất bản dịch hợp lệ.
+
+**Nghiệm thu:** response gốc không bị mutate và identity vẫn giữ; RAM/persistent/reload cho cùng facts đã biết; source/prompt/Name thay đổi vẫn miss đúng; current/next không lẫn facts; legacy unknown vẫn unknown. Lỗi cache/metadata không phát thêm AI request để bù thông tin.
+
+### D2 — Một cách biểu đạt trạng thái và tiến độ
+
+**Code liên quan:** adapter trạng thái mới trong nhóm AI, `AiPanel.tsx`, `AiJobStatus.tsx`, các thanh trạng thái và nút dừng trong `Reader.tsx`.
+
+- Tách trạng thái nội dung (`chưa có`, `có một phần`, `đủ kết quả`) khỏi trạng thái tác vụ (`chưa chạy`, `đang chạy`, `đang chờ`, `đã dừng`, `cần sửa cấu hình`). Nội dung đã cache vẫn sẵn sàng khi dịch sẵn đang tắt.
+- Dòng model thể hiện đúng Đang dịch/Chờ mạng/Chờ thử lại/Đã dừng/Đã xong. Không dùng nhãn Chờ phục hồi cho một tác vụ đã bị người dùng dừng hoặc đang chờ sửa cấu hình.
+- Đếm tiến độ theo các phần lá có ID nguồn ổn định, cùng cơ sở với số phần thực tế. Retry/resume không cộng trùng. Khi tiếp tục chia, tổng có thể tăng; lý do chia hiện ngay trên dòng chương đó. Nếu cache cũ thiếu chứng cứ thì không dựng tỷ lệ chính xác giả.
+- Nhóm kế hoạch ban đầu và request/lease đang hoạt động là thông tin khác; không trộn vào mẫu số tiến độ. Có thể giữ trong diagnostics hiện có, không thêm thông tin kỹ thuật vào luồng đọc bình thường.
+- Đổi nhãn nút hiện có thành Dừng chương này/Dừng chương sau theo đúng đối tượng. Dùng cùng adapter cho panel, trạng thái ngoài bài và nút AI nổi để tránh thông điệp mâu thuẫn.
+
+Phần đầu bảng AI sử dụng cùng presenter; minh họa trạng thái:
+
+```text
+Chương này   Gemini …
+Đã xong · 4 phần
+Lý do chia: phục hồi bản dịch bị cắt
+
+Chương sau   Gemini …
+Đang dịch · 2/3 phần
+[Dừng chương sau]
+```
+
+**Nghiệm thu:** bảng chuyển trạng thái cho cả current/next với success, mất mạng, quota/cooldown, cần cấu hình và Stop; count đúng ở nested split, cached-child resume, retry lặp cùng nhánh và hoàn thành lệch thứ tự. Stop chặn renew/retry/callback muộn, không dừng nhầm chương hoặc làm mất phần đã xong. Không thay scheduler chỉ để khớp nhãn UI.
+
+### Nghiệm thu D1–D2 — 24/10/2026
+
+Sidecar `ai-result-facts` giữ raw response/identity; `ai-leaf-progress` đếm cây nguồn, aggregate hoàn tất ưu tiên hơn checkpoint con cũ; `ai-chapter-view` dùng chung cho panel/thanh trạng thái/nút nổi. Không đổi scheduler, send budget, model/prompt hay giới hạn hai key. Metadata cũ thiếu vẫn unknown, không phát thêm AI để bù facts.
+
+Review độc lập: `tests/ai-d1d2-independent-review.test.ts` (18 ca), không còn finding chặn. Root: 172 file/2.129 unit pass, build pass; E2E 56 ca desktop/Android layout đạt (48 ở lượt đầu, 8 chạy lại sau cập nhật fixture/kỳ vọng cũ về model, snapshot Name và Stop). Logs `.dsh-tmp/d1d2-{full-test,build,e2e,e2e-updated}.log`. Không thay hành vi snapshot Name chỉ để khớp test.
+
+Pages `21834f59`, bundle `index-CwJ9fd3S.js`; production smoke 2/2, RAM và reload cùng facts, dữ liệu tổng hợp/0 cloud writes. Logs `.dsh-tmp/d1d2-{deploy,production-smoke}.log`. Chưa kiểm AI provider thật/Android thật; hybrid legacy chưa có số phần toàn chương đáng tin thì không dựng tỷ lệ giả.
+
+### D3 — Giữ mốc nguồn khi chia thêm để phục hồi
+
+**Code liên quan:** `ai-complete.ts`, `ai-parts.ts`, `ai-text-map.ts`, `ai-reading-cache.ts`, `src/features/reader/services/ai-name-paragraph.ts`.
+
+- Ghi span nguồn/đích cho từng nhánh con thực tế; ghép và dịch offset theo đúng thứ tự nguồn và separator của chuỗi kết quả.
+- Làm cả trường hợp kế hoạch ban đầu chỉ có một phần nhưng sau đó phải chia nhỏ. Khi resume, dùng metadata con hợp lệ đã lưu; không tạo mốc giả cho child cache cũ không có chứng cứ.
+- Map phủ nguồn liên tục, không chồng/thiếu và khớp chuỗi đích thực tế. Giữ ranh giới UTF-16, surrogate pair, CRLF/newline.
+- Popup Name dùng map chi tiết hơn nhưng vẫn cho phép ước lượng bên trong một span; không gọi AI/embedding để căn chỉnh, không hứa đúng từng câu hoặc từng từ.
+
+**Nghiệm thu:** nguồn ngắn/dài, nested recovery, một phần ban đầu, cached-child resume, thiếu/hỏng metadata, AI gộp/tách đoạn và Unicode. Metadata sai dùng fallback đang có; mở Name không phát thêm request dịch AI, không đổi TTS/bookmark.
+
+### D4 — Kiểm soát dấu kết thúc ở bước ghép
+
+**Code liên quan:** bước hoàn thiện kết quả TXT dùng chung giữa `ai-complete.ts`/`ai-parts.ts`, reader text và đầu vào TTS; không tự xử lý trực tiếp trong JSON/HTML EPUB.
+
+- Việc đầu tiên là xác định quy tắc terminal marker hỗ trợ từ chỉ dẫn tường minh của prompt/profile. Không bật toàn cục chỉ vì văn bản chứa `♾`; prompt không yêu cầu, yêu cầu không rõ hoặc nguồn có ký hiệu hợp lệ thì giữ nguyên.
+- Với tác vụ xác định có quy tắc này: chỉ bỏ marker terminal ở cuối phần trung gian; không replace mọi `♾` trong nội dung. Chỉ giữ/đặt dấu kết thúc toàn chương khi mọi phần bắt buộc đã hoàn tất theo hợp đồng STOP/coverage hiện có.
+- Chuỗi partial không được gắn dấu hoàn tất toàn chương. Dấu marker không chứng minh đã dịch đủ nghĩa; không giảm kiểm tra kết quả hiện có.
+- Dựng chuỗi kết quả và span đích sau xử lý như một phép biến đổi thống nhất. Hiển thị, chọn Name và TTS dùng cùng phiên bản text/map. Khi partial đang được đọc/nghe, không sửa ngược prefix đã phát và không tái sử dụng cursor của chuỗi khác.
+- Không tự chuẩn hóa lại cache cũ hoặc bản dịch đã có bookmark/cursor. EPUB JSON/layout giữ nguyên ở đợt này; mở rộng nếu cần phải có thiết kế riêng cho text-node/offset.
+
+**Nghiệm thu:** prompt có/không có/không rõ yêu cầu marker; một phần và nhiều phần; ký hiệu hợp lệ trong nguồn; marker nội dung và marker cuối phần; partial→complete trong lúc nghe; map/cursor nhất quán. Cache cũ không bị viết lại hoặc gọi AI lại để làm sạch. Có thể bỏ qua formatter và trở về đường render cũ mà không làm hỏng dữ liệu đã lưu.
+
+### D5 — Tìm chương dễ dùng bằng ô hiện có
+
+**Code liên quan:** phần `tocFilter`/`openToc`/pagination trong `Reader.tsx`; helper tìm kiếm thuần nếu cần.
+
+- Tạo khóa tìm kiếm local cho title/displayTitle: bỏ dấu tiếng Việt, chuẩn hóa `đ`, hoa/thường và khoảng trắng. Không sửa title gốc hoặc tải từ điển/Convert lại mỗi phím.
+- Truy vấn bình thường tìm tên. Chuỗi chỉ có số ưu tiên khớp số chương được nhận diện trong tiêu đề; kết quả vẫn là danh sách để người dùng chọn, không tự điều hướng sang phần tử có index bằng số đó.
+- Nếu số chương thiếu/trùng thì hiện các kết quả có căn cứ hoặc không tìm thấy; không đoán từ vị trí. Ghi riêng vị trí mục lục nếu cần giải thích trường hợp tên chương 1429 nhưng vị trí 1426.
+- Giữ nhãn Đang đọc, header chương hiện tại, mở đúng trang và cuộn tới chương đó khi mở lại; kết quả rỗng có thông báo ngắn trong vùng danh sách, không thêm nút nhảy cố định.
+
+**Nghiệm thu:** tìm có/không dấu, title/displayTitle, số chương khác index, số trùng/không có; trang cuối, clear/reopen, tiêu đề dài và bàn phím mobile. Tìm/đổi trang mục lục không tự sửa bookmark; chọn chương vẫn đi qua đường điều hướng hiện tại.
+
+### D6 — Tách code theo trách nhiệm, giữ hành vi
+
+**Code liên quan:** `Reader.tsx`, `ReaderTools.tsx`, `ChapterNavigation.tsx`, `ReaderToc.tsx`, `ReaderAiProgress.tsx`, `ReaderFloatingTools.tsx`; controller vẫn ở Reader.
+
+1. Tách `ChapterNavigation` dùng chung đầu/cuối và `ReaderToc` trình bày. Component nhận props/callback, không tạo AI session, truy cập progress DB hay điều khiển player.
+2. Tách adapter/presenter trạng thái AI đã ổn ở D1–D2, bỏ việc dựng cùng facts/nhãn ở nhiều nơi.
+3. Sau D3–D4 mới tách `useReaderAi` hoặc controller tương đương: một nơi sở hữu current/prewarm, request key, AbortController/generation, snapshot Names/prompt và retry timer. Không tạo job mới do rerender hoặc mount panel.
+4. Giữ lưu vị trí đọc và điều khiển TTS ở các luồng riêng; chỉ truyền sự kiện/hợp đồng cần thiết. Không chuyển quyền ghi bookmark sang controller prewarm để tiện refactor.
+
+**Nghiệm thu:** so sánh hành vi trước/sau từng extraction; không tăng sends, reset session/Name, mất selection/focus, đổi chương hoặc dừng audio khi chỉ mở/đóng panel. Mount/unmount, retry, chuyển chương, partial listening và Stop giữ đúng ownership. Mỗi extraction có diff có thể hoàn nguyên riêng.
+
+### Nghiệm thu phần component D6 — 24/10/2026
+
+Tách bốn component chỉ nhận props/callback: `ChapterNavigation`, `ReaderToc`, `ReaderAiProgress`, `ReaderFloatingTools`; xóa hai nhãn cũ không còn dùng từ D2. Reader vẫn sở hữu state, ref mục lục, session AI, snapshot Names/prompt, retry/abort, bookmark và player. Không thêm UI, thay thuật toán tìm chương, persistence hoặc D3/D4. Phần controller AI của D6 chưa làm theo phụ thuộc trong kế hoạch.
+
+Build pass; E2E Reader/AI 56/56 và nút nghe 2/2 (mock AI/TTS). Bổ sung kiểm mở/đóng panel giữ focus và không tăng request; fixture nghe cũ trả sai model/nội dung quá ngắn đã sửa, giữ log fail. Logs `.dsh-tmp/d6-{build,e2e,tts-e2e,tts-e2e-updated}.log`. Extraction thuần không thêm unit lặp JSX/full suite/reviewer.
+
+Pages `d0eb3dc5`, bundle `index-qE9FPxVJ.js`; production smoke 2/2 desktop/mobile-layout, RAM/reload/mục lục/nav đúng, dữ liệu tổng hợp/0 cloud writes. Logs `.dsh-tmp/d6-{deploy,production-smoke}.log`. Chưa kiểm provider/audio/Android thật.
+
+### Kiểm chứng và phát hành khi triển khai
+
+| Phạm vi | Kiểm tra bắt buộc trước khi nghiệm thu |
+|---|---|
+| Chỉ kế hoạch/tài liệu ở lượt này | Kiểm diff, liên kết và đủ sáu đề xuất; **không** test/build/E2E/deploy |
+| D1 và phần cache/span của D3; D4 nếu đổi dữ liệu lưu/cursor | Reviewer độc lập đọc diff + regression; root full `npm.cmd test`, build và E2E đúng luồng theo AGENTS |
+| D2, D5 và extraction UI thuần D6 | Targeted unit cho logic, build; E2E đúng hành vi; không full suite/reviewer chỉ vì đổi trình bày |
+| Controller AI/lifecycle D6 | Regression Stop/retry/prewarm/snapshot/cursor, build và E2E; áp dụng mức review/full test nếu chạm persistence/integrity |
+
+- Dùng lại tests hiện có: `ai-division*`, `ai-complete`, `ai-reading-cache`, `ai-cache-session-review`, `ai-job-independent-review`, `ai-text-map`, `ai-name-paragraph`, `reading-bookmark-review`; chỉ thêm ca kiểm invariant/gap mới. Không bỏ test giữ response identity để tiện đổi metadata.
+- E2E theo phạm vi: `reader-division.spec.ts`, `ai-txt-name.spec.ts`, các spec recovery/progress/TTS phù hợp. Những spec dùng footer đã bỏ phải cập nhật đường vào settings theo UI hiện hành trước khi dùng làm bằng chứng.
+- Lệnh mẫu: `npm.cmd test -- tests/<file>.test.ts`; `npm.cmd run build`; `npm.cmd run test:e2e -- e2e/<spec>.spec.ts --workers=4 --reporter=line`. Chạy kiểm tra nặng tuần tự, TEMP/TMP riêng theo AGENTS khi cần; chỉ lặp khi có code ảnh hưởng hoặc vấn đề chưa giải quyết.
+- Deploy sau khi đợt được triển khai và các gate liên quan đạt, theo quyền triển khai của phiên thực hiện. Smoke dùng context/IDB tổng hợp, chặn API cloud ngoài phạm vi; kiểm desktop/mobile-layout và cache reload. Không coi giả lập là Android thật hoặc mock là bằng chứng provider thật.
+- Rollback code theo từng đợt; bỏ qua metadata tùy chọn vẫn đọc được cache cũ. Không reset DB, xóa cache/partial, ghi đè nguồn hoặc hoàn nguyên thay đổi khác trong dirtytree để rollback.
+
+### Theo dõi thực hiện
+
+- [x] D1 — Hợp đồng facts, RAM/cache và compatibility.
+- [x] D2 — Trạng thái, tiến độ và Stop đúng đối tượng.
+- [ ] D3 — Map tới các nhánh phục hồi.
+- [ ] D4 — Marker theo quy tắc tường minh, text/map/cursor nhất quán.
+- [ ] D5 — Tìm chương bằng ô hiện có.
+- [x] D6 phần component thuần — điều hướng, mục lục, tiến độ và nút nổi.
+- [ ] D6 phần controller AI — giữ sau D3–D4, chưa tách.
+
+Đợt chỉ được đánh dấu xong khi có diff code, kết quả kiểm đúng phạm vi, review nếu bắt buộc và ghi rõ đã/chưa deploy. Giới hạn hoặc ca chưa kiểm phải ghi riêng. Không dùng kế hoạch này để tự đánh dấu các mục lịch sử phía dưới hoàn tất.
+
+---
+
 ## Trạng thái triển khai — 08/10/2026 14:39 ICT
 
 Phần UI software P0 và tìm tên Việt đã triển khai production454f94ce, https://thu-phong-private.pages.dev/. Root427unitreported/41files, app/serverTS+Vite80 build0,330/330 E2E qua3lượt; review độc lập57unit/build/72repeatE2E cuối. KnownbackupglobalNames expectedfailure vẫn còn. Đây không phải nghiệm thu Android thật hoặc toàn bộ website/EPUB/cloudsync.

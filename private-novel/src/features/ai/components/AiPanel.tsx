@@ -1,3 +1,5 @@
+import type {AiChapterView} from '../types/ai-chapter-view';
+import {aiDivisionReasonText} from '../services/ai-division';
 import {useEffect,useRef,useState} from 'react';
 import {useLiveQuery} from 'dexie-react-hooks';
 import {db} from '../../../core/db';
@@ -7,18 +9,17 @@ import {getPromptStock,readStoredPromptStock} from '../prompt/prompt-stock';
 import {currentPromptChoice} from '../prompt/prompt-list';
 import type {AiJobView} from './AiJobStatus';
 import {errorText} from '../../../shared/components/common';
-export interface ChapterModelView {model?:string;status:'idle'|'loading'|'ready'|'error'|'off'|'unavailable'}
+export type ChapterModelView=AiChapterView;
 interface Props {
  bookId:string;current:ChapterModelView;next:ChapterModelView;job:AiJobView;
  preload:boolean;onPreloadChange:(value:boolean)=>void;onClose:()=>void;onOpenSettings:()=>void;
  onSettingsChange:(settings:ReadingAiSettings,defer?:boolean)=>void;notify:(message:string)=>void;
- onRetry?:()=>void;onPauseRetry?:()=>void;
+ onStop?:()=>void;onRetry?:()=>void;onPauseRetry?:()=>void;
 }
 function ModelRow({label,view}:{label:string;view:ChapterModelView}){
- const empty=view.status==='unavailable'?'Hết truyện':view.status==='off'?'Đã tắt dịch sẵn':'Chưa dịch';
- return <div className="ai-model-row" aria-label={label}><span>{label}</span><div><strong>{view.model||empty}</strong>{(view.status==='loading'||view.status==='error')&&<small><i className={'ai-state-dot '+view.status}/>{view.status==='loading'?'Đang dịch':'Đã tạm dừng'}</small>}</div></div>;
+ return <div className="ai-model-row" aria-label={label}><span>{label}</span><div><strong>{view.model||view.label}</strong>{view.model&&<small role="status">{view.label}</small>}{view.progress?<small className="ai-division-count">{view.progress.done}/{view.progress.total} phần hoàn tất</small>:view.division&&<small className="ai-division-count">{view.division.parts} phần</small>}{view.division&&view.division.reasons.length>0&&<small className="ai-division-reason">{aiDivisionReasonText(view.division)}</small>}{!view.division&&view.content==='complete'&&<small>Chưa lưu thông tin chia phần</small>}</div></div>;
 }
-export function AiPanel({bookId,current,next,job,preload,onPreloadChange,onClose,onOpenSettings,onSettingsChange,notify,onRetry,onPauseRetry}:Props){
+export function AiPanel({bookId,current,next,job,preload,onPreloadChange,onClose,onOpenSettings,onSettingsChange,notify,onStop,onRetry,onPauseRetry}:Props){
  const panel=useRef<HTMLElement>(null),alive=useRef(false),operation=useRef(0),busyRef=useRef(false),[splitOverride,setSplitOverride]=useState<boolean|undefined>(undefined),[ready,setReady]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
  useEffect(()=>{alive.current=true;const opener=document.activeElement as HTMLElement|null;panel.current?.querySelector<HTMLButtonElement>('header button')?.focus();void getPromptStock().then(()=>{if(alive.current)setReady(true);}).catch(e=>{if(alive.current)setError(errorText(e));});return()=>{alive.current=false;operation.current++;if(opener?.isConnected)opener.focus();};},[bookId]);
  const state=useLiveQuery(async()=>{if(!ready)return;try{const [stock,preferences]=await Promise.all([readStoredPromptStock(),queueAiSettings(aiBookSettingsKey(bookId),()=>readReaderAiPreferences(bookId))]);return {stock,settings:preferences.settings,chosenId:preferences.chosenId,error:''};}catch(e){return {error:errorText(e)};}},[ready,bookId]);
@@ -34,12 +35,11 @@ export function AiPanel({bookId,current,next,job,preload,onPreloadChange,onClose
    {(error||state?.error)&&<p role="alert" className="ai-compact-error">{error||state?.error}</p>}
    <label className="ai-preload-toggle"><span>Dịch sẵn chương sau</span><input type="checkbox" role="switch" aria-label="Dịch sẵn chương kế tiếp" checked={preload} onChange={e=>onPreloadChange(e.target.checked)}/></label>
    <label className="ai-preload-toggle"><span>Dịch chia phần song song</span><input type="checkbox" role="switch" aria-label="Dịch chia phần song song" checked={splitOverride??!!state?.settings?.splitParts} disabled={busy||!state?.settings} onChange={e=>void toggleSplit(e.target.checked)}/></label>
-   {(job.error||onPauseRetry)&&<section className="ai-compact-job" aria-label="Điều khiển lượt dịch">
-    {job.error&&<p role="alert">{job.error}</p>}{job.retryIn!==undefined&&<small>Tự thử lại sau {job.retryIn} giây</small>}
-    <div className="ai-actions">{onRetry&&<button onClick={onRetry}>{job.progress?.done||job.progress?.half===2?'Tiếp tục phần còn thiếu':'Thử lại AI'}</button>}{job.configuration&&job.error&&<button onClick={onOpenSettings}>{job.configuration==='keys'?'Kiểm tra API keys':'Sửa cấu hình AI'}</button>}{onPauseRetry&&<button onClick={onPauseRetry}>Dừng tự thử lại</button>}</div>
+   {(job.error||onPauseRetry||onStop)&&<section className="ai-compact-job" aria-label="Điều khiển lượt dịch">
+    {job.error&&<p role="status">{job.error}</p>}{job.retryIn!==undefined&&<small>Tự thử lại sau {job.retryIn} giây</small>}
+    <div className="ai-actions">{onStop&&<button onClick={onStop}>{job.target==='Chương sau'?'Dừng chương sau':'Dừng chương này'}</button>}{onRetry&&<button onClick={onRetry}>{job.progress?.done||job.progress?.half===2?'Tiếp tục phần còn thiếu':'Thử lại AI'}</button>}{job.configuration&&job.error&&<button onClick={onOpenSettings}>{job.configuration==='keys'?'Kiểm tra API keys':'Sửa cấu hình AI'}</button>}{onPauseRetry&&<button onClick={onPauseRetry}>{job.target==='Chương sau'?'Dừng chương sau':'Dừng chương này'}</button>}</div>
     {job.error&&!!(job.errorCode||job.history?.length)&&<details className="ai-job-details"><summary>Chi tiết lỗi</summary>{!!job.history?.length&&<p>{job.history.join(' → ')}</p>}{job.errorCode&&<code>{job.errorCode}</code>}{job.requestId&&<small>{job.requestId}</small>}</details>}
    </section>}
   </div>
-  <footer className="ai-compact-footer"><button onClick={onOpenSettings}>Cài đặt dịch AI <span aria-hidden="true">↗</span></button></footer>
  </section>;
 }

@@ -1,5 +1,8 @@
+import {ttsAudioCache,ttsAudioCacheKey} from './tts-audio-cache';
+import {capcutVietnameseVoices} from '../../../shared/constants/capcut-voices';
 import {ContinuousTtsPlayer} from './tts-continuous';
 import {TtsMediaKeepAlive} from './tts-media-keepalive';
+import {ttsGateway,capcutSessionFailure} from './tts-gateway';
 export type SpeechState='idle'|'loading'|'playing'|'paused'|'ended'|'error';
 export interface Sentence {text:string;start:number;end:number}
 /** Keep natural pauses/whole words within the gateway cap, with exact UTF16 offsets. */
@@ -68,20 +71,26 @@ export const voiceOptions:VoiceOption[]=[
   ...['Hoài My','Nam Minh','Andrew','Ava','Brian','Emma','Seraphina','Florian','Vivienne','Remy'].map((name,i)=>({id:`bing-${i}`,name,provider:'bing' as const,serverId:`BingTTS:${i}`,available:false})),
   ...['Nữ 1','Nữ 2','Nữ 3','Nam 1','Nam 2','Nam 3'].map((name,i)=>({id:`google-cloud-${i}`,name,provider:'google-cloud' as const,serverId:`GoogleCloudTTS:${i}`,available:false})),
   {id:'google-translate-0',name:'Chị Google',provider:'google-translate',serverId:'GoogleTranslateTTS:0',available:false},
+  ...(import.meta.env.VITE_TTS_GATEWAY==='capcut-v2'
+    ?capcutVietnameseVoices.map(voice=>({id:voice.id,name:voice.name,provider:'tiktok' as const,serverId:voice.serverId,available:true}))
+    :[
   {id:'tiktok-female-1',name:'Nữ 1',provider:'tiktok' as const,serverId:'BV074_streaming',available:true},
   {id:'tiktok-male-1',name:'Nam 1',provider:'tiktok' as const,serverId:'BV075_streaming',available:true},
   {id:'tiktok-female-2',name:'Nữ 2',provider:'tiktok' as const,serverId:'tiktok:3',available:false}
+    ])
 ];
 export const tiktokVoices:TikTokVoice[]=[
   ...voiceOptions.filter((voice):voice is TikTokVoice=>voice.provider==='tiktok')
 ];
-const TIKTOK_ENDPOINT='https://ottsy.weilbyte.dev/api/generation';
+const TIKTOK_ENDPOINT=ttsGateway(import.meta.env.VITE_TTS_GATEWAY);
 const MAX_RESPONSE_BYTES=2*1024*1024;
 const REQUEST_TIMEOUT_MS=30000;
 class TtsRequestError extends Error {
   constructor(message:string,readonly retryAfterMs=0){super(message);}
 }
+class TtsSessionError extends Error {constructor(message:string,readonly waiting=false){super(message);}}
 function canResumeTts(error:Error){
+  if(error instanceof TtsSessionError)return error.waiting;
   if(error.name==='AbortError'||error.name==='NotAllowedError')return false;
   const status=/HTTP (\d{3})/.exec(error.message)?.[1];
   if(status)return status==='408'||status==='429'||Number(status)>=500;
@@ -91,7 +100,7 @@ export interface TtsOptions {rate:number;pitch:number;flex:number}
 export interface TtsPosition {offset:number;audioTime:number;grouping?:'natural'|'sentence'}
 export interface TtsTiming {kind:'start'|'chunk'|'chapter';offset:number;waitMs:number;gatewayMs:number;prefetched:boolean;mediaMs?:number}
 export interface TtsResources {requests:number;pending:number;nextReady:boolean;activeAudio:boolean;activeUrl:boolean}
-interface AudioRequest {controller:AbortController;result:Promise<{blob:Blob;error?:never}|{error:Error;blob?:never}>;ready:boolean;settled:boolean;durationMs:number}
+interface AudioRequest {controller:AbortController;result:Promise<{blob:Blob;error?:never}|{error:Error;blob?:never}>;ready:boolean;settled:boolean;durationMs:number;started:boolean;start:()=>void;cacheKey?:string;audioSeconds?:number;fromCache?:boolean}
 let mediaOwner:TikTokPlayer|undefined;
 async function fetchTikTokAudio(text:string,voice:TikTokVoice,signal:AbortSignal){
   if(!tiktokVoices.some(v=>v.available&&v.id===voice.id&&v.serverId===voice.serverId))throw new Error('Giọng TikTok này chưa được hỗ trợ.');
@@ -113,6 +122,15 @@ async function fetchTikTokAudio(text:string,voice:TikTokVoice,signal:AbortSignal
         // network failure may be transient, so retry once with the same sentence.
         if(controller.signal.aborted||attempt===1||(error as Error)?.name==='AbortError')throw error;
         await retryDelay();continue;
+      }
+      if(TIKTOK_ENDPOINT==='/api/tts'&&[401,403,422,503].includes(response.status)){
+        // Parse only a bounded, recognized server code, never display arbitrary
+        // upstream errors. Missing/expired sessions need user reconnection.
+        const reader=response.body?.getReader();let raw='',size=0;
+        try{if(reader)for(;;){const part=await Promise.race([reader.read(),cancellation]);if(part.done)break;size+=part.value.length;if(size>4096)break;raw+=new TextDecoder().decode(part.value);}}
+        finally{void reader?.cancel().catch(()=>{});reader?.releaseLock();}
+        let code:unknown;try{code=(JSON.parse(raw) as {error?:unknown}).error;}catch{/* not a session response */}
+        const message=capcutSessionFailure(code);if(message)throw new TtsSessionError(message,code==='capcut_session_expired');
       }
       if(attempt===1||![500,502,503,504].includes(response.status))break;
       void response.body?.cancel().catch(()=>{});
@@ -150,23 +168,24 @@ async function fetchTikTokAudio(text:string,voice:TikTokVoice,signal:AbortSignal
 }
 /** TikTok audio adapter. The endpoint must be an approved gateway, not a copied userscript or hidden third-party key. */
 export class TikTokPlayer {
-  private generation=0;private playback=0;private list:Sentence[]=[];private index=0;private state:SpeechState='idle';private voice=tiktokVoices[0];private options:TtsOptions={rate:1,pitch:1,flex:0};private audio?:HTMLAudioElement;private element?:HTMLAudioElement;private url?:string;
-  // At most three requests, including one next-chapter chunk when the current
-  // chapter's tail leaves room. No audio is persisted or sent to another provider.
+  private badCache=new Set<string>();private draining=false;private generation=0;private playback=0;private list:Sentence[]=[];private index=0;private state:SpeechState='idle';private voice=tiktokVoices[0];private options:TtsOptions={rate:1,pitch:1,flex:0};private audio?:HTMLAudioElement;private element?:HTMLAudioElement;private url?:string;
+  // At most three active requests; a bounded adaptive lookahead may retain more
+  // completed chunks. Derived audio cache is device-only and never edits cursors.
   private requests=new Map<string,AudioRequest>();
   private nextText='';private nextFirst?:Sentence;private transitionAt?:number;private timings:TtsTiming[]=[];private resumeAttempt=0;private deferredEnd=false;
   private continuous?:ContinuousTtsPlayer;
   private retryTimer?:ReturnType<typeof setTimeout>;
-  private recoveryAttempt=0;
+  private recoveryAttempt=0;private gatewayMs=7000;private secondsPerChar=.065;
   private clearRetry(){clearTimeout(this.retryTimer);this.retryTimer=undefined;}
   private recover(error:Error,sentence:Sentence,generation:number){
     if(generation!==this.generation)return;
     this.clearRetry();this.cancelRequests();this.cleanupAudio();
     if(this.state==='paused'){this.change('paused',sentence);return;}
     if(!canResumeTts(error)){this.keepAlive.pause();this.state='error';this.mediaState('none');this.change('error',sentence,`TikTok TTS lỗi: ${error.message}`);return;}
-    const delay=Math.max(Math.min(30000,2000*2**Math.min(this.recoveryAttempt++,4)),error instanceof TtsRequestError?error.retryAfterMs:0);
+    const waiting=error instanceof TtsSessionError&&error.waiting;
+    const delay=waiting?60000:Math.max(Math.min(30000,2000*2**Math.min(this.recoveryAttempt++,4)),error instanceof TtsRequestError?error.retryAfterMs:0);
     this.state='loading';this.mediaState('paused');
-    this.change('loading',sentence,`TikTok TTS lỗi: ${error.message}. Tự thử lại sau ${Math.ceil(delay/1000)} giây; giữ vị trí nghe.`);
+    this.change('loading',sentence,waiting?'Phiên CapCut cần kết nối lại. Đang giữ vị trí; tự tiếp tục khi phiên được khôi phục.':`Kết nối giọng đọc gián đoạn: ${error.message}. Tự thử lại sau ${Math.ceil(delay/1000)} giây; giữ vị trí nghe.`);
     const retry=()=>{
       this.retryTimer=undefined;if(generation!==this.generation||this.state!=='loading')return;
       if(typeof navigator!=='undefined'&&navigator.onLine===false){this.retryTimer=setTimeout(retry,1000);return;}
@@ -184,7 +203,7 @@ export class TikTokPlayer {
   private pendingSeek=false;
   position():TtsPosition{if(this.continuous)return this.continuous.position();return {offset:this.list[this.index]?.start??(this.list.at(-1)?.end??0),audioTime:!this.pendingSeek&&Number.isFinite(this.audio?.currentTime)?this.audio!.currentTime:this.resumeTime};}
   diagnostics(){return this.timings.map(t=>({...t}));}
-  resources():TtsResources{if(this.continuous)return this.continuous.resources();const next=this.list[this.index+1]??this.nextFirst;return {requests:this.requests.size,pending:[...this.requests.values()].filter(r=>!r.settled).length,nextReady:!!next&&this.requests.get(this.requestKey(next))?.ready===true,activeAudio:!!this.audio,activeUrl:!!this.url};}
+  resources():TtsResources{if(this.continuous)return this.continuous.resources();const next=this.list[this.index+1]??this.nextFirst;return {requests:this.requests.size,pending:[...this.requests.values()].filter(r=>r.started&&!r.settled).length,nextReady:!!next&&this.requests.get(this.requestKey(next))?.ready===true,activeAudio:!!this.audio,activeUrl:!!this.url};}
   prepareNext(text=''){if(this.continuous){this.continuous.prepareNext(text);return;}this.nextText=text;this.nextFirst=sentences(text,this.options.flex>0)[0];if(this.state==='playing'||this.state==='loading')this.prefetch(this.generation);}
   setMediaTitle(title:string,artist:string){if(mediaOwner===this&&typeof MediaMetadata!=='undefined')try{navigator.mediaSession.metadata=new MediaMetadata({title,artist});}catch{/* Optional lock-screen labels. */}}
   start(text:string,voice:TikTokVoice,options:TtsOptions,position?:TtsPosition){
@@ -208,25 +227,54 @@ export class TikTokPlayer {
   }
   private requestKey(sentence:Sentence){return JSON.stringify([this.voice.id,this.voice.serverId,sentence.text]);}
   private request(sentence:Sentence){
-    const key=this.requestKey(sentence);const existing=this.requests.get(key);if(existing)return existing.result;
-    const controller=new AbortController();
-    // Catch speculative failures. Only the current chunk schedules recovery.
-    const started=performance.now();const entry:AudioRequest={controller,ready:false,settled:false,durationMs:0,result:Promise.resolve({error:new Error('pending')})};
-    entry.result=fetchTikTokAudio(sentence.text,this.voice,controller.signal).then(blob=>{entry.ready=true;entry.settled=true;entry.durationMs=performance.now()-started;return {blob};},error=>{entry.settled=true;return {error:error instanceof Error?error:new Error(String(error))};});
-    this.requests.set(key,entry);return entry.result;
+    const key=this.requestKey(sentence),existing=this.requests.get(key);if(existing)return existing.result;
+    const controller=new AbortController(),generation=this.generation;
+    let resolve!:(result:{blob:Blob;error?:never}|{error:Error;blob?:never})=>void;
+    const entry:AudioRequest={controller,ready:false,settled:false,started:false,durationMs:0,start:()=>{},result:new Promise(done=>{resolve=done;})};
+    const finish=(result:{blob:Blob;error?:never}|{error:Error;blob?:never})=>{if(entry.settled)return;entry.settled=true;entry.ready=!!result.blob;controller.signal.removeEventListener('abort',cancel);resolve(result);this.pumpRequests();if(generation===this.generation&&this.state==='playing')this.prefetch(generation);};
+    const cancel=()=>finish({error:new DOMException('Đã dừng.','AbortError')});controller.signal.addEventListener('abort',cancel,{once:true});
+    entry.start=()=>{entry.started=true;void(async()=>{
+      if(TIKTOK_ENDPOINT==='/api/tts'){
+        try{const resource=capcutVietnameseVoices.find(v=>v.serverId===this.voice.serverId)?.resource??'';entry.cacheKey=await ttsAudioCacheKey(TIKTOK_ENDPOINT+':'+this.voice.serverId+':'+resource,sentence.text);const saved=this.badCache.has(entry.cacheKey)?undefined:await ttsAudioCache.get(entry.cacheKey,controller.signal);if(saved){entry.fromCache=true;entry.audioSeconds=saved.duration;return saved.blob;}}catch{/* Storage is optional. */}
+      }
+      if(controller.signal.aborted)throw new DOMException('Đã dừng.','AbortError');
+      const started=performance.now(),blob=await fetchTikTokAudio(sentence.text,this.voice,controller.signal);entry.durationMs=performance.now()-started;
+      if(controller.signal.aborted)throw new DOMException('Đã dừng.','AbortError');
+      this.gatewayMs=this.gatewayMs*.65+entry.durationMs*.35;
+      if(entry.cacheKey)void ttsAudioCache.put(entry.cacheKey,blob,controller.signal).catch(()=>{});
+      return blob;
+    })().then(blob=>finish({blob}),error=>finish({error:error instanceof Error?error:new Error(String(error))}));};
+    this.requests.set(key,entry);this.pumpRequests();return entry.result;
+  }
+  private discardAudio(sentence:Sentence,blob:Blob){const key=this.requests.get(this.requestKey(sentence))?.cacheKey;if(!key)return;this.badCache.add(key);while(this.badCache.size>128)this.badCache.delete(this.badCache.values().next().value!);void ttsAudioCache.invalidate(key,blob).catch(()=>{});}
+  private pumpRequests(){
+    if(this.draining)return;
+    let pending=[...this.requests.values()].filter(r=>r.started&&!r.settled).length;
+    for(const entry of this.requests.values())if(pending<3&&!entry.started&&!entry.settled&&!entry.controller.signal.aborted){pending++;entry.start();}
+  }
+  private bufferWindow(){
+    if(TIKTOK_ENDPOINT!=='/api/tts'){const window=this.list.slice(this.index,this.index+3);if(window.length<3&&this.nextFirst)window.push(this.nextFirst);return window;}
+    const target=Math.min(45,Math.max(12,this.gatewayMs/1000*2+3)),rate=Math.max(.5,this.options.rate);
+    let covered=this.audio&&Number.isFinite(this.audio.duration)?Math.max(0,this.audio.duration-this.audio.currentTime)/rate:0;
+    const window:Sentence[]=[];
+    for(let at=this.index;at<this.list.length&&window.length<12;at++){
+      const sentence=this.list[at];if(at>this.index&&covered>=target)break;window.push(sentence);
+      if(at>this.index)covered+=(this.requests.get(this.requestKey(sentence))?.audioSeconds??Array.from(sentence.text).length*this.secondsPerChar)/rate;
+    }
+    if(window.length<12&&this.list.length-this.index===window.length&&this.nextFirst&&covered<target)window.push(this.nextFirst);
+    return window;
   }
   private retainWindow(){
-    const window=this.list.slice(this.index,this.index+3);if(window.length<3&&this.nextFirst)window.push(this.nextFirst);
-    const keys=new Set(window.map(sentence=>this.requestKey(sentence)));
-    for(const [key,request] of this.requests){if(!keys.has(key)){request.controller.abort();this.requests.delete(key);}}
+    const window=this.bufferWindow(),keys=new Set(window.map(sentence=>this.requestKey(sentence)));
+    this.draining=true;try{for(const [key,request] of this.requests)if(!keys.has(key)){this.requests.delete(key);request.controller.abort();}}finally{this.draining=false;}
+    this.pumpRequests();return window;
   }
   private prefetch(generation:number){
     if(generation!==this.generation)return;
     if(this.state==='loading'&&this.index===0&&!this.requests.get(this.requestKey(this.list[0]))?.ready)return;
-    this.retainWindow();for(const sentence of this.list.slice(this.index+1,this.index+3))void this.request(sentence);
-    if(this.list.length-this.index<3&&this.nextFirst)void this.request(this.nextFirst);
+    for(const sentence of this.retainWindow())if(sentence!==this.list[this.index])void this.request(sentence);
   }
-  private cancelRequests(){for(const request of this.requests.values())request.controller.abort();this.requests.clear();}
+  private cancelRequests(){this.draining=true;try{for(const request of this.requests.values())request.controller.abort();this.requests.clear();}finally{this.draining=false;}}
   private async play(generation:number,started=performance.now(),kind:TtsTiming['kind']='chunk'){
     if(generation!==this.generation)return;
     const sentence=this.list[this.index];
@@ -242,7 +290,7 @@ export class TikTokPlayer {
       const result=await current;
       if(generation!==this.generation)return;
       if('error' in result){
-        if(Array.from(sentence.text).length>100&&/HTTP 50[0234]/.test(result.error!.message)){
+        if(this.resumeTime===0&&Array.from(sentence.text).length>100&&/HTTP 50[0234]/.test(result.error!.message)){
           this.list.splice(this.index,1,...smallerTtsChunks(sentence));this.resumeTime=0;void this.play(generation,started,kind);return;
         }
         throw result.error;
@@ -256,19 +304,20 @@ export class TikTokPlayer {
       this.pendingSeek=this.resumeTime>0;
       const seek=()=>{
         if(generation!==this.generation||playback!==this.playback||audio!==this.audio)return;
-        try{audio.currentTime=this.resumeTime;if(Math.abs(audio.currentTime-this.resumeTime)<0.01){this.pendingSeek=false;audio.onloadedmetadata=null;}}catch{/* Retry after metadata arrives. */}
+        try{audio.currentTime=this.resumeTime;if(Math.abs(audio.currentTime-this.resumeTime)<0.01){this.pendingSeek=false;}}catch{/* Retry after metadata arrives. */}
       };
-      seek();if(this.pendingSeek)audio.onloadedmetadata=seek;
+      const metadata=()=>{if(generation!==this.generation||playback!==this.playback||audio!==this.audio)return;if(Number.isFinite(audio.duration)&&audio.duration>0){const entry=this.requests.get(this.requestKey(sentence));if(entry){entry.audioSeconds=audio.duration;if(entry.cacheKey)void ttsAudioCache.duration(entry.cacheKey,audio.duration).catch(()=>{});}this.secondsPerChar=this.secondsPerChar*.7+audio.duration/Math.max(1,Array.from(sentence.text).length)*.3;}seek();if(!this.pendingSeek)audio.onloadedmetadata=null;this.prefetch(generation);};
+      audio.onloadedmetadata=metadata;audio.ontimeupdate=()=>{if(generation===this.generation&&audio===this.audio&&this.state==='playing')this.prefetch(generation);};seek();if(audio.readyState>=1)metadata();
       let failed=false;
-      const advance=()=>{audio.onended=null;audio.onerror=null;audio.onloadedmetadata=null;this.audio=undefined;this.resumeTime=0;this.pendingSeek=false;this.deferredEnd=false;this.recoveryAttempt=0;this.index++;void this.play(generation,performance.now());};
+      const advance=()=>{audio.onended=null;audio.onerror=null;audio.onloadedmetadata=null;audio.ontimeupdate=null;this.audio=undefined;this.resumeTime=0;this.pendingSeek=false;this.deferredEnd=false;this.recoveryAttempt=0;this.index++;void this.play(generation,performance.now());};
       audio.onended=()=>{if(generation!==this.generation||playback!==this.playback||audio!==this.audio)return;if(this.state==='paused'){this.deferredEnd=true;return;}advance();};
-      audio.onerror=()=>{if(generation!==this.generation||playback!==this.playback||audio!==this.audio)return;failed=true;this.recover(new Error('Không phát được audio'),sentence,generation);};
+      audio.onerror=()=>{if(generation!==this.generation||playback!==this.playback||audio!==this.audio)return;failed=true;this.discardAudio(sentence,blob);this.recover(new Error('Không phát được audio'),sentence,generation);};
       await audio.play();
       if(generation===this.generation&&playback===this.playback&&audio===this.audio&&!failed&&this.state==='loading'){
         this.timings.push({kind,offset:sentence.start,waitMs:Math.round(performance.now()-started),gatewayMs:Math.round(this.requests.get(this.requestKey(sentence))?.durationMs??0),prefetched,mediaMs:Math.round(performance.now()-mediaStarted)});if(this.timings.length>120)this.timings.shift();
         this.state='playing';this.mediaState('playing');this.change('playing',sentence,this.recoveryAttempt?'Đã kết nối lại TikTok TTS, tiếp tục nghe.':undefined);this.prefetch(generation);
       }
-    }catch(error){if(generation===this.generation&&playback===this.playback&&(!playbackAudio||playbackAudio===this.audio)&&(error as Error).name!=='AbortError')this.recover(error instanceof Error?error:new Error(String(error)),sentence,generation);}
+    }catch(error){if(generation===this.generation&&playback===this.playback&&(!playbackAudio||playbackAudio===this.audio)&&(error as Error).name!=='AbortError'){const entry=this.requests.get(this.requestKey(sentence));if(playbackAudio&&entry?.cacheKey&&(error as Error).name!=='NotAllowedError'){this.badCache.add(entry.cacheKey);const result=await entry.result;if(result.blob)this.discardAudio(sentence,result.blob);}this.recover(error instanceof Error?error:new Error(String(error)),sentence,generation);}}
   }
   pause(){this.clearRetry();if(this.continuous){this.continuous.pause();return;}if(this.state!=='playing'&&this.state!=='loading')return;this.keepAlive.pause();this.resumeAttempt++;if(this.state==='loading'){this.generation++;this.cancelRequests();this.cleanupAudio();}else this.audio?.pause();this.state='paused';this.mediaState('paused');this.change('paused',this.list[this.index]);}
   resume(){
@@ -283,7 +332,7 @@ export class TikTokPlayer {
     const generation=this.generation,attempt=++this.resumeAttempt;const audio=this.audio;this.state='loading';this.change('loading',this.list[this.index]);
     void audio.play().then(()=>{if(generation!==this.generation||attempt!==this.resumeAttempt||audio!==this.audio||this.state!=='loading')return;this.state='playing';this.mediaState('playing');this.change('playing',this.list[this.index]);}).catch(error=>{if(generation!==this.generation||attempt!==this.resumeAttempt||audio!==this.audio)return;this.recover(error instanceof Error?error:new Error(String(error)),this.list[this.index],generation);});
   }
-  private cleanupAudio(){if(this.audio&&!this.pendingSeek&&Number.isFinite(this.audio.currentTime))this.resumeTime=this.audio.currentTime;this.pendingSeek=false;const audio=this.audio??this.element;if(audio){audio.onended=null;audio.onerror=null;audio.onloadedmetadata=null;audio.pause();audio.removeAttribute('src');audio.load();this.audio=undefined;}if(this.url){URL.revokeObjectURL(this.url);this.url=undefined;}}
+  private cleanupAudio(){if(this.audio&&!this.pendingSeek&&Number.isFinite(this.audio.currentTime))this.resumeTime=this.audio.currentTime;this.pendingSeek=false;const audio=this.audio??this.element;if(audio){audio.onended=null;audio.onerror=null;audio.onloadedmetadata=null;audio.ontimeupdate=null;audio.pause();audio.removeAttribute('src');audio.load();this.audio=undefined;}if(this.url){URL.revokeObjectURL(this.url);this.url=undefined;}}
   private claimMedia(){
     if(typeof navigator==='undefined'||!navigator.mediaSession)return;mediaOwner=this;
     try{navigator.mediaSession.setActionHandler('play',()=>this.resume());navigator.mediaSession.setActionHandler('pause',()=>this.pause());navigator.mediaSession.setActionHandler('stop',()=>this.mediaStop?this.mediaStop():this.stop());}catch{/* Media Session is optional. */}
@@ -297,7 +346,7 @@ export class TikTokPlayer {
 
     this.generation++;this.playback++;this.resumeAttempt++;this.deferredEnd=false;
     const first=preserveNext?this.nextFirst:undefined,key=first?this.requestKey(first):undefined;
-    for(const [requestKey,request] of this.requests)if(requestKey!==key){request.controller.abort();this.requests.delete(requestKey);}
+    this.draining=true;try{for(const [requestKey,request] of this.requests)if(requestKey!==key){request.controller.abort();this.requests.delete(requestKey);}}finally{this.draining=false;}
     this.cleanupAudio();this.state='idle';this.mediaState('none');if(!preserveNext){this.nextText='';this.nextFirst=undefined;this.transitionAt=undefined;this.releaseMedia();}this.change('idle');
   }
 }

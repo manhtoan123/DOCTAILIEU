@@ -8,7 +8,7 @@ import {readSharedReplica,syncSharedState} from '../src/features/sync-cloud/serv
 
 const bookId='independent-ai-progress';
 const chapters:Chapter[]=Array.from({length:3},(_,order)=>({id:`independent-${order}`,bookId,order,title:'Synthetic',text:'原文😀\nSecond paragraph',revision:1,sourceId:'immutable-source'}));
-const marker=(order:number,mode:Progress['mode']='ai'):Progress=>({bookId,chapterId:chapters[order].id,revision:1,paragraph:0,offset:0,updatedAt:1,...(mode?{mode}:{})});
+const marker=(order:number,mode:Progress['mode']='ai'):Progress=>({bookId,chapterId:chapters[order].id,revision:1,paragraph:0,offset:0,updatedAt:order+1,reading:true,...(mode?{mode}:{})});
 beforeEach(async()=>{
  vi.stubGlobal('location',{origin:'https://independent-progress.example'});
  await db.delete();await db.open();await db.books.put({id:bookId,title:'Synthetic',author:'',status:'ready',chapterCount:3,charCount:66,createdAt:1,updatedAt:1});await db.chapters.bulkPut(chapters);
@@ -26,9 +26,9 @@ it('a failed IndexedDB write rolls back without losing the previous bookmark',as
  await expect(saveAiReadingProgress(chapters[2])).rejects.toThrow('simulated quota failure');write.mockRestore();
  expect(await db.progress.get(bookId)).toEqual(old);expect(await db.chapters.where('bookId').equals(bookId).sortBy('order')).toEqual(chapters);
 });
-it('concurrent completions in reverse chapter order finish at the greatest valid order',async()=>{
+it('concurrent active chapter visits finish at the last valid visit, even when it is earlier',async()=>{
  await Promise.all([saveAiReadingProgress(chapters[2]),saveAiReadingProgress(chapters[0]),saveAiReadingProgress(chapters[1])]);
- expect(await db.progress.get(bookId)).toMatchObject({...marker(2),updatedAt:expect.any(Number)});
+ expect(await db.progress.get(bookId)).toMatchObject({...marker(1),updatedAt:expect.any(Number)});
 });
 it('ambiguous equal-order chapters and foreign or stale references cannot auto-resolve conflicts',async()=>{
  const duplicate={...chapters[1],id:'different-same-order'};await db.chapters.put(duplicate);
@@ -61,7 +61,7 @@ it('ordinary competing scroll positions still require an explicit conflict choic
 it.each([
  {name:'raw scroll races a newer remote AI bookmark',initial:{...marker(0),mode:undefined},during:{...marker(1),mode:undefined},remote:marker(2),expected:marker(2),conflict:false},
  {name:'new local AI completion beats older remote AI',initial:marker(0),during:marker(2),remote:marker(1),expected:marker(2),conflict:false},
- {name:'timestamp-only local AI update keeps deterministic chapter merge',initial:marker(2),during:{...marker(2),updatedAt:2},remote:marker(1),expected:{...marker(2),updatedAt:2},conflict:false},
+ {name:'timestamp-only local AI update retains the newer observation',initial:marker(2),during:{...marker(2),updatedAt:4},remote:marker(1),expected:{...marker(2),updatedAt:4},conflict:false},
  {name:'new local AI completion accepts a still-newer remote AI',initial:{...marker(0),mode:undefined},during:marker(1),remote:marker(2),expected:marker(2),conflict:false},
  {name:'remote application uses latest CAS even when snapshot hash matched',initial:marker(1),during:{...marker(0),mode:undefined},remote:marker(1),expected:marker(1),conflict:false},
  {name:'normal scrolling retains manual conflict rules',initial:{...marker(0),mode:undefined},during:{...marker(1),mode:undefined},remote:{...marker(2),mode:undefined},expected:{...marker(1),mode:undefined},conflict:true},
@@ -81,7 +81,7 @@ it.each([
  expect(!!(await readSharedReplica()).conflicts[id]).toBe(scenario.conflict);
  if(!scenario.conflict)expect(rows.get(id)?.record.value).toEqual(validateSharedRecord({kind:'progress',bookId,key:'',value:scenario.expected}).value);
 });
-it('an actual PUT CAS collision retains the greater AI chapter and republishes against the observed revision',async()=>{
+it('an actual PUT CAS collision retains the newer observed bookmark and republishes against the observed revision',async()=>{
  await db.progress.put(marker(2));const initial:SharedRecord={kind:'progress',bookId,key:'',value:marker(0)},id=await sharedRecordId(initial);
  let remote={id,revision:1,record:initial},collided=false;const bases:number[]=[];
  vi.stubGlobal('fetch',vi.fn(async(input:string,init?:RequestInit)=>{

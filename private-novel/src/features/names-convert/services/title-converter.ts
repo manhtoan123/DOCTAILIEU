@@ -1,3 +1,4 @@
+import {readEffectiveBookNames} from './scoped-names';
 import {db} from '../../../core/db';
 import {convert} from './language-client';
 import {hasChinese, sanitizeSourceFilename} from '../../library/services/title-resolver';
@@ -64,7 +65,7 @@ export async function prepareBookTitles(
     db.books.get(bookId),
     db.chapters.where('bookId').equals(bookId).sortBy('order'),
     db.sources.where('bookId').equals(bookId).toArray(),
-    db.names.where('bookId').equals(bookId).toArray(),
+    readEffectiveBookNames(bookId),
     db.dictionaries.count(),
   ]);
 

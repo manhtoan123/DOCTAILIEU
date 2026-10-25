@@ -1,8 +1,12 @@
+import {hasUnknownAiParts} from './ai-leaf-progress';
 import type {AiLeaseInfo,AiTranslateClientResponse} from './ai-translate';
 import {isTransientAiFailure,waitForAiRetry} from './ai-recovery';
 import {protectAiBoundary} from './ai-boundary';
+import {combineAiDivision,type AiDivision,type AiDivisionReason} from './ai-division';
 export interface AiPart {id:string;text:string;context?:string;start:number;end:number}
 export interface AiPartsProgress {total:number;done:number;active:number[];text:string;nodes?:string[];parallel:number;retrying?:number[];waitUntil?:number;recoveryPasses?:number;half?:1|2;halfModels?:[string,string];sample?:string;promptPreview?:string;
+ division?:AiDivision;
+ leafProgress?:import('./ai-leaf-progress').AiLeafProgress;
  /** Runtime evidence only: no field below is inferred from a configured maximum. */
  activeRequests?:number;activeLeases?:number;parallelLeases?:number;leaseHashes?:string[];keySlots?:number[];keysAvailable?:number}
 export interface AiPartRecord {id:string;response:AiTranslateClientResponse}
@@ -30,7 +34,8 @@ export function splitAiText(text:string,protectedKeys:string[]=[],maxChars=AI_PA
  return parts;
 }
 /** One recovery pass for local transient failures; all sends still use the caller's chapter budget. */
-export async function runAiParts(parts:AiPart[],signal:AbortSignal,completed:Map<string,AiTranslateClientResponse>,send:(part:AiPart,onLease?:(lease:AiLeaseInfo)=>void)=>Promise<AiTranslateClientResponse>,publish:(state:AiPartsProgress)=>void,save?:(part:AiPart,result:AiTranslateClientResponse)=>Promise<void>,render?:(completed:Map<string,AiTranslateClientResponse>)=>Pick<AiPartsProgress,'text'|'nodes'>,initialParallel:1|2=1,control?:AiPartsControl,jobId?:string):Promise<AiTranslateClientResponse>{
+export async function runAiParts(parts:AiPart[],signal:AbortSignal,completed:Map<string,AiTranslateClientResponse>,send:(part:AiPart,onLease?:(lease:AiLeaseInfo)=>void)=>Promise<AiTranslateClientResponse>,publish:(state:AiPartsProgress)=>void,save?:(part:AiPart,result:AiTranslateClientResponse)=>Promise<void>,render?:(completed:Map<string,AiTranslateClientResponse>)=>Pick<AiPartsProgress,'text'|'nodes'>,initialParallel:1|2=1,control?:AiPartsControl,jobId?:string,splitReason?:AiDivisionReason):Promise<AiTranslateClientResponse>{
+ const unknownDivision=hasUnknownAiParts(parts,completed);
  let width=initialParallel,cursor=0,failure:unknown,model=completed.values().next().value?.model,waitUntil=0,throttled=false;const active=new Set<number>(),deferred=new Map<number,number>(),attempts=new Map<number,number>();
  const leases=new Map<number,{leaseIdHash:string;keySlot?:number;requestId?:string}>(),observedLeases=new Set<string>(),observedSlots=new Set<number>();
  let keysAvailable:number|undefined,maxActiveLeases=0;
@@ -46,7 +51,7 @@ export async function runAiParts(parts:AiPart[],signal:AbortSignal,completed:Map
   return {activeRequests:active.size,activeLeases:activeLeases.size,parallelLeases:maxActiveLeases,...(observedLeases.size?{leaseHashes:[...observedLeases]}:{}),...(observedSlots.size?{keySlots:[...observedSlots]}:{}),...(keysAvailable!==undefined?{keysAvailable}:{})};
  };
  const remember=(result:AiTranslateClientResponse)=>{const debug=result.debug;if(!debug)return;if(debug.leaseIdHash)observedLeases.add(debug.leaseIdHash);if(debug.keySlot!==undefined)observedSlots.add(debug.keySlot);if(debug.keysAvailable!==undefined)keysAvailable=debug.keysAvailable;};
- const emit=()=>{check();if(control?.throttled){throttled=true;width=1;waitUntil=Math.max(waitUntil,control.waitUntil);}publish({total:parts.length,done:parts.filter(p=>completed.has(p.id)).length,active:[...active].map(i=>i+1),parallel:width,...(deferred.size?{retrying:[...deferred.keys()].map(i=>i+1)}:{}),...(attempts.size?{recoveryPasses:attempts.size}:{}),...(waitUntil>Date.now()?{waitUntil}:{}),...evidence(),...preview()});};
+ const emit=()=>{check();if(control?.throttled){throttled=true;width=1;waitUntil=Math.max(waitUntil,control.waitUntil);}publish({total:parts.length,done:parts.filter(p=>completed.has(p.id)).length,active:[...active].map(i=>i+1),parallel:width,...(deferred.size?{retrying:[...deferred.keys()].map(i=>i+1)}:{}),...(attempts.size?{recoveryPasses:attempts.size}:{}),...(waitUntil>Date.now()?{waitUntil}:{}),...(splitReason&&!unknownDivision?{division:combineAiDivision(parts.map(p=>completed.get(p.id)??{}),parts.length>1?splitReason:undefined)}:{}),...evidence(),...preview()});};
  const changed=()=>{if(!signal.aborted)emit();};
  if(control)(control.listeners??=new Set()).add(changed);
  const one=async(index:number)=>{
@@ -85,5 +90,7 @@ export async function runAiParts(parts:AiPart[],signal:AbortSignal,completed:Map
  check();if(failure)throw failure;const values=parts.map(p=>completed.get(p.id));if(values.some(r=>!r))throw Error('Chương chưa được dịch đầy đủ.');
  const results=values as AiTranslateClientResponse[],last=results.at(-1)!;if(results.some(r=>r.model!==model))throw Error('Model của các phần dịch không thống nhất.');
  if(results.length===1)return last;
- return {...last,result:results.map(r=>r.result).join('\n'),inputTokens:results.reduce((n,r)=>n+r.inputTokens,0),outputTokens:results.reduce((n,r)=>n+r.outputTokens,0)};
+ let translatedStart=0;
+ const textMap=render?undefined:{version:1 as const,sourceLength:parts.at(-1)!.end,spans:parts.map((part,i)=>{const span={sourceStart:part.start,sourceEnd:part.end,translatedStart,translatedEnd:translatedStart+results[i].result.length};translatedStart=span.translatedEnd+1;return span;})};
+ return {...last,division:splitReason&&!unknownDivision?combineAiDivision(results,splitReason):undefined,textMap,result:results.map(r=>r.result).join('\n'),inputTokens:results.reduce((n,r)=>n+r.inputTokens,0),outputTokens:results.reduce((n,r)=>n+r.outputTokens,0)};
 }

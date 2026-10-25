@@ -1,29 +1,29 @@
-import {nameTombKey} from '../../sync-cloud/services/shared-name-intents';
 import {db} from '../../../core/db';
-import {saveBookNames} from '../../names-convert/services/book-names';
+import {saveScopedBookNames,deleteScopedBookName} from '../../names-convert/services/scoped-names';
 import {expandConvertSelection,saveConvertNames} from '../../names-convert/services/convert-names';
 import type {Token} from '../../names-convert/services/language';
 
 export interface ReaderWordEdit {sourceStart:number;sourceEnd:number;value:string}
 
 /** Guard and merge run in one transaction, including the nested Name writer. */
-export async function saveReaderName(bookId:string,chapterId:string,revision:number,key:string,value:string,scope:'book'|'global'):Promise<void> {
+export async function saveReaderName(bookId:string,chapterId:string,revision:number,key:string,value:string,scope:'book'|'global',expectedAlbum?:string|null):Promise<void> {
   if(/[\r\n=]/.test(key)||/[\r\n]/.test(value))throw new Error('Tên và nghĩa phải nằm trên một dòng; khóa không chứa dấu =.');
   key=key.trim();value=value.trim();
   if(!key||key.startsWith('#')||key.length>256||!value||value.length>2048)throw new Error('Khóa Name cần 1–256 ký tự, không bắt đầu bằng #; nghĩa cần 1–2.048 ký tự.');
   if(scope!=='book'&&scope!=='global')throw new Error('Phạm vi Name không hợp lệ.');
   if(!Number.isSafeInteger(revision))throw new Error('Phiên bản chương không hợp lệ.');
   await db.transaction('rw',[db.books,db.chapters,db.settings,...(scope==='book'?[db.names]:[])],async()=>{
-    if((await db.books.get(bookId))?.status!=='ready')throw new Error('Truyện không còn trong thư viện.');
+    const book=await db.books.get(bookId);
+    if(book?.status!=='ready'||book.hiddenChapterIds?.includes(chapterId))throw new Error('Truyện không còn trong thư viện.');
     const chapter=await db.chapters.get(chapterId);
     if(!chapter||chapter.bookId!==bookId||chapter.revision!==revision)throw new Error('Chương đã thay đổi; hãy mở lại trước khi lưu Name.');
-    if(scope==='book')await saveBookNames(bookId,`${key}=${value}`);
+    if(scope==='book')await saveScopedBookNames(bookId,`${key}=${value}`,expectedAlbum);
     else await saveConvertNames(`${key}=${value}`);
   });
 }
 
 /** Deletes only the current book's exact Name after rechecking the chapter in the same transaction. */
-export async function deleteReaderName(bookId:string,chapterId:string,revision:number,key:string){if(!key.trim()||key!==key.trim()||key.startsWith('#')||/[\r\n=]/.test(key)||key.length>256||!Number.isSafeInteger(revision))throw Error('Name không hợp lệ.');await db.transaction('rw',[db.books,db.chapters,db.names,db.settings],async()=>{const book=await db.books.get(bookId),chapter=await db.chapters.get(chapterId);if(book?.status!=='ready'||chapter?.bookId!==bookId||chapter.revision!==revision)throw Error('Chương đã thay đổi; mở lại trước khi xóa Name.');const rows=await db.names.where('bookId').equals(bookId).filter(name=>name.key===key).toArray();if(!rows.length)throw Error('Name đã thay đổi hoặc không thuộc truyện này.');await db.names.bulkDelete(rows.map(row=>row.id));await db.settings.put({key:nameTombKey(bookId,key),value:{kind:'name',bookId,key,value:null}});});}
+export async function deleteReaderName(bookId:string,chapterId:string,revision:number,key:string,expectedAlbum?:string|null,expected?:{id:string;value:string}){if(!key.trim()||key!==key.trim()||key.startsWith('#')||/[\r\n=]/.test(key)||key.length>256||!Number.isSafeInteger(revision))throw Error('Name không hợp lệ.');await db.transaction('rw',[db.books,db.chapters,db.names,db.settings],async()=>{const book=await db.books.get(bookId),chapter=await db.chapters.get(chapterId);if(book?.status!=='ready'||book.hiddenChapterIds?.includes(chapterId)||chapter?.bookId!==bookId||chapter.revision!==revision)throw Error('Chương đã thay đổi; mở lại trước khi xóa Name.');await deleteScopedBookName(bookId,key,expected,expectedAlbum);});}
 
 function boundary(source:string,offset:number) {
   return Number.isSafeInteger(offset)&&offset>=0&&offset<=source.length&&!(offset>0&&offset<source.length&&/[\uD800-\uDBFF]/.test(source[offset-1])&&/[\uDC00-\uDFFF]/.test(source[offset]));

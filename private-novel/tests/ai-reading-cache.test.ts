@@ -107,3 +107,41 @@ describe('persistent AI completed cache',()=>{
     await clearBookAiReadingCache('book');expect(await cachedRows()).toHaveLength(1);expect(await readAiReadingCache(other,AI_DEFAULTS,names)).toEqual(result);
   });
 });
+
+it('round trips derived alignment through persistent cache and ignores malformed optional metadata',async()=>{
+ const textMap={version:1 as const,sourceLength:source.text.length,spans:[{sourceStart:0,sourceEnd:source.text.length,translatedStart:0,translatedEnd:result.result.length}]};
+ await writeAiReadingCache(source,AI_DEFAULTS,names,{...result,textMap});
+ expect((await readAiReadingCache(source,AI_DEFAULTS,names))?.textMap).toEqual(textMap);
+ const row=(await cachedRows())[0];const value=row.value as any;value.response.textMap.spans[0].translatedEnd=999999;await db.settings.put({...row,value});
+ expect(await readAiReadingCache(source,AI_DEFAULTS,names)).toEqual(result);
+});
+
+it('round trips division facts, strips unknown fields and ignores malformed optional facts',async()=>{
+ const division={version:1 as const,parts:3,reasons:['output_limit' as const]};
+ expect(await writeAiReadingCache(source,AI_DEFAULTS,names,{...result,division:{...division,unknown:'x'.repeat(1024*1024)} as any})).toBe(true);
+ expect(await readAiReadingCache(source,AI_DEFAULTS,names)).toEqual({...result,division});
+ const row=(await cachedRows())[0],value=row.value as any;value.response.division.parts=-1;await db.settings.put({...row,value});
+ expect(await readAiReadingCache(source,AI_DEFAULTS,names)).toEqual(result);
+});
+
+it('keeps only known alignment fields so oversized unknown metadata cannot discard a valid translation',async()=>{
+ const span={sourceStart:0,sourceEnd:source.text.length,translatedStart:0,translatedEnd:result.result.length};
+ const textMap={version:1 as const,sourceLength:source.text.length,spans:[span]};
+ const unknown='x'.repeat(1024*1024);
+ expect(await writeAiReadingCache(source,AI_DEFAULTS,names,{...result,textMap:{...textMap,unknown,spans:[{...span,unknown}]} as any})).toBe(true);
+ expect(await readAiReadingCache(source,AI_DEFAULTS,names)).toEqual({...result,textMap});
+ const row=(await cachedRows())[0];expect(JSON.stringify(row)).not.toContain('unknown');
+ const value=row.value as any;value.response.textMap.unknown=unknown;value.response.textMap.spans[0].unknown=unknown;await db.settings.put({...row,value});
+ expect(await readAiReadingCache(source,AI_DEFAULTS,names)).toEqual({...result,textMap});
+});
+
+it('drops optional alignment when its size would prevent caching a valid near-limit translation',async()=>{
+ const empty={...result,result:''},limit=1024*1024;
+ const nearLimit={...result,result:'x'.repeat(limit-new TextEncoder().encode(JSON.stringify(empty)).length)};
+ const textMap={version:1 as const,sourceLength:source.text.length,spans:[{sourceStart:0,sourceEnd:source.text.length,translatedStart:0,translatedEnd:nearLimit.result.length}]};
+ expect(new TextEncoder().encode(JSON.stringify(nearLimit)).length).toBe(limit);
+ expect(await writeAiReadingCache(source,AI_DEFAULTS,names,{...nearLimit,textMap})).toBe(true);
+ expect(await readAiReadingCache(source,AI_DEFAULTS,names)).toEqual(nearLimit);
+ const row=(await cachedRows())[0];const value=row.value as any;value.response.textMap=textMap;await db.settings.put({...row,value});
+ expect(await readAiReadingCache(source,AI_DEFAULTS,names)).toEqual(nearLimit);
+});

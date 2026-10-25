@@ -1,3 +1,6 @@
+import {AiResultFactsStore} from './ai-result-facts';
+import {aiTreeFacts,hasUnknownAiParts} from './ai-leaf-progress';
+import {aiDivisionAt,combineAiDivision,type AiDivision,type AiDivisionReason} from './ai-division';
 import {resetIdleAiCapacity} from './ai-scheduler';
 import {aiTranslate,filterNamesForText,assertAiTranslationCoverage,type AiLeaseInfo,AiTranslateClientError,type AiTranslateClientResponse,type AiTranslateClientRequest} from './ai-translate';
 import {hasCopiedSource} from './ai-source-copy';
@@ -7,14 +10,14 @@ import {readingAiModels,mayFallbackModel,validReadingResult} from './ai-fallback
 import {translateComplete,aiRecoveryCut,type AiCompletionCheckpoint} from './ai-complete';
 import {aiUserPromptPreview,isHybridLiteModel,hybridTemplateValid,DEFAULT_SECOND_HALF_PROMPT} from './ai-hybrid-prompt';
 import {runHybridStages,hybridResult,type HybridMemory} from './ai-hybrid';
-import {AiChapterJob,AI_CHAPTER_LIMITS,EPUB_AI_CHAPTER_LIMITS,createAiChapterBudget,resumeAiChapterBudget,type AiChapterBudget,optionalAiCache,AI_CACHE_READ_MS,AI_CACHE_WRITE_MS} from './ai-job';
+import {AiChapterJob,AI_CHAPTER_LIMITS,EPUB_AI_CHAPTER_LIMITS,selectAiChapterBudget,type AiChapterBudget,optionalAiCache,AI_CACHE_READ_MS,AI_CACHE_WRITE_MS} from './ai-job';
 import {splitAiText,runAiParts,aiQuotaFeedback,withAiRequestCapacity,AI_TEXT_REQUEST_CHARS,type AiPart,type AiPartsControl,type AiPartsProgress,type AiPartRecord} from './ai-parts';
 export type {ReadingAiSettings} from '../types/ai-settings-type';
 import type {ReadingAiSettings} from '../types/ai-settings-type';
 import {AiRunMetrics} from './ai-metrics';
 export {AI_DEFAULTS,aiBookSettingsKey,queueAiSettings,readReadingAiSettings} from './ai-settings';
 export interface AiReadingSource {bookId:string;id:string;revision:number;text:string}
-export interface AiReadingRequestOptions {automatic?:boolean;isPrewarm?:boolean;onLease?:(lease:AiLeaseInfo)=>void}
+export interface AiReadingRequestOptions {automatic?:boolean;renewBudget?:boolean;isPrewarm?:boolean;onLease?:(lease:AiLeaseInfo)=>void}
 /** Wrapper used by tests/Reader: optional third argument carries safe lease evidence. */
 export type AiReadingTranslate=(input:AiTranslateClientRequest,signal:AbortSignal,onLease?:(lease:AiLeaseInfo)=>void)=>Promise<AiTranslateClientResponse>;
 export interface AiReadingCache {
@@ -32,6 +35,7 @@ export class AiReadingSession {
   private recovery=new AiRecovery();
   private modelBusyUntil=new Map<string,number>();
   private cache=new Map<string,AiTranslateClientResponse>();
+  private resultFacts=new AiResultFactsStore();
   private parts=new Map<string,Map<string,AiTranslateClientResponse>>();
   private partPlans=new Map<string,{parts:AiPart[];plan:string}>();
   private progress=new Map<string,AiPartsProgress>();
@@ -41,8 +45,9 @@ export class AiReadingSession {
   private budgets=new Map<string,AiChapterBudget>();
   private hybridMemory=new Map<string,HybridMemory>();
   constructor(private translate:AiReadingTranslate=aiTranslate,private persisted?:AiReadingCache,private onQuota?:(delay:number,pause:boolean)=>void,private observeMetrics=true,sharedRecovery?:AiRecovery,private sharedControl?:AiPartsControl){if(sharedRecovery)this.recovery=sharedRecovery;}
-  retain(keys:string[]){const keep=new Set(keys);for(const [key,job] of this.pending)if(!keep.has(key)){job.controller.abort();this.pending.delete(key);}for(const map of [this.cache,this.parts,this.partPlans,this.progress,this.listeners,this.budgets,this.hybridMemory])for(const key of map.keys())if(!keep.has(key))map.delete(key);}
+  retain(keys:string[]){this.resultFacts.retain(keys);const keep=new Set(keys);for(const [key,job] of this.pending)if(!keep.has(key)){job.controller.abort();this.pending.delete(key);}for(const map of [this.cache,this.parts,this.partPlans,this.progress,this.listeners,this.budgets,this.hybridMemory])for(const key of map.keys())if(!keep.has(key))map.delete(key);}
   get(key:string){return this.cache.get(key);}
+  facts(key:string){return this.resultFacts.get(key);}
   retryDeadline(key:string){return this.budgets.get(key)?.deadline;}
   cancel(key:string){const job=this.pending.get(key);job?.controller.abort();this.pending.delete(key);this.listeners.delete(key);}
   request(source:AiReadingSource,settings:ReadingAiSettings,names:{key:string;value:string}[],validate?:(result:AiTranslateClientResponse)=>void,onModel?:(model:string)=>void,onProgress?:(state:AiPartsProgress)=>void,options:AiReadingRequestOptions={}){
@@ -54,11 +59,11 @@ export class AiReadingSession {
     const key=aiReadingKey(source,settings,names),cached=this.cache.get(key);if(cached){validate?.(cached);return Promise.resolve(cached);}
     if(onProgress){let listeners=this.listeners.get(key);if(!listeners)this.listeners.set(key,listeners=new Set());listeners.add(onProgress);const progress=this.progress.get(key);if(progress)onProgress(progress);}
     const old=this.pending.get(key);if(old)return validate?old.promise.then(result=>{validate(result);return result;}):old.promise;
-    const limits=!validate&&source.text.length>1800?EPUB_AI_CHAPTER_LIMITS:AI_CHAPTER_LIMITS,budget=options.automatic&&this.budgets.get(key)||createAiChapterBudget(limits);this.budgets.set(key,budget);if(options.automatic)resumeAiChapterBudget(budget);
+    const limits=!validate&&source.text.length>1800?EPUB_AI_CHAPTER_LIMITS:AI_CHAPTER_LIMITS,budget=selectAiChapterBudget(this.budgets.get(key),limits,options);this.budgets.set(key,budget);
     const job=new AiChapterJob(limits,validate||!this.observeMetrics?undefined:new AiRunMetrics('txt',source.text.length,budget),budget),controller=job.controller;
     const models=readingAiModels(settings);
     const control:AiPartsControl=this.sharedControl??{throttled:false,waitUntil:0},quota=(delay:number)=>{job.check();this.capacity=undefined;const pause=!!pinned||models.length===1;if(pause)aiQuotaFeedback(control,delay);else{control.throttled=true;control.changed?.();}this.onQuota?.(delay,pause);};
-    let pinned:string|undefined;
+    let pinned:string|undefined,knownDivision:AiDivision|undefined;
     const requestLease=options.onLease;
     const send=async(text=source.text,context?:string,checkpoint?:AiCompletionCheckpoint,onLease?:(lease:AiLeaseInfo)=>void)=>{
       const leaseNotify=onLease??requestLease;
@@ -83,14 +88,14 @@ export class AiReadingSession {
         const abort=()=>sessions.forEach(s=>s.clear());controller.signal.addEventListener('abort',abort,{once:true});
         let firstPartCount=1;
         const emit=(stage:0|1,state:AiPartsProgress,first?:AiTranslateClientResponse)=>{
-          job.check();const progress={...state,half:(stage+1) as 1|2,halfModels:first?[first.model,settings.hybrid!.liteModel] as [string,string]:undefined,sample:first?.result,text:stage?first!.result+'\n'+state.text:state.text};
+          job.check();const progress={...state,division:undefined,leafProgress:undefined,half:(stage+1) as 1|2,halfModels:first?[first.model,settings.hybrid!.liteModel] as [string,string]:undefined,sample:first?.result,text:stage?first!.result+'\n'+state.text:state.text};
           if(progress.text.length>512000)throw Error('Bản dịch vượt giới hạn hiển thị.');
           if(stage===0)firstPartCount=state.total;job.metrics?.progress(progress.done+(stage?firstPartCount:0),progress.total+(stage?firstPartCount:0),progress.text,progress.recoveryPasses);this.progress.set(key,progress);for(const listener of this.listeners.get(key)||[])listener(progress);
         };
         try{const [first,second,hash]=await runHybridStages(source,settings,relevant,JSON.stringify(['txt',cut]),memory,this.persisted,controller.signal,source.text.slice(0,cut),async(index,selected,cache,publish)=>{
           let latest:AiPartsProgress|undefined,promptPreview:string|undefined;const progress=(state:AiPartsProgress)=>{latest=state;publish({...state,...(promptPreview?{promptPreview}:{})});};
           const session=new AiReadingSession((input,signal)=>{job.check();if(input.continuation){promptPreview=aiUserPromptPreview(input);if(latest)progress(latest);}return job.send(()=>this.translate(input,signal),JSON.stringify(input));},cache,this.onQuota,false,this.recovery);sessions.push(session);
-          return session.request({...source,text:index?source.text.slice(cut):source.text.slice(0,cut)},selected,relevant,undefined,onModel,progress);
+          return session.request({...source,text:index?source.text.slice(cut):source.text.slice(0,cut)},selected,relevant,undefined,onModel,progress).then(result=>latest?.division?{...result,division:result.division??latest.division}:result);
         },emit);const result=hybridResult(first,second,hash);if(result.result.length>512000)throw Error('Bản dịch vượt giới hạn hiển thị.');return result;}finally{controller.signal.removeEventListener('abort',abort);abort();}
       }
       const protectedKeys=names.map(n=>nameSourceKey(n.key));if(validate)return send();
@@ -110,8 +115,13 @@ export class AiReadingSession {
       this.partPlans.set(key,{parts,plan});
       pinned=completed.get('0')?.model??completed.values().next().value?.model;if(pinned)for(const [id,result] of completed)if(result.model!==pinned)completed.delete(id);
       const warm=this.capacity&&this.capacity.until>Date.now()&&(pinned??models[0])===this.capacity.model&&(this.modelBusyUntil.get(this.capacity.model)??0)<=Date.now();if(warm)pinned??=this.capacity!.model;
-      const save=async(id:string,result:AiTranslateClientResponse)=>{job.check();if(pinned&&pinned!==result.model)throw Error('Model thay đổi trong khi phục hồi.');pinned??=result.model;completed.set(id,result);if(this.persisted?.writePart)await optionalAiCache(controller.signal,AI_CACHE_WRITE_MS,false,signal=>this.persisted!.writePart!(source,settings,names,plan,id,result,signal));};
-      const result=await runAiParts(parts,controller.signal,completed,async(part,onLease)=>{const response=await send(part.text,part.context,{id:part.id,completed,save,protectedKeys},onLease);pinned??=response.model;return response;},state=>{job.check();if(state.text.length>512000)throw Error('Bản dịch vượt giới hạn hiển thị.');job.metrics?.progress(state.done,state.total,state.text,state.recoveryPasses);this.progress.set(key,state);for(const listener of this.listeners.get(key)||[])listener(state);},(part,result)=>save(part.id,result),undefined,warm?2:1,control,`${source.bookId}/${source.id}`);
+      const splitReason:AiDivisionReason=plan.includes('txt-parts-2')?'legacy':settings.splitParts?'parallel':'request_limit';
+      const splitEvents=new Map<string,AiDivisionReason>(),unknownDivision=hasUnknownAiParts(parts,completed);let freshSingle=false;
+      const publish=(state:AiPartsProgress)=>{job.check();const progress={...state,...aiTreeFacts(parts,completed!,splitEvents,splitReason,unknownDivision)};this.progress.set(key,progress);for(const listener of this.listeners.get(key)||[])listener(progress);};
+      const split=(reason:AiDivisionReason,id:string)=>{splitEvents.set(id,reason);const previous=this.progress.get(key);if(previous)publish(previous);};
+      const save=async(id:string,result:AiTranslateClientResponse)=>{job.check();if(pinned&&pinned!==result.model)throw Error('Model thay đổi trong khi phục hồi.');pinned??=result.model;completed.set(id,result);const previous=this.progress.get(key);if(previous)publish(previous);if(this.persisted?.writePart)await optionalAiCache(controller.signal,AI_CACHE_WRITE_MS,false,signal=>this.persisted!.writePart!(source,settings,names,plan,id,result,signal));};
+      const result=await runAiParts(parts,controller.signal,completed,async(part,onLease)=>{const response=await send(part.text,part.context,{id:part.id,completed,save,protectedKeys,onSplit:split},onLease);if(parts.length===1&&!response.division&&!unknownDivision)freshSingle=true;pinned??=response.model;return response;},state=>{job.check();if(state.text.length>512000)throw Error('Bản dịch vượt giới hạn hiển thị.');job.metrics?.progress(state.done,state.total,state.text,state.recoveryPasses);publish(state);},(part,result)=>save(part.id,result),undefined,warm?2:1,control,`${source.bookId}/${source.id}`,splitReason);
+      knownDivision=result.division??(freshSingle?{version:1,parts:1,reasons:[]}:undefined);
       if(result.result.length>512000)throw Error('Bản dịch vượt giới hạn hiển thị.');return result;
     };
     let persistedHit=false;
@@ -123,10 +133,10 @@ export class AiReadingSession {
       if(result.finishReason!=='STOP'||!result.result.trim()||!validReadingResult(result,settings))throw new Error('Bản dịch chưa hoàn chỉnh hoặc sai model.');
       assertAiTranslationCoverage({text:source.text,names:Object.fromEntries(names.map(n=>[n.key,n.value]))},result);
       validate?.(result);
-      if(this.persisted&&!persistedHit)await optionalAiCache(controller.signal,AI_CACHE_WRITE_MS,false,signal=>this.persisted!.write(source,settings,names,result,signal));
+      if(this.persisted&&!persistedHit)await optionalAiCache(controller.signal,AI_CACHE_WRITE_MS,false,signal=>this.persisted!.write(source,settings,names,knownDivision?{...result,division:knownDivision}:result,signal));
       job.check();
       if(controller.signal.aborted||this.pending.get(key)?.controller!==controller)throw new DOMException('Cancelled','AbortError');
-      this.cache.set(key,result);return result;
+      this.resultFacts.set(key,result,knownDivision);this.cache.set(key,result);return result;
     });
     }).finally(()=>{if(this.pending.get(key)?.controller===controller){this.pending.delete(key);this.listeners.delete(key);}});
     this.pending.set(key,{controller,promise});return promise;

@@ -6,6 +6,8 @@ import '../styles/name-manager.css';
 
 export interface NameManagerProps {
   bookId:string;
+  scopeLabel?:string;
+  pageSize?:number;
   names:NameEntry[];
   /** Owned by Reader so closing the panel retains unsaved changes. */
   draft:string;
@@ -31,7 +33,7 @@ function mergeKey(text:string,key:string,value:string){
   return lines.filter((line,index)=>index!==0||line!=='').join('\n');
 }
 
-export default function NameManager({bookId,names,draft,setDraft,onSave,saving,onDelete,notify}:NameManagerProps){
+export default function NameManager({bookId,names,draft,setDraft,onSave,saving,onDelete,notify,scopeLabel='Truyện này',pageSize=PAGE_SIZE}:NameManagerProps){
   const [query,setQuery]=useState('');const [page,setPage]=useState(0);
   const [editing,setEditing]=useState<NameEntry|null>(null);const [editor,setEditor]=useState(false);
   const [key,setKey]=useState('');const [value,setValue]=useState('');
@@ -55,8 +57,8 @@ export default function NameManager({bookId,names,draft,setDraft,onSave,saving,o
     const needle=query.trim().toLocaleLowerCase();
     return names.filter(entry=>entry.bookId===bookId&&(!needle||`${entry.key}\n${entry.value}`.toLocaleLowerCase().includes(needle)));
   },[names,bookId,query]);
-  const pages=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));const currentPage=Math.min(page,pages-1);
-  const entries=filtered.slice(currentPage*PAGE_SIZE,(currentPage+1)*PAGE_SIZE);
+  const pages=Math.max(1,Math.ceil(filtered.length/pageSize));const currentPage=Math.min(page,pages-1);
+  const entries=filtered.slice(currentPage*pageSize,(currentPage+1)*pageSize);
   const disabled=saving||working;
   function choose(entry:NameEntry|null){
     setEditing(entry);setKey(entry?.key||'');
@@ -67,7 +69,7 @@ export default function NameManager({bookId,names,draft,setDraft,onSave,saving,o
   async function persist(text:string,single?:{key:string;value:string}){
     if(disabled||busy.current)return;
     const session=generation.current,sourceBook=bookId;busy.current=true;setWorking(true);setError('');setStatus('');
-    try{await onSave(text);if(current(session,sourceBook)){setStatus('Đã lưu Name cho truyện này.');if(single&&!editing)setEditing({id:'',bookId:sourceBook,...single});}}
+    try{await onSave(text);if(current(session,sourceBook)){setStatus(scopeLabel==='Truyện này'?'Đã lưu Name cho truyện này.':`Đã lưu Name cho ${scopeLabel}.`);if(single&&!editing)setEditing({id:'',bookId:sourceBook,...single});}}
     catch(reason){if(current(session,sourceBook))setError(errorText(reason));}
     finally{if(current(session,sourceBook)){busy.current=false;setWorking(false);}}
   }
@@ -110,7 +112,7 @@ export default function NameManager({bookId,names,draft,setDraft,onSave,saving,o
     {editor&&<form className="name-manager-editor" onSubmit={event=>{event.preventDefault();saveOne();}}>
       <label>Chữ nguồn<input aria-label="Chữ nguồn của Name" value={key} readOnly={!!editing} disabled={disabled} onChange={event=>{setKey(event.target.value);setError('');setStatus('');}}/></label>
       <label>Tên Việt<input aria-label="Tên Việt của Name" value={value} disabled={disabled} onChange={event=>{const next=event.target.value;setValue(next);if(editing)setDraft(old=>mergeKey(old,editing.key,next));setError('');setStatus('');}}/></label>
-      <div className="name-manager-save"><small>Phạm vi: Truyện này</small><button className="primary" type="submit" disabled={disabled}>{disabled?'Đang lưu…':'Lưu tên'}</button></div>
+      <div className="name-manager-save"><small>Phạm vi: {scopeLabel}</small><button className="primary" type="submit" disabled={disabled}>{disabled?'Đang lưu…':'Lưu tên'}</button></div>
     </form>}
     {error&&<p className="name-manager-feedback" role="alert">{error}</p>}
     {status&&<p className="name-manager-feedback" role="status">{status}</p>}

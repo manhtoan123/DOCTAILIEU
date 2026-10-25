@@ -1,3 +1,4 @@
+import {readEffectiveBookNames} from '../../names-convert/services/scoped-names';
 import {validateHiddenChapterIds} from './chapter-state-schema';
 import {validateSharedImage} from './shared-image-schema';
 import {db} from '../../../core/db';
@@ -57,7 +58,7 @@ export async function createCloudSnapshotWithMetadata(bookId:string):Promise<{by
     const book=await db.books.get(bookId);if(!book||book.status!=='ready')throw new Error('Truyện chưa sẵn sàng đồng bộ.');
     const chapters=(await db.chapters.where('bookId').equals(bookId).sortBy('order')).map((chapter,order)=>({...chapter,order,sourceId:''}));
     const merged=new Map((await readConvertNames()).map(name=>[name.key,name.value]));
-    for(const name of await db.names.where('bookId').equals(bookId).toArray())merged.set(name.key,name.value);
+    for(const name of await readEffectiveBookNames(bookId))merged.set(name.key,name.value);
     const active=chapters.filter(c=>!book.hiddenChapterIds?.includes(c.id));const snapshotBook={...book,hiddenChapterIds:book.hiddenChapterIds?.length?book.hiddenChapterIds:undefined,chapterCount:active.length,charCount:active.reduce((sum,chapter)=>sum+chapter.text.length,0)};
     return validateCloudSnapshot({format:'thu-phong-cloud',version:book.hiddenChapterIds?.length?2:1,book:snapshotBook,chapters,names:[...merged].sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>({key,value}))});
   });

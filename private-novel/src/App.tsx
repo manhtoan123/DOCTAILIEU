@@ -1,3 +1,7 @@
+import {EffectiveNamesContext} from './features/names-convert/components/EffectiveNamesContext';
+import {readEffectiveNamesByBook} from './features/names-convert/services/scoped-names';
+import {bookIdForNumber,ensureBookNumber} from './features/reader/services/numeric-reader-route';
+import {chapterIdForNumber} from './features/reader/services/chapter-route-number';
 import {useSharedImage} from './shared/components/SharedImage';
 import {AlbumShelf} from './features/library/components/AlbumShelf';
 import {LibraryBookCard} from './features/library/components/LibraryBookCard';
@@ -56,13 +60,12 @@ export default function App(){
     if(roomRef.current!==next){selectAlbum(null);roomRef.current=next;}
     setDarkRoom(next);
   },[route]);
-  const [libraryView,setLibraryView]=useState<'grid'|'list'>(()=>{try{return localStorage.getItem('library-view')==='list'?'list':'grid';}catch{return 'grid';}});
+  const [libraryView,setLibraryView]=useState<'grid'|'list'|'compact'>(()=>{try{const value=localStorage.getItem('library-view');return value==='list'||value==='compact'?value:'grid';}catch{return 'grid';}});
   useEffect(()=>{try{localStorage.setItem('library-view',libraryView);}catch{}},[libraryView]);
   const [titleIndex,setTitleIndex]=useState<Record<string,TitlePresentation>>({});
   const recordTitle=useCallback((result:TitlePresentation)=>setTitleIndex(old=>old[result.bookId]?.signature===result.signature&&old[result.bookId]?.text===result.text&&old[result.bookId]?.value===result.value?old:{...old,[result.bookId]:result}),[]);
   const titleContext=useLiveQuery(async()=>{
-    const [names,global,files]=await Promise.all([db.names.toArray(),db.settings.get(CONVERT_NAMES_KEY),db.dictionaries.toArray()]);
-    const namesByBook=new Map<string,NameEntry[]>();for(const name of names){const group=namesByBook.get(name.bookId)||[];group.push(name);namesByBook.set(name.bookId,group);}
+    const [namesByBook,global,files]=await Promise.all([readEffectiveNamesByBook(),db.settings.get(CONVERT_NAMES_KEY),db.dictionaries.toArray()]);
     return {namesByBook,global:global?.value,dictionaries:files.map(d=>[d.kind,d.sha256,d.updatedAt])};
   },[]);
   const [publicMode,setPublicMode]=useState(false);
@@ -110,10 +113,25 @@ export default function App(){
     const timer=setInterval(refresh,300000);window.addEventListener('focus',refresh);
     return()=>{alive=false;catalogGeneration.current++;clearInterval(timer);window.removeEventListener('focus',refresh);};
   },[deviceReady,refreshCloud]);
-  const[detail,setDetail]=useState('');const[entryChapter,setEntryChapter]=useState<string>();const libraryScroll=useRef(0);
+  const[detail,setDetail]=useState('');const[entryChapter,setEntryChapter]=useState<string>();const[readerOwnerGeneration,setReaderOwnerGeneration]=useState(0);const libraryScroll=useRef(0);
   function openDetail(id:string){libraryScroll.current=window.scrollY;navigate({kind:'book',bookId:id});}
   function openReader(id:string,chapterId?:string){navigate({kind:'read',bookId:id,chapterId});}
-  const chapterChanged=useCallback((chapterId:string)=>{const current=routeRef.current;if(current.kind!=='read'||current.chapterId===chapterId)return;const next:ReaderRoute={...current,chapterId};routeRef.current=next;history[current.chapterId?'pushState':'replaceState'](null,'',readerRoutePath(next));},[]);
+  const chapterChanged=useCallback((owner:number,ownerBook:string,chapterId:string,chapterNumber?:number)=>{
+    const current=routeRef.current;if(owner!==routeGeneration.current||current.kind!=='read'||current.bookId!==ownerBook)return;
+    const next:ReaderRoute={...current,chapterId,chapterNumber},path=readerRoutePath(next);
+    if(current.chapterId===chapterId){
+      if(location.pathname!==path)history.replaceState(null,'',path+location.search+location.hash);
+    }else history[current.chapterId?'pushState':'replaceState'](null,'',path);
+    routeRef.current=next;
+    const generation=routeGeneration.current;
+    void ensureBookNumber(next.bookId).then(bookCode=>{
+      if(!bookCode||routeGeneration.current!==generation||routeRef.current!==next)return;
+      const numbered:ReaderRoute={...next,bookCode};routeRef.current=numbered;
+      const canonical=readerRoutePath(numbered);
+      if(location.pathname!==canonical)history.replaceState(null,'',canonical+location.search+location.hash);
+    });
+  },[]);
+  const ownedChapterChanged=useCallback((chapterId:string,number?:number)=>chapterChanged(readerOwnerGeneration,active,chapterId,number),[chapterChanged,readerOwnerGeneration,active]);
   useEffect(()=>{if(active)return;const frame=requestAnimationFrame(()=>window.scrollTo({top:detail?0:libraryScroll.current,behavior:'instant'}));return()=>cancelAnimationFrame(frame);},[active,detail]);
   useEffect(()=>{setLanguageStatus(setStatus);},[]);
   useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),9000);return()=>clearTimeout(timer);},[toast]);
@@ -153,6 +171,12 @@ export default function App(){
     }
     setOpening(true);
     void (async()=>{
+      if(route.kind==='numeric-read'){
+        const bookId=await bookIdForNumber(route.bookCode);
+        if(!alive||generation!==routeGeneration.current||routeRef.current!==route)return;
+        const resolved:ReaderRoute={kind:'read',bookId,bookCode:route.bookCode,chapterNumber:route.chapterNumber};
+        routeRef.current=resolved;setRoute(resolved);return;
+      }
       const local=await db.books.get(route.bookId);
       if(!local||local.status!=='ready'){
         if(!deviceReady||!cloudLoaded)return;
@@ -160,10 +184,17 @@ export default function App(){
         if(!remote)throw new Error('Truyện không còn trong danh sách kho.');
         await downloadCloudBook(remote);
       }
+      let selectedChapter=route.kind==='read'?route.chapterId:undefined;
+      if(route.kind==='read'&&route.chapterNumber!==undefined){
+        const book=await db.books.get(route.bookId),hidden=new Set(book?.hiddenChapterIds??[]);
+        const chapters=(await db.chapters.where('bookId').equals(route.bookId).toArray()).filter(c=>!hidden.has(c.id));
+        selectedChapter=chapterIdForNumber(chapters,route.chapterNumber);
+        if(!selectedChapter)throw Error('Không tìm thấy vị trí chương trong mục lục.');
+      }
       if(!alive||generation!==routeGeneration.current||routeRef.current!==route)return;
       setTab('library');
       if(route.kind==='book'){setActive('');setDetail(route.bookId);}
-      else{setDetail(current=>current===route.bookId?current:'');if(appliedRoute.current!==route){appliedRoute.current=route;setReaderNavigation(n=>n+1);setEntryChapter(route.chapterId);}setActive(route.bookId);}
+      else{setReaderOwnerGeneration(generation);setDetail(current=>current===route.bookId?current:'');if(appliedRoute.current!==route){appliedRoute.current=route;setReaderNavigation(n=>n+1);setEntryChapter(selectedChapter);}setActive(route.bookId);}
     })().catch(error=>{if(alive&&generation===routeGeneration.current){setActive('');setDetail('');notify(errorText(error));}}).finally(()=>{if(alive&&generation===routeGeneration.current)setOpening(false);});
     return()=>{alive=false;};
   },[route,deviceReady,cloudLoaded,cloudBooks,notify]);
@@ -196,7 +227,7 @@ export default function App(){
     try{if(shared)await deleteCloudBook(book.id);await removeBookWithLocalData(book.id);setCloudBooks(current=>current.filter(row=>row.id!==book.id));notify(shared?'Đã xóa truyện khỏi kho chung và thiết bị này.':'Đã xóa bản trên thiết bị.');void refreshCloud();}catch(error){notify(errorText(error));}
   }
 
-  return <>{active?<Reader key={`${active}:${entryChapter||'resume'}:${readerNavigation}`} bookId={active} initialChapterId={entryChapter} backLabel={detail?'← Thông tin truyện':darkRoom?'← Phòng tối':'← Tủ sách'} onChapterChange={chapterChanged} onBack={()=>navigate(detail?{kind:'book',bookId:active}:libraryDestination)} onBookInfo={()=>navigate({kind:'book',bookId:active})} onAiSettings={()=>navigate({kind:'settings',group:'ai',bookId:active})} notify={notify}/>:<div className={`shell ${libraryBackground?'has-library-background':''}`} style={libraryBackground?{backgroundImage:`url("${libraryBackground}")`}:undefined}>
+  return <EffectiveNamesContext.Provider value={titleContext?.namesByBook??null}>{active?<Reader key={`${active}:${entryChapter||'resume'}:${readerNavigation}`} bookId={active} initialChapterId={entryChapter} backLabel={detail?'← Thông tin truyện':darkRoom?'← Phòng tối':'← Tủ sách'} onChapterChange={ownedChapterChanged} onBack={()=>navigate(detail?{kind:'book',bookId:active}:libraryDestination)} onBookInfo={()=>navigate({kind:'book',bookId:active})} onAiSettings={()=>navigate({kind:'settings',group:'ai',bookId:active})} notify={notify}/>:<div className={`shell ${libraryBackground?'has-library-background':''}`} style={libraryBackground?{backgroundImage:`url("${libraryBackground}")`}:undefined}>
     <aside className="sidebar"><a className="brand" href="#" onClick={e=>{e.preventDefault();enterRoom(false);}}><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M5 9c7-3 12-2 15 1 3-3 8-4 15-1v23c-7-3-12-2-15 1-3-3-8-4-15-1z"/><path d="M20 10v23"/></svg><span>{darkRoom?'phòng tối':'thư phòng'}<small>PRIVATE NOVEL READER</small></span></a>
     <nav aria-label="Điều hướng chính"><button className={tab==='library'?'active':''} aria-current={tab==='library'?'page':undefined} onClick={()=>enterRoom(false)}><span>▤</span>Tủ sách<small>{shelf.length}</small></button><button className={tab!=='library'?'active':''} aria-current={tab!=='library'?'page':undefined} onClick={()=>{navigate({kind:'settings',group:lastSetting});}}><span>⚙</span>Cài đặt</button></nav>
     </aside>
@@ -251,6 +282,7 @@ export default function App(){
           <div className="segmented library-view" role="group" aria-label="Cách xem tủ sách">
             <button className={libraryView==='grid'?'active':''} aria-pressed={libraryView==='grid'} onClick={()=>setLibraryView('grid')}>Lưới</button>
             <button className={libraryView==='list'?'active':''} aria-pressed={libraryView==='list'} onClick={()=>setLibraryView('list')}>Danh sách</button>
+            <button className={libraryView==='compact'?'active':''} aria-pressed={libraryView==='compact'} onClick={()=>setLibraryView('compact')}>Thu gọn</button>
           </div>
         </div>
         {search.trim()&&<p className="muted" role="status">{chapterSearch.pending?'Đang tìm tên chương…':chapterSearch.error?'Chưa tìm được tên chương trên thiết bị. Kết quả tên truyện vẫn hiển thị.':`${filtered.length} truyện phù hợp · Tìm cả tên chương Việt / Trung trên thiết bị.`}{currentBooks.some(book=>!localIds.has(book.id))&&' Mở truyện từ kho chung để tải mục lục và tìm tên chương.'}</p>}
@@ -275,12 +307,13 @@ export default function App(){
         ) : !filtered.length ? (
           <p className="notice">{chapterSearch.pending?'Đang tìm truyện và tên chương…':'Không có truyện hoặc tên chương khớp từ khóa tìm kiếm.'}</p>
         ) : (
-          <div className={`book-grid ${libraryView==='grid'?'cover-shelf':'list-shelf'}`}>
+          <div className={`book-grid ${libraryView==='grid'?'cover-shelf':libraryView==='compact'?'compact-shelf':'list-shelf'}`}>
             {filtered.map((book, index) => (
               <LibraryBookCard
                 key={book.id}
                 book={book}
                 index={index}
+                compact={libraryView==='compact'}
                 displayTitle={book.displayTitle || (titleIndex[book.id]?.text === book.title ? titleIndex[book.id].value : book.title)}
                 isLocal={localIds.has(book.id)}
                 deletedOnCloud={deletedOnCloud?.has(book.id) ?? false}
@@ -307,5 +340,5 @@ export default function App(){
   {edit&&<Modal title="Thông tin truyện" onClose={()=>setEdit(undefined)}><label>Tên truyện<input value={edit.title} onChange={e=>setEdit({...edit,title:e.target.value})}/></label><label>Ảnh bìa<input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>{const file=e.target.files?.[0];if(file)void storeSharedImage(file).then(cover=>setEdit(current=>current?{...current,cover}:current)).catch(error=>notify(errorText(error)));}}/></label>{edit.cover&&<button onClick={()=>setEdit({...edit,cover:undefined})}>Bỏ ảnh bìa</button>}<label>Tác giả<input value={edit.author} onChange={e=>setEdit({...edit,author:e.target.value})}/></label><footer><button className="primary" disabled={!edit.title.trim()} onClick={async()=>{await db.books.update(edit.id,{title:edit.title.trim(),author:edit.author,cover:edit.cover,updatedAt:Date.now()});setEdit(undefined);}}>Lưu</button></footer></Modal>}
   {languageStatus&&<div className="worker-status" role="status">◌ {languageStatus}</div>}
   {toast&&<div className="toast" role="status"><span>{toast}</span><button onClick={()=>setToast('')} aria-label="Đóng thông báo">×</button></div>}
-  </>;
+  </EffectiveNamesContext.Provider>;
 }

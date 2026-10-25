@@ -2,6 +2,8 @@ import {db} from '../../../core/db';
 import {withBookLock} from './book-lock';
 import {normalizeAlbum} from './albums';
 import type {Book} from '../../../core/domain';
+import {ALBUM_NAMES_PREFIX,albumNameKey,albumNameSetting,nameAlbumRoot,parseAlbumNameKey} from '../../names-convert/services/album-name-schema';
+import {validateSharedRecord} from '../../sync-cloud/services/shared-state-schema';
 
 export const ALBUM_REGISTRY_KEY='album-registry-v1';
 export interface AlbumEntry {id:string;name:string;updatedAt:number}
@@ -62,6 +64,19 @@ export async function renameAlbum(id:string,value:string):Promise<AlbumEntry>{
   const albumName=name(value);return transaction(async({registry,books})=>{
     const old=find(registry,id);if(registry.albums.some(a=>a.id!==id&&a.name===albumName))throw new Error('Tên Album đã tồn tại.');
     if(old.name===albumName)return old;
+    // Renaming an author root carries its whole tree and explicit Name pool.
+    // Refuse destination collisions rather than silently merging two authors.
+    if(nameAlbumRoot(old.name)===old.name&&nameAlbumRoot(albumName)===albumName){
+      const inside=(value:string)=>nameAlbumRoot(value)===old.name;
+      if(registry.albums.some(a=>!inside(a.name)&&nameAlbumRoot(a.name)===albumName)||books.some(b=>nameAlbumRoot(b.album)===albumName))throw Error('Album đích đã có truyện hoặc series.');
+      const renamed=registry.albums.filter(a=>inside(a.name)).map(a=>({...a,name:name(a.name===old.name?albumName:albumName+a.name.slice(old.name.length)),updatedAt:Date.now()}));
+      const settings=await db.settings.where('key').startsWith(ALBUM_NAMES_PREFIX).toArray();
+      const records=settings.map(row=>validateSharedRecord(row.value));
+      if(records.some(r=>parseAlbumNameKey(r.key)[0]===albumName))throw Error('Album đích đã có kho Name; dữ liệu được giữ nguyên.');
+      for(const r of records){const [root,key]=parseAlbumNameKey(r.key);if(root!==old.name)continue;const next=validateSharedRecord({...r,key:albumNameKey(albumName,key)});await db.settings.put({key:albumNameSetting(next.key),value:next});await db.settings.put({key:albumNameSetting(r.key),value:{...r,value:null}});}
+      for(const book of books)if(book.album&&inside(book.album))await db.books.update(book.id,{album:book.album===old.name?albumName:albumName+book.album.slice(old.name.length)});
+      const byId=new Map(renamed.map(a=>[a.id,a]));registry.albums=registry.albums.map(a=>byId.get(a.id)??a);await store(registry);return byId.get(id)!;
+    }
     const updated={...old,name:albumName,updatedAt:Date.now()};
     for(const book of books)if(book.album===old.name)await db.books.put({...book,album:albumName});
     registry.albums=registry.albums.map(a=>a.id===id?updated:a);await store(registry);return updated;

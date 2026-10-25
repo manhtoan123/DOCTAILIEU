@@ -1,26 +1,27 @@
-# Private Novel Reader — trạng thái hiện hành
-21/10/2026.
+# Private Novel
+25/10/2026.
 
-Chỉ mục: private-novel/{docs,src,scripts}/README.md. AGENTS.md quy định phạm vi/kiểm thử; log .dsh-tmp/.
+Chỉ mục private-novel/{docs,src,scripts}/README.md; AGENTS.md.
 
 ## Online
-https://thu-phong-private.pages.dev/ — Pagesf718d1d3 (index-BRXwBbI0.js), deploy21/10 sửa/xóa chương TXT. AIWorker giữ9a20f69f, không migration. Remote0001–0012; index13local chờ quota; SHARED_STATE_ENABLED=1. Alias/deployment SHA khớp dist; smoke online4/4 PASS desktop/android-layout, cloud API chặn. Rollback Pages48925bcb. Log private-novel/.dsh-tmp/chapter-manage/.
+https://thu-phong-private.pages.dev/ — Pages6f16d27c (TTS tự phục hồi), index-DGAjMYUl.js. AIWorker giữ9a20f69f; giữ dữ liệu truyện. Remote0001–0012 + schema14 alias/15TTS(direct); index13 chờ quota; SHARED_STATE_ENABLED=1. Rollback Pagesa7cbfe29. Smoke cô lập cloud: .dsh-tmp/{numeric-route,album-names}-*.
 
-## Kiến trúc và chức năng
-React/Vite/Dexie + Pages/AIWorker/D1/R2. Refactor 144 file hoàn tất: features/{ai,reader,tts,names-convert,import-export,sync-cloud,library}; core/{db,storage,domain}; shared; workers. src gốc chỉ App.tsx/main.tsx/README; canonical diff 0 khi chuyển, production smoke PASS.
-Thư phòng truyện lẻ; /phong-toi chứa tác giả Album→Series→truyện→chương, grid/list, tìm chương, xóa leaf. Folder giữ phân cấp. Tuyển tập TXT: xem/sửa mốc, byte slices, cap2000 fail-closed, batch atomic.
-Local-first, chỉ nhập truyện được chọn; staging/cancel/bytes/SHA/atomicity; xóa cloud trước local; D chỉ đọc. Không tự tái nhập/sửa dữ liệu cũ.
+Tủ sách: Lưới/Danh sách/Thu gọn, nhớ localStorage; title mở chi tiết.
 
-## Đọc, AI, đồng bộ
-Name riêng→AI; Name chung/từ điển→Convert. STV [i]URL[/]Tên: caption AI/TTS, raw nguồn/DB/cloud/backup giữ.
-Split cùng model, tối đa 2 key/1 quota qua lease/cooldown; foreground ưu tiên prewarm. Form PromptFields chung; legacy hybrid vẫn lưu. Retry transient tối đa3; first60/idle30/hard180s/lease185s; cancel/partial/model pin. Tiến độ AI lấy chương hoàn tất cao nhất.
-TTS Weilbyte gateway, tối đa3 request, một audio + carrier Blob10s; chưa kiểm audio thật/Android nền. TTS seek A1 cũ xem TTS-BACKUP-STABILITY-1.md.
-Sync state/prompts CAS/delta/offline/tombstone/conflict; Names/profiles/reader/progress/cursor/Album/metadata/chapter edits/dictionaries/bìa/nền. DBv4 source revision/receipt index-only; 1000 truyện reload 0GET originals/0Blob reads. Stockdict chỉ tải khi Convert/chủ động.
+## Reader, AI, Convert
+URL /r/mã-số/vị-trí (mục lục từ1, bỏ chương ẩn); mã22 và /read cũ còn dùng.
+Bảng AI: RAM/cache cùng facts theo request key; legacy unknown. Nội dung/tác vụ riêng; tiến độ phần lá; Dừng đúng chương. Bỏ footer; nút chương≥48px; mục lục định vị.
+Plan: docs/UI-READER-UX-PLAN.md; D1–D2 xong; D6 UI tách, controller chờ D3–D4; D3–D5 chưa làm.
+Name: chung theo Album tác giả/gồm series; ngoài Album riêng. UI tìm/phân trang10/bulk gọn; legacy giữ, xung đột chờ chọn. CAS/tomb/backup. AI TXT đúp→Convert→Name, giữ AI/TTS/picker. docs/ALBUM-NAMES-M0.md.
+Convert Name server7814891b qua service binding; D1 corpus083752ea bất biến, pin SHA/versionSQL3. Cửa sổ256 UTF-16/100Names, output65k; request32KiB. Tra theo token, whole lookup khi mở rộng. Client cacheRAM8/timeout20s/abort/stale guard/SHA; không đọc fullVP khi thành công, có local fallback. QuotaCAS reserve2M/ceiling3M ngàyUTC. Free best effort, chưa bảo đảm mọi tải; docs/SERVER-CONVERT-FREE-M0.md.
+AI tối đa2key/chương qua lease/cooldown; foreground ưu tiên prewarm. Mỗi đợt giữ send/deadline cap; hết đợt nghỉ≥60s/Retry-After rồi tự mở đợt mới, giữ partial/model pin. Lỗi kết quả thử chậm; auth/input/config chờ sửa, UI hổ phách. Stop chặn timer/callback; giữ prewarm qua hydrate. first60/idle30/hard180s/lease185s. STV image caption cho AI/TTS, raw nguồn giữ nguyên.
+Tiến độ ghi chương/đoạn đang đọc; prewarm chỉ cache. reading:true thắng AIlegacy, sync theo thời điểm quan sát; AI dùng đoạn bản dịch, prefix chưa tới mốc phải chờ. Đọc tiếp ưu tiên bookmark thực hơn TTS cũ. Giữ mốc cũ thiếu chứng cứ. AI Name TXT dùng mốc phần nguồn→AI trong cache; bản cũ fallback, không thêm nút.
+TTS:10giọng; cookie mã hóa, cache32MiB/24h tách cursor; ≤3active, retry/Stop/no autoplay. Build VITE_TTS_GATEWAY=capcut-v2. Chưa Android nền. docs/TTS-AUTONOMY-M0.md.
 
-## Dung lượng và giới hạn
-TXT40MiB; EPUB256MiB/expanded512MiB/entry16MiB/derived128MiB; import worker flush1MiB/32ch. Cloud JSON>64MiB gzip/decoded256MiB; original>64MiB dùng parts16MiB tuần tự/resume/full SHA trước ready; ledger9GB. Shared-files256MiB/3000 reservations, metadata64MiB/60k.
-Backup nguồn/từ điển xác minh SHA, packet≤16MiB, portable lớn chưa hỗ trợ; không chứa prompt/AI/cài đặt/cursor nghe. TXT append đã deploy: đầy đủ/chỉ chương mới; chia mặc định0, xem/tích/phân trang50, hiển thị cuối lên đầu nhưng commit thứ tự file. Khớp exact tự chọn; gợi ý tiêu đề hoặc thiếu mốc thì không chọn sẵn; khóa trùng ở service. Giữ bytes/ID/progress/CAS/atomic. Watchdog worker30s/conversion120s, hủy chặn ghi muộn. Review68 + full159file/1988test + build/E2E8 PASS. Log .dsh-tmp/tail-match/. PWA offline mở lại hoàn toàn chưa hoàn tất. Android thật chưa xác minh.
+## Dữ liệu và dung lượng
+React/Vite/Dexie + Pages/AIWorker/D1/R2; features/core/shared/workers. Local-first, chỉ nhập truyện được chọn. Album tác giả→Series→truyện→chương; không làm phẳng/gộp. Giữ bytes/SHA/atomicity/cancel, cloud-delete trước local-delete; D chỉ đọc; không tự tái nhập dữ liệu cũ.
+TXT40MiB; EPUB256MiB/expanded512MiB/entry16MiB/derived128MiB. Tuyển tập cap2000, preview/batch atomic. Append đầy đủ/chỉ chương mới, xác nhận mốc; giữ ID/progress/CAS. Watchdog worker30s/Convert120s, chặn ghi muộn.
+Cloud JSON decoded256MiB; original>64MiB dùng parts16MiB/resume/fullSHA; ledger9GB. Shared-files256MiB/3000 reservations. Backup source/dictionary kiểmSHA, packet≤16MiB; chưa portable lớn, không chứa prompt/AI/cursor nghe.
+Sync CAS/delta/offline/tombstone/conflict gồm Names/profiles/reader/progress/Album/metadata/chapter edits/dictionaries. DBv4 source revision index-only;1000truyện reload0GET originals/0Blob reads. Sửa/xóa TXT soft-delete, restore cùngID; sharedCAS+ACK trước local, backupv3/cloudv2 remap. PWA offline hoàn toàn và Android thật chưa xác minh.
 
-Sửa/xóa TXT đã triển khai: bật Quản lý chương mới hiện Sửa/checkbox/xóa; Đã xóa để khôi phục cùng ID. Giữ row/file nguồn; active counts/Reader/search lọc hidden IDs. Shared chapter-state CAS + pending ACK trước local, backupv3/cloudv2 bảo toàn và remap; legacy đọc được. Chặn ghi muộn progress/TTS/cache, hết chương hủy AI. Full161file/2007test, review18, build, E2E4 PASS. Thiết kế tối giản docs/CHAPTER-EDIT-DELETE-DESIGN.md; log .dsh-tmp/chapter-manage/.
-
-Mã GitHub Private: https://github.com/manhtoan123/DOCTAILIEU; origin dùng HTTPS/GCM. Dữ liệu/secrets ngoài Git.
+GitHub private https://github.com/manhtoan123/DOCTAILIEU; HTTPS/GCM; dữ liệu/secrets ngoài Git.

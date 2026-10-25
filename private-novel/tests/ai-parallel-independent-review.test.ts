@@ -150,8 +150,8 @@ describe('(c) break tests: UI/status must not claim two keys without lease evide
   expect(states.every(state=>(state.activeLeases??0)<=1)).toBe(true);
   for(const state of states){expect(aiParallelStatus(state).keys??'').not.toContain('2 key');}
  });
- it('Reader.tsx contains no hard-coded two-part/two-key claim',async()=>{
-  const source=await readFile('src/features/reader/components/Reader.tsx','utf8');
+ it('Reader and extracted progress contain no hard-coded two-part/two-key claim',async()=>{
+  const source=(await Promise.all(['Reader','ReaderAiProgress'].map(name=>readFile(`src/features/reader/components/${name}.tsx`,'utf8')))).join('\n');
   expect(source).not.toContain('tối đa 2 phần');
   expect(source).not.toContain('2 key đang chạy');
   // Runtime helper is the only source of the two-key string.

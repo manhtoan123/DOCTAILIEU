@@ -1,9 +1,11 @@
+import {ALBUM_NAMES_PREFIX,albumNameSetting} from '../../names-convert/services/album-name-schema';
+import {matchesReadingProgress} from '../../reader/services/reading-progress';
 import {nameTombKey,convertTombKey,SHARED_NAME_TOMBS,SHARED_CONVERT_TOMBS} from './shared-name-intents';
 import {db,refreshChapterCounts} from '../../../core/db';
 import {isHiddenChapter} from '../../../core/domain';
 import {CHAPTER_STATE_PREFIX} from './chapter-state-schema';
 import {applyChapterVisibility} from './chapter-state-local';
-import {uid,type Book,type Progress,type Chapter,type DictKind,defaults,paragraphRanges} from '../../../core/domain';
+import {uid,type Book,type Progress,type Chapter,type DictKind,defaults} from '../../../core/domain';
 import {CONVERT_NAMES_KEY,formatConvertNames,parseConvertNames,type ConvertName} from '../../names-convert/services/convert-names';
 import {ALBUM_REGISTRY_KEY,type AlbumRegistry} from '../../library/services/album-registry';
 import {aiBookSettingsKey,readReadingAiSettings} from '../../ai/services/ai-reading';
@@ -16,7 +18,7 @@ import {applyAppendRecord,prepareAppendRecord,type PreparedAppend} from '../../i
 export const SHARED_CHAPTER_PREFIX='shared-chapter:';
 export const SHARED_COMMON_PREFIX='shared-common-name:';
 export const SHARED_DICTIONARY_PREFIX='shared-dictionary:';
-export const sharedSettingsKey=(r:SharedRecord)=>r.kind==='chapter-state'?CHAPTER_STATE_PREFIX+r.bookId:r.kind==='chapter-append'?APPEND_PREFIX+r.bookId+':'+r.key:r.kind==='chapter-append-packet'?APPEND_PACKET_PREFIX+r.bookId+':'+r.key:r.kind==='reader'?'reader':r.kind==='reader-options'?'reader-options':r.kind==='albums'?ALBUM_REGISTRY_KEY:r.kind==='ai-settings'?(r.bookId?aiBookSettingsKey(r.bookId):'ai-translate-settings'):r.kind==='chapter'?`${SHARED_CHAPTER_PREFIX}${r.bookId}:${r.key}`:r.kind==='common-name'?SHARED_COMMON_PREFIX+encodeURIComponent(r.key):r.kind==='dictionary'?SHARED_DICTIONARY_PREFIX+r.key:'';
+export const sharedSettingsKey=(r:SharedRecord)=>r.kind==='chapter-state'?CHAPTER_STATE_PREFIX+r.bookId:r.kind==='chapter-append'?APPEND_PREFIX+r.bookId+':'+r.key:r.kind==='chapter-append-packet'?APPEND_PACKET_PREFIX+r.bookId+':'+r.key:r.kind==='reader'?'reader':r.kind==='reader-options'?'reader-options':r.kind==='albums'?ALBUM_REGISTRY_KEY:r.kind==='ai-settings'?(r.bookId?aiBookSettingsKey(r.bookId):'ai-translate-settings'):r.kind==='chapter'?`${SHARED_CHAPTER_PREFIX}${r.bookId}:${r.key}`:r.kind==='album-name'?albumNameSetting(r.key):r.kind==='common-name'?SHARED_COMMON_PREFIX+encodeURIComponent(r.key):r.kind==='dictionary'?SHARED_DICTIONARY_PREFIX+r.key:'';
 async function localCursor(bookId:string){const row=await db.settings.get('tts-cursor-shared:'+bookId),mirror=readTtsCursor(bookId);if(row?.value===null)return null;const saved=row?.value as TtsCursor|undefined;const chosen=mirror&&(!saved||mirror.updatedAt>saved.updatedAt)?mirror:saved;return chosen&&isHiddenChapter(await db.books.get(bookId),chosen.chapterId)?null:chosen;}
 /** Book metadata replicated to other devices; the persisted Vietnamese title travels with it. */
 function bookMetadata(b:Book){return {title:b.title,author:b.author,...(b.displayTitle?{displayTitle:b.displayTitle}:{}),...(b.cover?{cover:b.cover}:{}),...(b.album?{album:b.album}:{})};}
@@ -34,7 +36,7 @@ export async function captureSharedRecords():Promise<SharedRecord[]>{
    else push({kind:key==='reader'?'reader':key==='reader-options'?'reader-options':key===ALBUM_REGISTRY_KEY?'albums':'ai-settings',key:'',value:row.value});
   }
   for(const b of books){const row=await db.settings.get(aiBookSettingsKey(b.id));if(row)push({kind:'ai-settings',bookId:b.id,key:'',value:row.value});const cursor=await localCursor(b.id);if(cursor)push({kind:'tts-cursor',bookId:b.id,key:'',value:cursor});}
-  for(const prefix of [SHARED_CHAPTER_PREFIX,SHARED_COMMON_PREFIX,SHARED_DICTIONARY_PREFIX,SHARED_NAME_TOMBS,SHARED_CONVERT_TOMBS])for(const row of await db.settings.where('key').startsWith(prefix).toArray()){
+  for(const prefix of [ALBUM_NAMES_PREFIX,SHARED_CHAPTER_PREFIX,SHARED_COMMON_PREFIX,SHARED_DICTIONARY_PREFIX,SHARED_NAME_TOMBS,SHARED_CONVERT_TOMBS])for(const row of await db.settings.where('key').startsWith(prefix).toArray()){
    const record=row.value as SharedRecord;if(['name','convert-name'].includes(record.kind)&&await readLocalSharedRecord(record).then(r=>r?.value!==null&&r?.value!==undefined))continue;if(record.kind==='chapter'){const ack=(await db.settings.get(`cloud-uploaded:${location.origin}:${record.bookId}`))?.value as {sha256:string}|undefined;if(!ack)continue;if((record.value as SharedChapterPatch).baseSha256==='0'.repeat(64))record.value={...(record.value as SharedChapterPatch),baseSha256:ack.sha256};}if(!record.bookId||ids.has(record.bookId))push(record);
   }
   // Packets precede manifests on publication, including after an offline restart.
@@ -61,7 +63,7 @@ export async function readLocalSharedRecord(descriptor:Pick<SharedRecord,'kind'|
  if(value===undefined&&r.kind==='name')return (await db.settings.get(nameTombKey(r.bookId!,r.key)))?.value as SharedRecord|undefined;
  if(value===undefined&&r.kind==='convert-name')return (await db.settings.get(convertTombKey(r.key)))?.value as SharedRecord|undefined;
  if(value===undefined)return;
- if(['chapter-state','chapter','common-name','dictionary','chapter-append','chapter-append-packet'].includes(r.kind)){const record=value as SharedRecord;if(['chapter-state','chapter','chapter-append'].includes(r.kind)&&(record.value as SharedChapterPatch)?.baseSha256==='0'.repeat(64)){const ack=(await db.settings.get(`cloud-uploaded:${location.origin}:${r.bookId}`))?.value as {sha256:string}|undefined;if(!ack)return;return validateSharedRecord({...record,value:{...(record.value as object),baseSha256:ack.sha256}});}return validateSharedRecord(record);}
+ if(['album-name','chapter-state','chapter','common-name','dictionary','chapter-append','chapter-append-packet'].includes(r.kind)){const record=value as SharedRecord;if(['chapter-state','chapter','chapter-append'].includes(r.kind)&&(record.value as SharedChapterPatch)?.baseSha256==='0'.repeat(64)){const ack=(await db.settings.get(`cloud-uploaded:${location.origin}:${r.bookId}`))?.value as {sha256:string}|undefined;if(!ack)return;return validateSharedRecord({...record,value:{...(record.value as object),baseSha256:ack.sha256}});}return validateSharedRecord(record);}
  return normalizeLocal({...r,value});
 }
 function normalizeLocal(r:SharedRecord):SharedRecord{if(r.value!==null&&r.kind==='reader')return validateSharedRecord({...r,value:{...defaults,...r.value as object}});if(r.value!==null&&r.kind==='ai-settings')return validateSharedRecord({...r,value:{...r.value as object,...readReadingAiSettings(r.value)}});return validateSharedRecord(r);}
@@ -84,7 +86,7 @@ export async function applyLocalSharedRecord(record:SharedRecord,expected:string
  }else if(record.kind==='book'){
   if(record.value!==null)await db.books.update(record.bookId!,{...(record.value as Pick<Book,'title'|'author'|'album'>),album:(record.value as Book).album,cover:(record.value as Book).cover,updatedAt:Date.now()});
  }else if(record.kind==='progress'){
-  if(record.value===null)await db.progress.delete(record.bookId!);else{const p=record.value as Progress,c=await db.chapters.get(p.chapterId);if(!c||isHiddenChapter(await db.books.get(record.bookId!),c.id)||c.bookId!==record.bookId||c.revision!==p.revision||p.offset>c.text.length||p.paragraph>=paragraphRanges(c.text).length)throw new LocalSharedConflict();await db.progress.put(p);}
+  if(record.value===null)await db.progress.delete(record.bookId!);else{const p=record.value as Progress,c=await db.chapters.get(p.chapterId);if(!c||isHiddenChapter(await db.books.get(record.bookId!),c.id)||c.bookId!==record.bookId||c.revision!==p.revision||!matchesReadingProgress(p,c))throw new LocalSharedConflict();await db.progress.put(p);}
  }else if(record.kind==='tts-cursor'){
   if(record.value!==null){const cursor=record.value as TtsCursor,c=await db.chapters.get(cursor.chapterId);if(!c||isHiddenChapter(await db.books.get(record.bookId!),c.id)||c.bookId!==record.bookId||c.revision!==cursor.revision)throw new LocalSharedConflict();}await db.settings.put({key:'tts-cursor-shared:'+record.bookId,value:record.value});
  }else if(record.kind==='chapter'){
@@ -102,7 +104,7 @@ export async function applyLocalSharedRecord(record:SharedRecord,expected:string
   const old=(await db.settings.get(ALBUM_REGISTRY_KEY))?.value as AlbumRegistry|undefined,next=record.value as AlbumRegistry|null;
   if(next)await db.settings.put({key:ALBUM_REGISTRY_KEY,value:next});else await db.settings.delete(ALBUM_REGISTRY_KEY);
  }else{
-  const key=sharedSettingsKey(record);if(record.value===null&&['reader','reader-options','ai-settings'].includes(record.kind))await db.settings.delete(key);else await db.settings.put({key,value:['common-name','dictionary'].includes(record.kind)?record:record.value});
+  const key=sharedSettingsKey(record);if(record.value===null&&['reader','reader-options','ai-settings'].includes(record.kind))await db.settings.delete(key);else await db.settings.put({key,value:['album-name','common-name','dictionary'].includes(record.kind)?record:record.value});
  }
 }
 const sameAppend=(a:SharedRecord,b:SharedRecord)=>JSON.stringify(a)===JSON.stringify(b);

@@ -1,11 +1,11 @@
 import 'fake-indexeddb/auto';
 import {beforeEach, afterAll, describe, it, expect} from 'vitest';
-import {db} from '../src/db';
-import {prepareBackup, stageBackup, restoreBackup, restoreInfo, hashBlob} from '../src/backup';
-import {acceptSourceHash} from '../src/importer';
-import {StreamingSplitter, type Part} from '../src/splitter';
+import {db} from '../src/core/db';
+import {prepareBackup, stageBackup, restoreBackup, restoreInfo, hashBlob} from '../src/features/import-export/services/backup';
+import {acceptSourceHash} from '../src/features/import-export/services/importer';
+import {StreamingSplitter, type Part} from '../src/features/import-export/services/splitter';
 
-// Synthetic positive invariants. A1/A4/A5/A6/A7 use it.fails until repaired;
+// Synthetic positive invariants. A1 (large portable support) remains it.fails;
 // unexpected success is red and requires removing fails after review.
 // A3 also has targeted atomicity regressions in tests/backup.test.ts.
 beforeEach(async()=>{await db.delete();await db.open();});
@@ -34,7 +34,7 @@ async function addDictionary(text='文=văn') {
   return sha256;
 }
 
-describe('AUDIT: A2/A3 regressions and five tracked expected failures',()=>{
+describe('AUDIT: backup regressions and large-portable support still pending',()=>{
   it.fails('A1: its own portable export must be accepted by restore',async()=>{
     await seed(1,new Blob([new Uint8Array(13*1024*1024)]));
     const files=await exportFiles('portable');
@@ -62,7 +62,7 @@ describe('AUDIT: A2/A3 regressions and five tracked expected failures',()=>{
     expect(await db.dictionaries.count()).toBe(0);
     expect((await db.restoreJobs.toArray())[0].status).toBe('failed');
   });
-  it.fails('A4: ready source bytes must agree with declared hash and length',async()=>{
+  it('A4: ready source bytes must agree with declared hash and length',async()=>{
     await seed();const files=await exportFiles('portable');
     files[0]=await mutateBody(files[0],body=>{body.sources[0].dataBase64=btoa('x');});
     await db.delete();await db.open();
@@ -74,7 +74,7 @@ describe('AUDIT: A2/A3 regressions and five tracked expected failures',()=>{
     expect(await hashBlob(source!.blob)).toBe(source!.sha256);
     expect(source!.blob.size).toBe(source!.bytes);
   });
-  it.fails('A5: an unresolved dictionary requirement must be reported or installed',async()=>{
+  it('A5: an unresolved dictionary requirement must be reported or installed',async()=>{
     await seed();const required=await addDictionary();const files=await exportFiles('portable');
     await db.delete();await db.open();const existing=await addDictionary('文=khác');
     const [id]=await stageBackup(files,()=>{});const info=await restoreInfo(id);
@@ -83,7 +83,7 @@ describe('AUDIT: A2/A3 regressions and five tracked expected failures',()=>{
     expect(installed===required||info.conflicts.missingDictionaries.some(d=>d.sha256===required)).toBe(true);
     expect(existing).not.toBe(required);
   });
-  it.fails('A6: packet indices cannot silently change original chapter order',async()=>{
+  it('A6: packet indices cannot silently change original chapter order',async()=>{
     await seed(41);const files=await exportFiles('compact');
     const p1=JSON.parse(await files[1].text());const p2=JSON.parse(await files[2].text());
     [p1.index,p2.index]=[p2.index,p1.index];
@@ -96,7 +96,7 @@ describe('AUDIT: A2/A3 regressions and five tracked expected failures',()=>{
     expect(chapters).toHaveLength(41);expect(chapters[20].title).toBe('C20');
     expect(chapters[21].title).toBe('C21');
   });
-  it.fails('A7: per-chapter TXT export preserves every Unicode character',async()=>{
+  it('A7: per-chapter TXT export preserves every Unicode character',async()=>{
     const input='a'.repeat(63999)+'🙂b';const parts:Part[]=[];
     new StreamingSplitter('Unicode',part=>parts.push(part)).feed(input,true);
     expect(parts.map(p=>p.text).join('')).toBe(input);

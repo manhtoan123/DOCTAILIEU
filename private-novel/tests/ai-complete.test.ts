@@ -13,7 +13,7 @@ it('does not split rate limits, credentials or invalid models',async()=>{
 });
 it('splits truncated output losslessly and publishes only complete children',async()=>{
  const text='中'.repeat(401)+'😀'+'文'.repeat(401),send=vi.fn().mockRejectedValueOnce(truncated()).mockResolvedValueOnce({...result,result:'A'}).mockResolvedValueOnce({...result,result:'B'});
- expect(await translateComplete({text,names:{中:'Trung'}},new AbortController().signal,send)).toEqual({...result,result:'A\nB',inputTokens:2,outputTokens:4});
+ expect(await translateComplete({text,names:{中:'Trung'}},new AbortController().signal,send)).toEqual({...result,division:{version:1,parts:2,reasons:['output_limit']},result:'A\nB',inputTokens:2,outputTokens:4});
  expect(send.mock.calls[1][0].text+send.mock.calls[2][0].text).toBe(text);expect(send.mock.calls[1][0].names).toEqual({中:'Trung'});expect(send.mock.calls[1][0].text.endsWith('\uD83D')).toBe(false);
 });
 it('does not split safety refusals or unrecognized failures',async()=>{

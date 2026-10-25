@@ -24,6 +24,8 @@ export interface AiTranslateClientRequest {
 /** Safe lease evidence returned by the server: identifiers only, never credential material. */
 export interface AiLeaseInfo {requestId:string;leaseIdHash:string;keySlot?:number;keysAvailable?:number}
 export interface AiTranslateClientResponse {
+  division?:import('./ai-division').AiDivision;
+  textMap?:import('./ai-text-map').AiTextMap;
   result: string;
   model: string;
   finishReason: string;

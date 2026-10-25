@@ -77,3 +77,62 @@ Ngoài import specifier, tests/scripts còn đọc trực tiếp file nguồn b�
 - 21/10/2026 | Cập nhật TXT dùng cùng StreamingSplitter và mặc định giữ nguyên chương(maxChars0) như Nhập truyện. Cho chọn tùy ý trong suffix đủ điều kiện, chỉ manifest/commit chương được chọn theo thứ tự file, không sửa old rows; bỏ chương có thể mất mốc full-file lần sau, UI nêu dùng new-only. Watchdog chia worker30s và chuyển tiêu đề/ghi batch120s, stop ngắt chờ conversion nhưng vẫn drain native IndexedDB trước dọn staging. Không đổi schema/cloud protocol.
 
 - 21/10/2026 | TXT cập nhật full không còn bắt buộc nội dung100% giống. Exact tail vẫn yêu cầu mốc duy nhất; fallback title-tail chuẩn hóa là gợi ý, thiếu/đa mốc mở manual. Cả hai không tích sẵn và service bắt buộc IDs explicit; chặn known/repeated title/body ở mọi nhánh. Preview mới nhất cuối file lên trước; lưu vẫn theo thứ tự nguồn, không sửa chương cũ hay fuzzy-overwrite. Không đổi schema/cloud protocol. Cơ chế manual hỗ trợ kiểm tra lại khi lần nhập trước đã bỏ chương.
+
+## 22/10/2026 — Chọn Name AI theo vị trí tương đối
+Theo chỉ đạo trực tiếp người dùng: cụm AI/Convert chỉ cần gần đúng; bỏ điều kiện phải bằng số đoạn và toast chặn. Nội suy vị trí thứ tự giữa các đoạn không rỗng, chọn một đoạn nguồn; không căn chỉnh ngữ nghĩa, không gọi AI hoặc thêm bước xác nhận.
+
+## 23/10/2026 — Convert server: chọn SQL candidate cho probe, chưa tích hợp Reader
+- Trong Worker thử không public route, khi không có Rules, dùng mảng codepoint raw/normalized và SQL suffix-window loại trùng context để tạo cụm theo cap UTF16. Giữ LanguageEngine, thứ tự ordinal/token/lookup; có Rules dùng JS discovery cũ. Flag chỉ bật ở config probe.
+- Mẫu remote mới đạt CPU mục tiêu; chưa coi là nghiệm thu production. Trước mở API/Reader cần shared quota guard (PUBLIC_LIBRARY1/sameOrigin không phải owner auth), pin phiên bản từ điển, cancellation/stale/token-range và cold/concurrency. Không thêm PIN/login, provider, paid tier; không tự lấy từ điển default thay bản người dùng.
+- Bằng chứng/giới hạn: private-novel/docs/SERVER-CONVERT-FREE-M0.md, .dsh-tmp/server-convert/.
+
+## 23/10/2026 — Convert AI Name trên Free, phạm vi có giới hạn
+
+Reader AI TXT dùng service binding Convert mặc định, cửa sổ256 UTF-16 tại vị trí tương đối, tra theo token và whole lookup chỉ khi mở rộng. Cache riêng RAM8 mục; so SHA/version/snapshot và abort; local fallback chỉ do người dùng chọn. Corpus083752ea bất biến và pin manifest/version; không thêm provider/billing/PIN, không đổi AIWorker hoặc DB thư viện.
+
+Quota CAS reserve2M/ceiling3M ngàyUTC là guard bảo thủ, không chứng nhận hard quota toàn account. Bộ đo bản7814891b có9observations, P50=6,7ms/P99=13,32ms,0runtime/exceededCPU errors; chưa đạt mục tiêu P99<10ms và không suy thành bảo đảm mọi input/cold/concurrency. Tài liệu Cloudflare hiện hành xác nhận10ms Free có rollover/flexibility khi thỉnh thoảng vượt; vượt liên tục sẽ bị terminate: https://developers.cloudflare.com/workers/platform/limits/#cpu-time và https://developers.cloudflare.com/workers/observability/metrics-and-analytics/ . Vì vậy triển khai tính năng Name có cap/fallback trên Free như khả năng best effort, không tuyên bố M0 Convert tổng quát đạt mọi tải hoặc nâng paid để vượt gate. Giữ cả số đo không đạt, các lỗi assertion và giới hạn trong docs/SERVER-CONVERT-FREE-M0.md.
+
+
+## 23/10/2026 — AI Reader tự phục hồi qua nhiều đợt
+Theo yêu cầu trực tiếp của người dùng, thay quyết định không tự cấp lại ngân sách chương ở mục phục hồi trước đây: mỗi đợt vẫn giữ nguyên deadline/send cap, nhưng khi hết đợt có thể tự mở đợt mới sau ít nhất60s và Retry-After. Session kiểm tra điều kiện exhausted/cooldown; giữ phần đã hoàn thành, model pin, snapshot, shared cooldown và tối đa2key. Lỗi mạng/quota/timeout tiếp tục tự động; kết quả rỗng/thiếu/sai định dạng thử lại chậm. Auth/input/config không thử mù, chờ điều kiện hợp lệ; không tự đổi key/prompt/provider. UI trạng thái chờ màu hổ phách, giữ mã lỗi chẩn đoán; chỉ hoàn tất khi mọi phần hợp lệ. Stop vô hiệu hóa timer/callback cũ; không xóa session prewarm trong khoảng chờ hydrate chương mới. Không đổi DB/schema, không tự dịch lại dữ liệu cũ.
+
+
+## 23/10/2026 — Đọc tiếp theo vị trí đọc, không theo dịch sẵn
+Theo báo lỗi trực tiếp của người dùng, bỏ hợp đồng bookmark AI là chương hoàn tất cao nhất (bao gồm prewarm). Prewarm/completion chỉ giữ cache; chương đang được mở và đoạn thực sự nhìn thấy mới ghi tiến độ. Progress.reading?:true đánh dấu bookmark thực, tương thích record cũ, không migration/tái nhập/sửa nguồn. AI dùng chỉ số đoạn bản dịch bounded512000/offset0; TXT prefix ngoài mốc lưu phải chờ, chỉ clamp khi bản đầy đủ; EPUB chờ đầy đủ. Mốc thực thắng AIlegacy/prewarm dù legacytimestamp mới hơn; actualAI/raw dùng thời điểm quan sát thay vì thứ tự chương, tie khác vị trí giữ conflict/CAS. Hash actualprogress gồm updatedAt để đồng bộ lần đọc mới cùng vị trí; cleanup/hidden chỉ flush timestamp quan sát cũ. Bookmark thực ưu tiên hơn TTS cursor cũ khi chọn chương/mode; không tự phát audio. Không tự suy diễn/sửa bookmark lịch sử đã sai khi không còn bằng chứng vị trí đọc.
+
+## 23/10/2026 — Mốc phần dịch cho AI TXT Name, giữ nguyên UI
+Theo yêu cầu người dùng, không thêm mũi tên/nút/UI. TXT nhiều phần ghi textMap nguồn→kết quả từ plan thật và thứ tự ghép có newline, không yêu cầu AI trả ID, không đổi prompt/chia phần/scheduler/request. Parser cache chỉ nhận offset hợp lệ, whitelist và bỏ riêng metadata khi sai/quá cap; cache cũ dùng tiếp. Reader tìm phần chứa điểm bấm, ưu tiên đoạn nguồn có phần giao lớn nhất với đoạn AI; cửa sổ256 UTF-16 giữ nguồn/Unicode. Đây là căn tương đối trong phần, không bảo đảm ngữ nghĩa. Một phần giữ response identity và fallback cũ. Không migration/xóa cache/dịch lại bản cũ/thêm provider; chỉ tính căn đoạn khi mở picker.
+
+## 23/10/2026 — Hiện số phần dịch và lý do ngay trong bảng AI
+- Theo yêu cầu người dùng: hai dòng Chương này/Chương sau hiện số phần và lý do chia; bỏ footer Cài đặt dịch AI. Điều hướng chương dùng ba vùng bấm rộng, cao tối thiểu 48px; mục lục mở trang chứa chương hiện tại, tự cuộn tới nhãn Đang đọc.
+- `division` là metadata cục bộ theo kế hoạch/phục hồi thực tế, không suy từ dấu ♾ hay công tắc hiện tại. Đếm theo cây phần có ID ổn định, dùng metadata nhánh hoàn tất để tránh đếm lặp khi retry/resume. Lý do là enum, không chứa prompt/key/nội dung nguồn.
+- Cache lưu metadata tùy chọn đã lọc trường và kiểm kích thước; sai/thiếu metadata không loại bản dịch hợp lệ. Cache cũ thiếu chứng cứ giữ trạng thái chưa biết; không tự dịch lại/xóa cache. Single response trong RAM giữ nguyên identity, metadata mới lưu qua bản sao. Không đổi request/model/ngân sách dịch, scheduler/lease/cancel, bytes nguồn hay bookmark.
+
+
+## 24/10/2026 01:33 ICT — D1/D2: facts và runtime AI
+Sidecar request identity giữ raw response identity/facts validation ở RAM; cache tiếp tục whitelist metadata hiện có, không lưu phase/countdown/Stop, không gọi AI để bù facts legacy. Presenter tách content/phase; cached complete vẫn ready khi prewarm off. UI đếm lá theo cây ID nguồn, aggregate hoàn tất authoritative; scheduler/lease giữ nhóm cũ. Hybrid legacy thiếu chứng cứ toàn chương thì tỷ lệ unknown. Dừng chương này/chương sau dùng điều khiển hiện có, không thêm UI. Theo yêu cầu D1→D2 và docs/UI-READER-UX-PLAN.md.
+
+
+## 24/10/2026 10:13 ICT — URL Reader ngắn và ổn định
+Người dùng chọn mã ngắn. Base64url22 đủ16byte UUID lowercase, không prefix/truncation/alias DB. Parser giải ngược full UUID trước lookup, /r/book/chapter; /read cũ giữ tương thích và replaceState khi xác định đúng chương, không thêm history entry. ID tùy ý/case-sensitive không phải UUID lowercase giữ route cũ; book/settings giữ nguyên. Không đổi nguồn/bookmark/cache/sync/migration.
+
+
+## 24/10/2026 10:43 ICT — Numeric book code + TOC position
+User đổi từ UUID22 sang /r/<mã-số>/<vị-trí-mục-lục>, đếm1 bỏ chương ẩn; không lấy số tiêu đề. Dùng registry D1 immutable rowid+10000, only ready nondeleted existing books, no-recycle/cap100k/auth/origin. Local cache hai chiều chỉ từ mapping server validated; unavailable/local-only keeps old URL. Chapter resolution cùng stable sort order+visible filter như TOC, out-of-range errors, không resume nhầm bookmark. Vị trí thay đổi theo sửa mục lục; UUID/base64 vẫn định danh chương gốc. Route canonicalization replaceState với owner generation/book guard. Schema0014 additive/direct; không chạy pending0013/đổi IDnguồn.
+
+
+## 24/10/2026 11:33 ICT — Giới hạn agent và checkpoint trước full suite
+Theo yêu cầu nghiên cứu bài rohit2113579599624114313 và cải tiến AGENTS.md: mặc định1agent, tốiđa1reviewer cho rủi ro thật trừ chỉ đạo khác; reviewer không spawn con/full-history. Chạy dài không tự tăng agent/phạm vi/model/effort. Nếu mơ hồ ảnh hưởng định danh/cách đếm/lưu trữ/kiến trúc, làm rõ trước phần phụ thuộc. Gom code/regression và kiểm tra rẻ trước full; thêm kiểm đúng ranh giới HTTP/runtime khi bị đổi. Không giảm gate an toàn/full test rủi ro, giữ model reviewer và toàn bộ khối bảo toàn. Chỉ guidance tại repo; không đổi global config hoặc trần runtime cứng. Nguồn/giới hạn ở private-novel/docs/AGENTS-MD-RESEARCH.md; chưa benchmark usage.
+
+## 24/10/2026 — Kho Name dùng chung theo tác giả
+- Người dùng xác nhận lấy Album tác giả ngoài cùng, gồm mọi series. Settings chọn một kho/Album, tìm Name/phân trang10; truyện ngoài Album giữ kho riêng.
+- Thêm record album-name theo từng khóa vào shared-state CAS/tombstone hiện có; không thêm DB/billing/provider. Name mới áp dụng Convert và lượt AI sau, không dịch lại kết quả hiện tại.
+- Không chuyển/xóa dữ liệu cũ: legacy cùng nghĩa đọc chung; nghĩa khác giữ riêng tới khi lưu lựa chọn Album. Tombstone che fallback. Đổi tên gốc mang cây/kho theo trong transaction, không gộp đích đã có dữ liệu.
+- Backup optional albumNames kiểm cùng gốc, thêm thiếu lúc kích hoạt, giữ live/tomb hiện có. Nguồn/ID/chương/progress giữ nguyên. Chi tiết private-novel/docs/ALBUM-NAMES-M0.md.
+
+
+## 25/10/2026 00:46 ICT — CapCut v2 dùng phiên của người dùng
+Người dùng cho phép đổi gateway, chọn rõ CapCutv2 dùng phiên và chốt BV074_streaming. Tích hợp session-only cùng origin trên Pages; cookie/device metadata chỉ vào CAPCUT_SESSION_JSON secret, không UI/Git/DB/backups/log. Không tự đăng nhập bằng mật khẩu; không dùng phiên/profile mẫu. Giữ player/cursor/voice IDs; chỉ opt-in VITE_TTS_GATEWAY=capcut-v2 sau khi probe âm thanh thật đạt. Backend có thể deploy trước với client chưa bật. Mapping/giao thức pin trong docs/CAPCUT-TTS-V2-M0.md; không coi mapping hoặc mock pass là upstream hoạt động/miễn phí/SLA.
+
+## 25/10/2026 15:54 ICT — TTS ít thao tác, cookie-only
+Người dùng muốn ít can thiệp, chỉ đề nghị cookie. Cho phép giữ cookie mới của endpoint CapCut hiện có trong D1 runtime AES-GCM/CAS, khóa dẫn xuất từ bootstrap secret, namespace đổi khi bootstrap đổi; không mật khẩu/tự login. Quyết định này thay giới hạn session-only không lưu DB trong docs CapCut cũ bằng lưu encrypted runtime tách library/backup. Audio cache thiết bị riêng32MiB/256đoạn/24h, không sửa cursor; tối đa3active và no autoplay reload. Thu hồi phiên hoàn toàn vẫn cần chủ tài khoản login/cookie mới; không cam kết vĩnh viễn. docs/TTS-AUTONOMY-M0.md.

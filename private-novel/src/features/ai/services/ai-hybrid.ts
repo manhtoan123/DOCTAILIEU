@@ -1,3 +1,4 @@
+import {combineAiDivision} from './ai-division';
 import type {AiReadingSource,AiReadingCache,ReadingAiSettings} from './ai-reading';
 import {AiTranslateClientError,type AiTranslateClientResponse} from './ai-translate';
 import {AI_HYBRID_SAMPLE_CHARS,AI_HYBRID_SOURCE_CHARS,hybridTemplateValid,isHybridLiteModel,DEFAULT_SECOND_HALF_PROMPT,secondHalfTemplateValid,HYBRID_LITE_MODELS} from './ai-hybrid-prompt';
@@ -51,5 +52,5 @@ export async function runHybridStages<T extends AiTranslateClientResponse>(sourc
  return [first,second,hash];
 }
 export function hybridResult(first:AiTranslateClientResponse,second:AiTranslateClientResponse,sampleHash:string):AiTranslateClientResponse{
- return {result:first.result+'\n'+second.result,model:'hybrid',finishReason:'STOP',inputTokens:first.inputTokens+second.inputTokens,outputTokens:first.outputTokens+second.outputTokens,halves:{version:1,models:[first.model,second.model],sampleHash}};
+ return {division:first.division&&second.division?combineAiDivision([first,second],'hybrid'):undefined,result:first.result+'\n'+second.result,model:'hybrid',finishReason:'STOP',inputTokens:first.inputTokens+second.inputTokens,outputTokens:first.outputTokens+second.outputTokens,halves:{version:1,models:[first.model,second.model],sampleHash}};
 }

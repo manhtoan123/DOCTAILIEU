@@ -9,7 +9,9 @@ test('controls have distinct purposes, configuration never sends AI, shortcuts s
  for(const name of ['Nghe truyện nhanh','Tùy chỉnh prompt và model','Cài đặt đọc truyện']){const box=await page.getByRole('button',{name,exact:true}).boundingBox();expect(box!.width).toBeGreaterThanOrEqual(48);expect(box!.height).toBeGreaterThanOrEqual(48);expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);}
 });
 test('single headphones control starts pauses resumes and source switch stops speech',async({page})=>{
- await page.route('**/api/ai/translate',r=>r.fulfill({json:{result:'Bản AI.',model:'gemini-3.5-flash',finishReason:'STOP',inputTokens:1,outputTokens:1}}));
+ await page.route('**/api/**',r=>r.fulfill({status:503}));
+ // The sample is Vietnamese already: echo it as a complete mock using the requested model.
+ await page.route('**/api/ai/translate',r=>{const input=r.request().postDataJSON();return r.fulfill({json:{result:input.text,model:input.model,finishReason:'STOP',inputTokens:1,outputTokens:1}});});
  await page.addInitScript(()=>{(window as any).Audio=class{playbackRate=1;removeAttribute(){}load(){}play(){return Promise.resolve();}pause(){}};});
  await page.route('https://ottsy.weilbyte.dev/api/generation',r=>r.fulfill({json:{success:true,data:'//PkxAAAAAAA',error:null}}));await openSample(page);
  const b=page.getByRole('button',{name:'Nghe truyện nhanh',exact:true});await b.click();await expect(b).toHaveAttribute('title','Tạm dừng nghe');await b.click();await expect(b).toHaveAttribute('title','Tiếp tục nghe');await b.click();await expect(b).toHaveAttribute('title','Tạm dừng nghe');await page.getByRole('button',{name:'Bản gốc',exact:true}).click();await expect(b).toHaveAttribute('aria-pressed','false');

@@ -43,11 +43,11 @@ it('review: completed fallback persists under its exact chain and reopens withou
  expect((await new AiReadingSession(send,cache).request(source,settings,names)).model).toBe('gemini-3.7-flash');
  expect(send).toHaveBeenCalledTimes(2);db.close();
  const offline=vi.fn(async()=>{throw new Error('Network must not run');});
- expect(await new AiReadingSession(offline,cache).request(source,settings,names)).toEqual(output('gemini-3.7-flash'));
+ expect(await new AiReadingSession(offline,cache).request(source,settings,names)).toEqual({...output('gemini-3.7-flash'),division:{version:1,parts:1,reasons:[]}});
  expect(offline).not.toHaveBeenCalled();
  for(const changed of [{...settings,fallbackModels:[]},{...settings,fallbackModels:['gemini-2.5-flash']},{...settings,fallbackModels:[...settings.fallbackModels].reverse()},{...settings,systemPrompt:'Changed prompt'},{...settings,userPromptTemplate:'Changed {{text}}'},{...settings,temperature:0.5}])expect(await readAiReadingCache(source,changed,names)).toBeUndefined();
  expect(await readAiReadingCache(source,settings,[{key:'林儿',value:'Different'}])).toBeUndefined();
- expect(await readAiReadingCache(source,settings,[...names,{key:'不在',value:'Absent'}])).toEqual(output('gemini-3.7-flash'));
+ expect(await readAiReadingCache(source,settings,[...names,{key:'不在',value:'Absent'}])).toEqual({...output('gemini-3.7-flash'),division:{version:1,parts:1,reasons:[]}});
  expect((await db.chapters.get(source.id))?.text).toBe(source.text);
 });
 
@@ -66,7 +66,7 @@ it('review: asynchronous cache lookup cannot mutate the snapshotted fallback cha
  const job=session.request(source,mutable,names);mutable.fallbackModels.splice(0,2,'gemini-3.5-flash');gate.resolve(undefined);
  expect((await job).model).toBe('gemini-3.7-flash');
  expect(send.mock.calls.map(c=>c[0].model)).toEqual(['gemini-3.8-flash','gemini-3.7-flash']);
- expect(cache.write).toHaveBeenCalledWith(source,settings,names,output('gemini-3.7-flash'),expect.any(AbortSignal));
+ expect(cache.write).toHaveBeenCalledWith(source,settings,names,{...output('gemini-3.7-flash'),division:{version:1,parts:1,reasons:[]}},expect.any(AbortSignal));
  expect(session.get(key)).toEqual(output('gemini-3.7-flash'));
 });
 

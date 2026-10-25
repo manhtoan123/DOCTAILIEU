@@ -19,11 +19,15 @@
 | Một TXT chứa nhiều truyện | [Nhập tuyển tập](ANTHOLOGY-IMPORT-1.md) | Xem/sửa mốc truyện rồi chia chương trong từng truyện |
 | EPUB | [Nhập EPUB](EPUB-IMPORT-2.md) | [Reader EPUB](EPUB-READER-3.md), [file lớn](EPUB-LARGE-1.md), [bìa](EPUB-COVER-1.md) |
 | Convert và Name | [Name STV](NAME-STV-2.md) | [Đồng bộ Name](NAME-SYNC-1.md), [hình ảnh Name](NAME-IMAGE-1.md), [Convert → AI](CONVERT-AI-NEXT-1.md) |
+| Thêm Name từ đoạn AI của TXT | [Kế hoạch tái sử dụng công cụ Name](AI-TXT-NAME-EDIT-PLAN.md) | Đúp đoạn AI → cụm Convert → lưu Name; giữ bản AI/TTS, dùng mốc nguồn khi có và đối chiếu gần đúng cho bản cũ |
+| Name chung theo Album tác giả | [Phạm vi và bảo toàn dữ liệu](ALBUM-NAMES-M0.md) | Dùng chung qua series; truyện ngoài Album giữ kho riêng; xung đột cũ chờ chọn, UI tìm/phân trang/bulk |
+| Convert cụm trên máy chủ Free | [M0 và giới hạn](SERVER-CONVERT-FREE-M0.md) | Đã tích hợp tra cụm Name qua Worker/D1, có cache và local fallback; không suy ra toàn chương Convert đã chạy trên server |
 | Dịch AI | [Kế hoạch dịch](AI-TRANSLATION-PLAN.md), [dịch song song](AI-PARALLEL-PLAN.md) | [Dịch cả chương](AI-WHOLE-1.md), [hybrid](AI-HYBRID-HALVES-PLAN.md), [prompt nửa sau](AI-HYBRID-PROMPT-2.md) |
 | Lỗi dịch, streaming và key | [Retry UX](AI-RETRY-UX-PLAN.md) | [Stream](AI-ACTIVITY-STREAM-1.md), [phục hồi](AI-RECOVERY-3.md), [pool key](AI-KEY-POOL-PLAN.md) |
 | Tiến độ đọc và dịch sẵn | [Tiến độ AI](AI-READING-PROGRESS-1.md) | [Dịch sẵn](AI-READING-PRELOAD.md) |
 | Nghe sách | [Hoàn thiện TTS](TTS-COMPLETION-PLAN.md) | [Gateway](TIKTOK-TTS-GATEWAY.md), [giữ phiên nền](TTS-MEDIA-KEEPALIVE-M0.md), [mất mạng](TTS-NETWORK-RESUME-1.md), [phục hồi phát](TTS-PLAYBACK-RECOVERY-1.md) |
-| Reader và điều hướng | [Reader UX](UI-READER-UX-PLAN.md) | [Reader tối giản](READER-MINIMAL-2-PLAN.md) |
+| CapCut v2 và phục hồi nghe sách | [Kết nối phiên](CAPCUT-TTS-SETUP.md), [cache/bộ đệm/phục hồi](TTS-AUTONOMY-M0.md) | Đã bật 10 giọng Việt, cache audio riêng, tối đa 3 request, giữ mốc và Dừng; chưa có cầu nối đăng nhập lại từ điện thoại, chưa xác minh Android nền |
+| Reader và điều hướng | [Kế hoạch Reader/AI 24/10](UI-READER-UX-PLAN.md#ke-hoach-reader-ai-2026-10-24), [URL số](NUMERIC-READER-URL-M0.md) | D1–D2 và phần tách UI của D6 đã làm; D3–D5/controller chưa làm. URL theo vị trí mục lục, link cũ còn dùng; đề xuất UX0 trong cùng tài liệu là việc tiếp theo |
 | Đồng bộ, lưu trữ và sao lưu | [Đồng bộ chỉnh sửa](SYNC-ALL-1.md), [giảm đọc D1](D1-DELTA-1.md) | [Sao lưu](BACKUP-GUIDE.md), [kiểm TTS và khôi phục](TTS-BACKUP-STABILITY-1.md), [checkpoint lưu trữ](STORAGE2-IMPLEMENTATION-CHECKPOINT.md), [R2](R2-SETUP.md) |
 | Triển khai | [Hướng dẫn AI](AI-DEPLOY-GUIDE.md) | [Checklist phát hành](RELEASE-CHECKLIST.md); kiểm tra cấu hình thực tế trước khi dùng lệnh cũ |
 
@@ -45,3 +49,5 @@
 ## Nguồn tài liệu hiện hành
 
 HANDOFF, HANDOFF-LOG và DECISIONS chính thức nằm ở **gốc repository** (hai cấp phía trên thư mục này). Các file cùng tên trong `private-novel/docs/` do lượt triển khai trước tạo chỉ là ghi chép cũ; không tiếp tục append ở đó. Đọc trạng thái sửa undo/dịch song song tại [AI-PARALLEL-PLAN.md](AI-PARALLEL-PLAN.md); không dùng tuyên bố hoàn tất cũ thay kết quả kiểm checkout hiện tại.
+
+Quy trình agent: [AGENTS-MD-RESEARCH.md](AGENTS-MD-RESEARCH.md) — nguồn gốc, cơ chế nạp hướng dẫn và cập nhật giới hạn delegation/kiểm thử24/10.

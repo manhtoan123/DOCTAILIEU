@@ -5,6 +5,8 @@ import type {AiTranslateClientResponse} from './ai-translate';
 import type {AiPartRecord} from './ai-parts';
 import {filterNamesForText} from './ai-translate';
 import {hasCopiedSource} from './ai-source-copy';
+import {readAiDivision} from './ai-division';
+import {validAiTextMap} from './ai-text-map';
 
 export const AI_READING_CACHE_PREFIX='ai-reading-cache:v1:';
 export const AI_PART_CACHE_PREFIX='ai-reading-cache:parts:v1:';
@@ -26,8 +28,14 @@ function response(value:unknown):AiTranslateClientResponse|undefined{
   let halves:AiTranslateClientResponse['halves'];
   if(value.halves!==undefined){const h=value.halves;if(!object(h)||h.version!==1||!Array.isArray(h.models)||h.models.length!==2||h.models.some(m=>typeof m!=='string')||typeof h.sampleHash!=='string'||!/^[a-f0-9]{64}$/.test(h.sampleHash)||value.model!=='hybrid')return;halves={version:1,models:[h.models[0],h.models[1]],sampleHash:h.sampleHash};}
   if(value.model==='hybrid'&&!halves)return;
-  const result={result:value.result,model:value.model,finishReason:'STOP',inputTokens:value.inputTokens,outputTokens:value.outputTokens,...(halves?{halves}:{})};
-  return bytes(result)<=MAX_RESPONSE_BYTES?result:undefined;
+  let result:AiTranslateClientResponse={result:value.result,model:value.model,finishReason:'STOP',inputTokens:value.inputTokens,outputTokens:value.outputTokens,...(halves?{halves}:{})};
+  if(bytes(result)>MAX_RESPONSE_BYTES)return;
+  const division=readAiDivision(value.division);if(division){const described={...result,division};if(bytes(described)<=MAX_RESPONSE_BYTES)result=described;}
+  if(validAiTextMap(value.textMap,value.result.length)){
+    const textMap={version:1 as const,sourceLength:value.textMap.sourceLength,spans:value.textMap.spans.map(span=>({sourceStart:span.sourceStart,sourceEnd:span.sourceEnd,translatedStart:span.translatedStart,translatedEnd:span.translatedEnd}))};
+    const mapped={...result,textMap};if(bytes(mapped)<=MAX_RESPONSE_BYTES)return mapped;
+  }
+  return result;
 }
 function entry(row:Row):CacheEntry|undefined{
   const v=row.value;

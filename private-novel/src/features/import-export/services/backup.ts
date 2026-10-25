@@ -1,3 +1,6 @@
+import {readEffectiveBookNames} from '../../names-convert/services/scoped-names';
+import {ALBUM_NAMES_PREFIX,albumNameSetting,nameAlbumRoot,parseAlbumNameKey} from '../../names-convert/services/album-name-schema';
+import {validateSharedRecord,type SharedRecord} from '../../sync-cloud/services/shared-state-schema';
 import {validateHiddenChapterIds} from '../../sync-cloud/services/chapter-state-schema';
 import {validateEpubBook,validateEpubLayout} from './epub-layout-schema';
 import {createSHA256} from 'hash-wasm';
@@ -69,6 +72,7 @@ interface Body {
   mode?: BackupMode;
   book?: Book;
   names?: NameEntry[];
+  albumNames?: SharedRecord[];
   convertNames?: ConvertName[];
   progress?: Progress;
   dictionaryRequirements?: {kind:DictKind;name:string;sha256:string}[];
@@ -111,7 +115,9 @@ export async function prepareBackup(bookId:string,options?:BackupOptions){
   const refs:{id:string;revision:number;order:number}[]=[];let retainedChars=0;
   await db.chapters.where('bookId').equals(bookId).each(c=>{retainedChars+=c.text.length;refs.push({id:c.id,revision:c.revision,order:c.order});});
   refs.sort((a,b)=>a.order-b.order);
-  const names=await db.names.where('bookId').equals(bookId).toArray();
+  const names=await readEffectiveBookNames(bookId);
+  const album=nameAlbumRoot(book.album),albumNames:SharedRecord[]=[];
+  if(album)for(const row of await db.settings.where('key').startsWith(ALBUM_NAMES_PREFIX).toArray()){const record=validateSharedRecord(row.value);if(record.kind==='album-name'&&parseAlbumNameKey(record.key)[0]===album)albumNames.push(record);}
   const convertNames=await readConvertNames();
   const progress=await db.progress.get(bookId);
   const dictionaryRequirements=(await db.dictionaries.toArray()).map(d=>({kind:d.kind,name:d.name,sha256:d.sha256}));
@@ -162,7 +168,7 @@ export async function prepareBackup(bookId:string,options?:BackupOptions){
       if(rows.some((r,i)=>!r||r.revision!==slice[i].revision))throw new Error('Truyện đã thay đổi khi sao lưu. Hãy tạo bản sao lưu mới.');
       const body:Body={
         chapters:rows as Chapter[],
-        ...(index===0?{manifest,mode,book:exportedBook,names,convertNames,progress,dictionaryRequirements,sources:sourcesPayload,dictionaries:dictionariesPayload}:{})
+        ...(index===0?{manifest,mode,book:exportedBook,names,...(albumNames.length?{albumNames}:{}),convertNames,progress,dictionaryRequirements,sources:sourcesPayload,dictionaries:dictionariesPayload}:{})
       };
       const json=JSON.stringify(body);
       const checksum=await hashBlob(new Blob([json]));
@@ -273,6 +279,7 @@ export async function restoreBackup(id:string,options?:RestoreOptions){
   let omitsSourceData=true;
   const dictionaryCandidates:DictionaryFile[]=[];
   let convertNames:ConvertName[]|undefined;
+  let albumNames:SharedRecord[]=[];
 
   try {
     for(let i=0;i<info.total;i++) {
@@ -284,6 +291,11 @@ export async function restoreBackup(id:string,options?:RestoreOptions){
         if(!b||typeof b.title!=='string'||b.title.length>1000||!Number.isInteger(b.chapterCount)||!Number.isFinite(b.charCount))throw new Error('Metadata truyện không hợp lệ.');
         if(b.hiddenChapterIds!==undefined){if(body.manifest?.version!==3||b.epub)throw Error('Trạng thái chương sao lưu không hợp lệ.');b.hiddenChapterIds=validateHiddenChapterIds(b.hiddenChapterIds);}
         expected=b;
+        if(body.albumNames!==undefined){
+          if(!Array.isArray(body.albumNames)||body.albumNames.length>20000)throw Error('Kho Name Album sao lưu không hợp lệ.');
+          const root=nameAlbumRoot(b.album);albumNames=body.albumNames.map(value=>{const record=validateSharedRecord(value);if(record.kind!=='album-name'||!root||parseAlbumNameKey(record.key)[0]!==root)throw Error('Name sai Album sao lưu.');return record;});
+          if(new Set(albumNames.map(r=>r.key)).size!==albumNames.length)throw Error('Name Album sao lưu bị trùng.');
+        }
         if(body.convertNames!==undefined)convertNames=validateConvertNames(body.convertNames);
 
         let targetTitle=options?.targetTitle?.trim();
@@ -408,6 +420,8 @@ export async function restoreBackup(id:string,options?:RestoreOptions){
         }
         await db.settings.put({key:CONVERT_NAMES_KEY,value:validateConvertNames([...merged].map(([key,value])=>({key,value})))});
       }
+      // Add-only at final activation: never overwrite a current value or tombstone.
+      for(const record of albumNames){const key=albumNameSetting(record.key);if(!await db.settings.get(key))await db.settings.put({key,value:record});}
       const active=(await db.chapters.where('bookId').equals(bookId).toArray()).filter(c=>!hidden.includes(c.id));
       if(await db.books.update(bookId,{status:'ready',hiddenChapterIds:hidden,chapterCount:active.length,charCount:active.reduce((n,c)=>n+c.text.length,0),updatedAt:Date.now()})!==1)throw new Error('Không thể kích hoạt truyện khôi phục.');
       await db.restoreJobs.update(jobId,{status:'committed',updatedAt:Date.now()});

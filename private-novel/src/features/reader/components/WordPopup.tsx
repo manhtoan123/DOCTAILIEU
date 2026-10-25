@@ -2,6 +2,7 @@ import {useEffect,useLayoutEffect,useRef,useState,type CSSProperties} from 'reac
 import '../styles/word-popup.css';
 
 export interface WordPopupProps {
+  saveOnly?:boolean;
   source:string;
   hanviet:string;
   meanings:string[];
@@ -96,11 +97,11 @@ export default function WordPopup(props:WordPopupProps){
   },[]);
 
   const applyButtons=(value:string,label:string)=><span className="stv-word-actions">
-    <button type="button" aria-label={`Áp dụng ${label}`} title="Áp dụng tạm trong lần đọc này" disabled={busy||loading||!value.trim()||!source.trim()} onClick={()=>props.onApply(value,false)}>✓</button>
+    {!props.saveOnly&&<button type="button" aria-label={`Áp dụng ${label}`} title="Áp dụng tạm trong lần đọc này" disabled={busy||loading||!value.trim()||!source.trim()} onClick={()=>props.onApply(value,false)}>✓</button>}
     <button type="button" aria-label={`Lưu ${label}`} title="Lưu Name cố định cho truyện này" disabled={busy||loading||!value.trim()||!source.trim()} onClick={()=>props.onApply(value,true)}>▣</button>
   </span>;
 
-  return <div ref={box} className="stv-word-popup" role="dialog" aria-label="Chỉnh Name" aria-busy={busy||loading} style={position}>
+  return <div ref={box} className="stv-word-popup" role="dialog" aria-modal={props.saveOnly?true:undefined} aria-label="Chỉnh Name" aria-busy={busy||loading} style={position}>
     <button type="button" className="stv-word-close stv-word-close-outside" aria-label="Đóng Chỉnh Name bên trái" title="Đóng" disabled={busy} onClick={onClose}>×</button>
     <div className="stv-word-scroll" style={{maxHeight:typeof position.maxHeight==='number'?Math.max(1,position.maxHeight-12):undefined}}>
       <header className="stv-word-header">
@@ -135,7 +136,7 @@ export default function WordPopup(props:WordPopupProps){
           {!loading&&meanings.length>1&&<select aria-label="Chọn nghĩa Vietphrase" title="Chọn nghĩa để sửa" value="" disabled={busy} onChange={event=>{if(event.target.value)props.onCustomChange(event.target.value);}}>
             <option value="">▾</option>{meanings.map((value,index)=><option key={`${index}:${value}`} value={value}>{value}</option>)}
           </select>}
-          <button type="button" className="stv-word-edit" aria-label="Sửa nghĩa Vietphrase" disabled={busy||loading} onClick={props.onEditMeaning}>Sửa</button>
+          <button type="button" className="stv-word-edit" aria-label={props.saveOnly?"Dùng nghĩa Vietphrase":"Sửa nghĩa Vietphrase"} disabled={busy||loading} onClick={props.onEditMeaning}>{props.saveOnly?"Dùng":"Sửa"}</button>
         </span>
       </div>
       <div className="stv-word-row">
@@ -145,7 +146,7 @@ export default function WordPopup(props:WordPopupProps){
       </div>
       <footer className="stv-word-footer">
         <button type="button" aria-label="Quản lý Name" disabled={busy} onClick={props.onManage}>Quản lý</button>
-        <button type="button" aria-label="Chạy Convert" title="Convert lại bằng từ điển cục bộ" disabled={busy||loading} onClick={props.onRun}>▶</button>
+        {!props.saveOnly&&<button type="button" aria-label="Chạy Convert" title="Convert lại bằng từ điển cục bộ" disabled={busy||loading} onClick={props.onRun}>▶</button>}
         <button type="button" aria-label="Thêm Name" disabled={busy||loading||!source.trim()} onClick={props.onAddName}>Thêm name</button>
       </footer>
       {loading&&<div className="stv-word-message" role="status">Đang tra nghĩa…</div>}
