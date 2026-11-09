@@ -27,15 +27,17 @@ function sanitizeBase(name: string, fallback: string): string {
 
 export function sanitizeDownloadFilename(name: string, fallback = 'truyen.txt'): string {
   const clean = sanitizeBase(name, fallback);
-  return (/\.txt$/i.test(clean) ? clean : clean + '.txt').slice(0, 255);
+  let stem=clean.replace(/\.txt$/i,'').slice(0,251);
+  if (/[\uD800-\uDBFF]$/.test(stem)) stem=stem.slice(0,-1);
+  return stem+'.txt';
 }
 
-/** Preserve a source file's real format: EPUB stays .epub, everything else .txt. */
+/** Preserve the real format of binary document sources and TXT. */
 export function sanitizeSourceFilename(name: string, encoding: string, fallback = 'truyen.txt'): string {
-  const extension = encoding === 'epub' ? '.epub' : '.txt';
-  const clean = sanitizeBase(name, encoding === 'epub' ? 'truyen.epub' : fallback);
+  const extension = ['epub','pdf','docx'].includes(encoding) ? '.'+encoding : '.txt';
+  const clean = sanitizeBase(name, extension!=='.txt' ? 'truyen'+extension : fallback);
   // Older derived EPUB names may already end in .txt or .epub.txt.
-  const stem = clean.replace(/(?:\.(?:txt|epub))+$/i, '') || 'truyen';
+  const stem = clean.replace(/(?:\.(?:txt|epub|pdf|docx))+$/i, '') || 'truyen';
   let base = stem.slice(0, 255 - extension.length);
   if (/[\uD800-\uDBFF]$/.test(base)) base = base.slice(0, -1);
   return base + extension;

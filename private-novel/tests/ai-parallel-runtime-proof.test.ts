@@ -17,12 +17,15 @@ import type {D1Database} from '@cloudflare/workers-types';
 import {readFile} from 'node:fs/promises';
 import {Miniflare, convertV4MiniflareOptions} from 'miniflare';
 import {afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi} from 'vitest';
-import {keyHealthId, resetKeyHealth, updateKeyHealth} from '../server/ai-key-health';
+import {keyHealthId, reserveKey, resetKeyHealth, updateKeyHealth} from '../server/ai-key-health';
 import {handleAiTranslate, resetAiKeyState, type AiTranslateEnv} from '../server/ai-translate';
 import {AI_DEFAULTS, AiReadingSession} from '../src/features/ai/services/ai-reading';
 import {AiTranslateClientError, parseAiRetryAfter, type AiLeaseInfo, type AiTranslateClientRequest, type AiTranslateClientResponse} from '../src/features/ai/services/ai-translate';
 import {runAiParts, setAiPartsTrace, splitAiText, type AiPartsProgress, type AiPartsTrace} from '../src/features/ai/services/ai-parts';
 import {DEFAULT_AI_MODEL} from '../src/features/ai/types/ai-models';
+import {readAiStreamResponse} from '../src/features/ai/services/ai-stream-client';
+import {AI_STREAM_TYPE} from '../src/features/ai/services/ai-stream-protocol';
+import {convertPolishSettings} from '../src/features/ai/services/convert-polish';
 
 const MODEL = DEFAULT_AI_MODEL;
 const HOLD_MS = 500;
@@ -35,6 +38,7 @@ const settings = {...AI_DEFAULTS, splitParts: true, fallbackModels: [] as string
 
 interface WireCall {
   label: string;
+  length: number;
   start: number;
   end?: number;
   status?: number;
@@ -49,9 +53,11 @@ let database: D1Database;
 let calls: WireCall[] = [];
 let exposures: string[] = [];
 let traces: AiPartsTrace[] = [];
-let upstream: {key: string; label: string; at: number}[] = [];
+let upstream: {key: string; label: string; length:number; at: number; end?:number}[] = [];
 let activeSends = 0;
 let maxActiveSends = 0;
+let cutLength = 0;
+let firstPair: {ready:Promise<void>;open:()=>void}|undefined;
 
 const sourceOf = (bookId: string, id: string, text: string) => ({bookId, id, revision: 1, text});
 const makeEnv = (keys: string[]): AiTranslateEnv => ({DB: database, GEMINI_API_KEYS: JSON.stringify(keys)});
@@ -101,15 +107,17 @@ async function bridge(
   env: AiTranslateEnv,
   onLease?: (lease: AiLeaseInfo) => void,
 ): Promise<AiTranslateClientResponse> {
-  const response = await handleAiTranslate(
+  const wire = await handleAiTranslate(
     new Request('https://synthetic.example/api/ai/translate', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: {'Content-Type': 'application/json', Accept: AI_STREAM_TYPE,...(input.reportFreeKeys?{'X-AI-Free-Keys':'1'}:{})},
       body: JSON.stringify(input),
       signal,
     }),
     env,
   );
+  const streamed=wire.headers.get('Content-Type')?.includes(AI_STREAM_TYPE);
+  const response=streamed?await readAiStreamResponse(wire,signal,()=>{},onLease):wire;
   const text = await response.text();
   exposures.push(JSON.stringify([...response.headers]) + text);
   let body: Record<string, unknown> = {};
@@ -125,11 +133,11 @@ async function bridge(
     const code = typeof body.error === 'string' ? body.error : httpCode;
     const requestId = response.headers.get('X-AI-Request-ID') ?? undefined;
     const retryAfterMs = response.status === 429 ? parseAiRetryAfter(response.headers.get('Retry-After')) : undefined;
-    throw new AiTranslateClientError(code, 'synthetic bridge failure', response.status, undefined, requestId, undefined, retryAfterMs);
+    throw new AiTranslateClientError(code, 'synthetic bridge failure', response.status, response.headers.get('X-AI-Failure-Reason')??undefined, requestId, undefined, retryAfterMs);
   }
   const debug = leaseFrom(response);
   const parallel = response.headers.get('X-AI-Parallel') === '2' ? 2 as const : undefined;
-  onLease?.(debug);
+  if(!streamed)onLease?.(debug);
   return {
     result: body.result as string,
     model: body.model as string,
@@ -147,7 +155,7 @@ async function tracked(
   env: AiTranslateEnv,
   onLease?: (lease: AiLeaseInfo) => void,
 ): Promise<AiTranslateClientResponse> {
-  const call: WireCall = {label: labelOf(input.text), start: Date.now()};
+  const call: WireCall = {label: labelOf(input.text), length: input.text.length, start: Date.now()};
   calls.push(call);
   activeSends++;
   maxActiveSends = Math.max(maxActiveSends, activeSends);
@@ -192,13 +200,29 @@ async function upstreamMock(_url: unknown, init?: RequestInit): Promise<Response
   const markerAt = prompt.lastIndexOf(PROMPT_MARKER);
   const sourceText = markerAt >= 0 ? prompt.slice(markerAt + PROMPT_MARKER.length) : prompt;
   const label = /^[A-Z]$/.test(sourceText[0] ?? '') ? sourceText[0] : 'Warm';
-  upstream.push({key, label, at: Date.now()});
-  // Stand-in for Google's wall-clock latency: the real lease stays reserved during this hold.
-  await new Promise(resolve => setTimeout(resolve, HOLD_MS));
-  return Response.json({
-    candidates: [{content: {parts: [{text: `Bản dịch ${label}`}]}, finishReason: 'STOP'}],
+  const work={key,label,length:sourceText.length,at:Date.now(),end:undefined as number|undefined};upstream.push(work);
+  if(firstPair&&['A','B'].every(label=>upstream.some(row=>row.label===label)))firstPair.open();
+  const data={
+    candidates: [{content: {parts: [{text: `Bản dịch ${label}`}]}, finishReason: sourceText.length===cutLength?'MAX_TOKENS':'STOP'}],
     usageMetadata: {promptTokenCount: 1, candidatesTokenCount: 1},
-  });
+  };
+  // Headers arrive first; the provider is still generating while the client
+  // receives lease evidence. Record actual body work, not just adapter overlap.
+  if(String(_url).includes('streamGenerateContent')){
+    let timer:ReturnType<typeof setTimeout>,cancelled=false;
+    return new Response(new ReadableStream<Uint8Array>({start(controller){
+      // Headers remain immediate. In the cold-pair proof, hold answer bodies
+      // until both actual upstream requests exist; host load cannot shorten overlap.
+      const ready=firstPair&&['A','B'].includes(label)?firstPair.ready:Promise.resolve();
+      void ready.then(()=>{if(!cancelled)timer=setTimeout(()=>{work.end=Date.now();controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`));controller.close();},HOLD_MS);});
+    },cancel(){cancelled=true;clearTimeout(timer);work.end=Date.now();}}),{headers:{'Content-Type':'text/event-stream'}});
+  }
+  await new Promise(resolve=>setTimeout(resolve,HOLD_MS));work.end=Date.now();return Response.json(data);
+}
+
+function assertUpstreamOverlap(a:typeof upstream[number],b:typeof upstream[number]){
+  expect(a.key).not.toBe(b.key);
+  expect(Math.min(a.end!,b.end!)-Math.max(a.at,b.at)).toBeGreaterThan(HOLD_MS/2);
 }
 
 beforeAll(async () => {
@@ -209,7 +233,7 @@ beforeAll(async () => {
     d1Databases: ['DB'],
   }));
   database = await runtime.getD1Database('DB') as unknown as D1Database;
-  for (const file of ['0006_ai_keys.sql', '0008_ai_key_health.sql']) {
+  for (const file of ['0006_ai_keys.sql', '0008_ai_key_health.sql', '0017_ai_key_model_blocks.sql']) {
     const sql = (await readFile('migrations/' + file, 'utf8')).replace(/--[^\n]*/g, '');
     for (const statement of sql.split(';').filter(s => s.trim())) await database.prepare(statement).run();
   }
@@ -225,11 +249,14 @@ beforeEach(async () => {
   upstream = [];
   activeSends = 0;
   maxActiveSends = 0;
+  cutLength = 0;
+  firstPair=undefined;
   vi.spyOn(globalThis, 'fetch').mockImplementation(upstreamMock as unknown as typeof fetch);
   setAiPartsTrace(event => traces.push(event));
 });
 
 afterEach(() => {
+  firstPair?.open();
   setAiPartsTrace(undefined);
   vi.restoreAllMocks();
   resetAiKeyState();
@@ -240,6 +267,30 @@ afterAll(async () => {
 });
 
 describe('runtime proof: split-part parallel translation with real D1 leases', () => {
+  it.each([false,true])('polish uses four distinct leases, or three if another request owns a key (%s)',async busy=>{
+    const keys=[...ALL_KEYS,'synthetic-key-gamma-0003','synthetic-key-delta-0004'];
+    if(busy)expect(await reserveKey(await keyHealthId(keys[3]),MODEL,database)).toBeDefined();
+    const env=makeEnv(keys),session=new AiReadingSession(sessionTranslate(env));
+    let start=0;
+    const polishPairs=Array.from({length:36},(_,index)=>{
+      const converted=`Đoạn ${index}. `+'Khu vườn buổi sáng yên tĩnh. '.repeat(30)+'\n';
+      const pair={start,end:start+converted.length,converted,original:'清晨花园。\n'};
+      start=pair.end;
+      return pair;
+    });
+    const text=polishPairs.map(pair=>pair.converted).join('');
+    try {
+      await session.request({...sourceOf('synthetic','polish:proof',text),polishPairs},convertPolishSettings(MODEL),[]);
+      const width=busy?3:4;
+      expect(calls[0].debug?.freeKeys).toBe(width-1);
+      expect(maxConcurrent(calls)).toBe(width);
+      expect(new Set(calls.slice(0,width).map(call=>call.debug!.leaseIdHash)).size).toBe(width);
+      expect(new Set(upstream.slice(0,width).map(work=>work.key)).size).toBe(width);
+      expect(upstream.slice(0,width).every(work=>work.at<upstream[0].end!)).toBe(true);
+      if(busy)expect(upstream.some(work=>work.key===keys[3])).toBe(false);
+      for(const secret of keys)expect(JSON.stringify({exposures,traces,calls})).not.toContain(secret);
+    } finally {session.clear();}
+  },20000);
   it('guard: a success without the frozen lease headers fails loudly instead of silently passing', () => {
     expect(() => leaseFrom(new Response('{}', {status: 200}))).toThrow(/X-AI-Request-ID/);
     expect(() => leaseFrom(new Response('{}', {
@@ -261,14 +312,14 @@ describe('runtime proof: split-part parallel translation with real D1 leases', (
       expect(warmCall.debug?.keysAvailable).toBe(2);
 
       const result = await session.request(
-        sourceOf('proof-main', 'main', 'A'.repeat(1800) + 'B'.repeat(1800)),
+        sourceOf('proof-main', 'main', 'A'.repeat(1800) + 'B'.repeat(1800) + 'C'.repeat(1800) + 'D'.repeat(1800)),
         settings,
         [],
       );
-      expect(result.result).toBe('Bản dịch A\nBản dịch B');
+      expect(result.result).toBe('Bản dịch A\nBản dịch B\nBản dịch C\nBản dịch D');
 
-      const partCalls = calls.filter(call => call.label === 'A' || call.label === 'B');
-      expect(partCalls).toHaveLength(2);
+      const partCalls = calls.filter(call => ['A','B','C','D'].includes(call.label));
+      expect(partCalls).toHaveLength(4);
       const [partA, partB] = ['A', 'B'].map(label => partCalls.find(call => call.label === label)!);
       expect(partA.status).toBe(200);
       expect(partB.status).toBe(200);
@@ -283,13 +334,14 @@ describe('runtime proof: split-part parallel translation with real D1 leases', (
       const hashes = new Set(partCalls.map(call => call.debug!.leaseIdHash));
       const slots = new Set(partCalls.map(call => call.debug!.keySlot));
       const requestIds = new Set(partCalls.map(call => call.debug!.requestId));
-      expect(hashes.size).toBe(2);
+      expect(hashes.size).toBe(4);
       expect(slots.size).toBe(2);
-      expect(requestIds.size).toBe(2);
+      expect(requestIds.size).toBe(4);
 
       // Two distinct credentials actually served the two parts, mapped by slot.
       const upstreamA = upstream.find(row => row.label === 'A')!;
       const upstreamB = upstream.find(row => row.label === 'B')!;
+      assertUpstreamOverlap(upstreamA,upstreamB);
       expect(upstreamA.key).not.toBe(upstreamB.key);
       expect(new Set([upstreamA.key, upstreamB.key])).toEqual(new Set([KEY_ALPHA, KEY_BETA]));
       for (const call of partCalls) {
@@ -299,10 +351,10 @@ describe('runtime proof: split-part parallel translation with real D1 leases', (
         expect(upstream.find(row => row.label === call.label)!.key).toBe(slot === 1 ? KEY_ALPHA : KEY_BETA);
       }
 
-      // Trace events carry the same pair of hashes/slots at width 2.
+      // Four requests retain distinct hashes and use the two observed slots at width 2.
       const mainLeases = traces.filter(event => event.type === 'lease' && event.jobId === 'proof-main/main');
-      expect(mainLeases).toHaveLength(2);
-      expect(new Set(mainLeases.map(event => event.leaseIdHash)).size).toBe(2);
+      expect(mainLeases).toHaveLength(4);
+      expect(new Set(mainLeases.map(event => event.leaseIdHash)).size).toBe(4);
       expect(new Set(mainLeases.map(event => event.keySlot)).size).toBe(2);
       for (const event of mainLeases) expect(event.parallel).toBe(2);
 
@@ -312,35 +364,30 @@ describe('runtime proof: split-part parallel translation with real D1 leases', (
     }
   }, 20000);
 
-  it('B: cold 3-part chapter sends part 1 alone, then overlaps parts 2+3 with two distinct leases', async () => {
+  it('B: cold 4-part chapter expands on the first streamed lease before part 1 finishes', async () => {
     const env = makeEnv([KEY_ALPHA, KEY_BETA]);
     const session = new AiReadingSession(sessionTranslate(env));
     try {
       // Fresh session = the real click-Dịch-AI flow: no warm capacity yet.
       const result = await session.request(
-        sourceOf('proof-cold', 'three', 'A'.repeat(1800) + 'B'.repeat(1800) + 'C'.repeat(1800)),
+        sourceOf('proof-cold', 'four', 'A'.repeat(1800) + 'B'.repeat(1800) + 'C'.repeat(1800) + 'D'.repeat(1800)),
         settings,
         [],
       );
-      expect(result.result).toBe('Bản dịch A\nBản dịch B\nBản dịch C');
+      expect(result.result).toBe('Bản dịch A\nBản dịch B\nBản dịch C\nBản dịch D');
 
-      const [partA, partB, partC] = ['A', 'B', 'C'].map(label => calls.find(call => call.label === label)!);
+      const [partA, partB, partC, partD] = ['A', 'B', 'C', 'D'].map(label => calls.find(call => call.label === label)!);
       expect(partA.status).toBe(200);
       expect(partB.status).toBe(200);
       expect(partC.status).toBe(200);
+      expect(partD.status).toBe(200);
 
-      // Part 1 is alone: the session only learns the server can run 2 leases from its response.
-      expect(overlaps(partA, partB)).toBe(false);
-      expect(partA.end!).toBeLessThanOrEqual(partB.start);
+      expect(overlaps(partA, partB)).toBe(true);
+      expect(new Set([partA,partB].map(call=>call.debug!.keySlot)).size).toBe(2);
+      assertUpstreamOverlap(upstream.find(row=>row.label==='A')!,upstream.find(row=>row.label==='B')!);
 
-      // Parts 2 and 3 then run concurrently on two distinct leases.
-      expect(overlaps(partB, partC)).toBe(true);
-      expect(maxConcurrent([partB, partC])).toBe(2);
+      expect(maxConcurrent([partA,partB,partC,partD])).toBe(2);
       expect(new Set([partB, partC].map(call => call.debug!.leaseIdHash)).size).toBe(2);
-      expect(new Set([partB, partC].map(call => call.debug!.keySlot)).size).toBe(2);
-      const upstreamB = upstream.find(row => row.label === 'B')!;
-      const upstreamC = upstream.find(row => row.label === 'C')!;
-      expect(upstreamB.key).not.toBe(upstreamC.key);
 
       assertNoSecrets(exposures, traces, calls, result);
     } finally {
@@ -348,29 +395,50 @@ describe('runtime proof: split-part parallel translation with real D1 leases', (
     }
   }, 20000);
 
-  it('B: cold 2-part chapter is honestly sequential (recorded limitation, not parallel)', async () => {
+  it('B: cold 6000-character chapter overlaps on distinct streamed D1 leases', async () => {
+    let open!:()=>void;
+    const ready=new Promise<void>(resolve=>{open=resolve;}),timeout=setTimeout(open,2000);
+    firstPair={ready,open:()=>{clearTimeout(timeout);open();}};
     const env = makeEnv([KEY_ALPHA, KEY_BETA]);
     const session = new AiReadingSession(sessionTranslate(env));
     try {
-      const result = await session.request(sourceOf('proof-cold', 'two', 'A'.repeat(1800) + 'B'.repeat(1800)), settings, []);
-      expect(result.result).toBe('Bản dịch A\nBản dịch B');
+      const result = await session.request(sourceOf('proof-cold', 'four', 'A'.repeat(1500) + 'B'.repeat(1500) + 'C'.repeat(1500) + 'D'.repeat(1500)), settings, []);
+      expect(result.result).toBe('Bản dịch A\nBản dịch B\nBản dịch C\nBản dịch D');
 
-      const partCalls = calls.filter(call => call.label === 'A' || call.label === 'B');
-      expect(partCalls).toHaveLength(2);
+      const partCalls = calls.filter(call => ['A','B','C','D'].includes(call.label));
+      expect(partCalls).toHaveLength(4);
       const [partA, partB] = ['A', 'B'].map(label => partCalls.find(call => call.label === label)!);
-      // HONEST LIMITATION: the cold session starts with width 1 and only widens after the
-      // first response, so a 2-part chapter cannot overlap. If this ever changes (prewarm,
-      // capacity seeded before the first send, etc.) this assertion fails and must be reviewed.
-      expect(overlaps(partA, partB)).toBe(false);
-      expect(partA.end!).toBeLessThanOrEqual(partB.start);
-      expect(maxConcurrent(partCalls)).toBe(1);
-      expect(maxActiveSends).toBe(1);
+      expect(overlaps(partA, partB)).toBe(true);
+      expect(maxConcurrent(partCalls)).toBe(2);
+      expect(maxActiveSends).toBe(2);
+      expect(new Set(partCalls.map(call=>call.debug!.leaseIdHash)).size).toBe(4);
+      expect(new Set(partCalls.map(call=>call.debug!.keySlot)).size).toBe(2);
+      assertUpstreamOverlap(upstream.find(row=>row.label==='A')!,upstream.find(row=>row.label==='B')!);
 
       assertNoSecrets(exposures, traces, calls, result);
     } finally {
       session.clear();
     }
   }, 20000);
+
+  it('recovery children overlap on real distinct leases and publish the prefix before the parent completes',async()=>{
+    cutLength=1800;const kept=['C','D','E'].map((label,index)=>({id:String(index+1),response:{result:'Bản dịch '+label,model:MODEL,finishReason:'STOP',inputTokens:1,outputTokens:1}}));
+    const session=new AiReadingSession(sessionTranslate(makeEnv(ALL_KEYS)),{read:async()=>undefined,write:async()=>true,readParts:async()=>kept}),states:AiPartsProgress[]=[];
+    try{
+      const result=await session.request(sourceOf('proof-recovery','one','A'.repeat(900)+'B'.repeat(900)+'C'.repeat(1800)+'D'.repeat(1800)+'E'.repeat(1800)),settings,[],undefined,undefined,state=>states.push(state));
+      expect(result.result).toBe('Bản dịch A\nBản dịch B\nBản dịch C\nBản dịch D\nBản dịch E');
+      const children=calls.filter(call=>call.length===900);expect(children).toHaveLength(2);
+      expect(overlaps(children[0],children[1])).toBe(true);
+      expect(new Set(children.map(call=>call.debug!.leaseIdHash)).size).toBe(2);
+      expect(new Set(children.map(call=>call.debug!.keySlot)).size).toBe(2);
+      const childrenWork=upstream.filter(row=>row.length===900);expect(childrenWork).toHaveLength(2);assertUpstreamOverlap(childrenWork[0],childrenWork[1]);
+      expect(maxActiveSends).toBe(2);
+      expect(states.some(state=>state.text==='Bản dịch A'&&state.done<state.total)).toBe(true);
+      expect(states.some(state=>state.activeLeases===2)).toBe(true);
+      expect(states.at(-1)?.activeLeases??0).toBe(0);
+      assertNoSecrets(exposures,traces,states,calls,result);
+    }finally{session.clear();}
+  },20000);
 
   it('C: one key never grants two live leases; the concurrent 429 falls back to width 1 and stays ordered', async () => {
     const env = makeEnv([KEY_ALPHA]);
@@ -442,7 +510,7 @@ describe('runtime proof: split-part parallel translation with real D1 leases', (
     const started = Date.now();
     try {
       const result = await session.request(
-        sourceOf('proof-cooldown', 'two', 'A'.repeat(1800) + 'B'.repeat(1800)),
+        sourceOf('proof-cooldown', 'four', 'A'.repeat(1500) + 'B'.repeat(1500) + 'C'.repeat(1500) + 'D'.repeat(1500)),
         settings,
         [],
         undefined,
@@ -450,14 +518,14 @@ describe('runtime proof: split-part parallel translation with real D1 leases', (
         state => states.push(state),
       );
       const elapsed = Date.now() - started;
-      expect(result.result).toBe('Bản dịch A\nBản dịch B');
+      expect(result.result).toBe('Bản dịch A\nBản dịch B\nBản dịch C\nBản dịch D');
       expect(result.parallel).toBeUndefined();
 
       const rejected = calls.filter(call => call.status === 429);
       const successes = calls.filter(call => call.status === 200);
       expect(rejected).toHaveLength(1);
       expect(rejected[0].retryAfterMs).toBe(1000);
-      expect(successes).toHaveLength(2);
+      expect(successes).toHaveLength(4);
 
       // Client actually waited on the server hint before retrying, and stayed sequential.
       expect(elapsed).toBeGreaterThanOrEqual(700);
@@ -465,7 +533,7 @@ describe('runtime proof: split-part parallel translation with real D1 leases', (
       expect(states.some(state => typeof state.waitUntil === 'number' && state.waitUntil >= started + 700)).toBe(true);
       expect(maxConcurrent(calls)).toBe(1);
       expect(maxConcurrent(successes)).toBe(1);
-      expect(overlaps(successes[0], successes[1])).toBe(false);
+      for(let index=1;index<successes.length;index++)expect(overlaps(successes[index-1],successes[index])).toBe(false);
       expect(new Set(successes.map(call => call.debug!.keySlot))).toEqual(new Set([1]));
       for (const state of states) {
         expect(state.parallel).toBe(1);

@@ -27,3 +27,9 @@ it('bounds repeated truncation, cancels between children and rejects mixed model
  const mixed=vi.fn().mockRejectedValueOnce(truncated()).mockResolvedValueOnce(result).mockResolvedValueOnce({...result,model:'other'});
  await expect(translateComplete({text:'中'.repeat(1000)},new AbortController().signal,mixed)).rejects.toThrow('Model');
 });
+it('splits recursively beyond depth 3 without artificial limit',async()=>{
+ const text='中'.repeat(6400),send=vi.fn(async(input:any,id?:string)=>{if(input.text.length>500)throw truncated();return {...result,result:`Part ${id}`};});
+ const res=await translateComplete({text,model:result.model},new AbortController().signal,send);
+ expect(res.finishReason).toBe('STOP');
+ expect(send.mock.calls.some(([,id])=>(id?.split('/').length??0)>4)).toBe(true);
+});

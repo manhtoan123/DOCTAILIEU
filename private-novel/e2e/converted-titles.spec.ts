@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
-test('Chinese book and chapter titles convert for display without rewriting metadata',async({page})=>{
+test('Chinese titles stay original in raw Reader and convert locally outside that mode',async({page})=>{
+  await page.route('**/api/cloud/dictionaries',route=>route.fulfill({status:404}));
   await page.goto('/');
   await page.evaluate(async()=>{
     const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);
@@ -9,10 +10,13 @@ test('Chinese book and chapter titles convert for display without rewriting meta
   });
   await expect(page.locator('.book-detail h3 .title-primary')).toHaveText('Sơn môn');
   await expect(page.locator('.book-detail h3 .title-original')).toHaveText('山门');
-  await page.getByRole('button',{name:'Thông tin 山门',exact:true}).click();
+  await page.getByRole('link',{name:'Thông tin 山门',exact:true}).click();
   await expect(page.locator('.story-summary h1')).toHaveText('Sơn môn');
   await expect(page.locator('.story-chapter-list')).toContainText('Lần đầu gặp');
-  await page.getByRole('button',{name:'Đọc từ đầu',exact:true}).click();
+  await page.getByRole('link',{name:'Đọc từ đầu',exact:true}).click();
+  await expect(page.locator('.reader-book-heading')).toContainText('初见');
+  await expect(page.locator('.reader-book-heading h1')).toHaveText('山门');
+  await page.getByRole('button',{name:'Convert',exact:true}).click();
   await expect(page.locator('.reader-book-heading')).toContainText('Lần đầu gặp');
   await expect(page.locator('.reader-book-heading h1')).toHaveText('Sơn môn');
   await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);await db.names.add({id:'title-name',bookId:'title-book',key:'山门',value:'Cổng Mới'});});

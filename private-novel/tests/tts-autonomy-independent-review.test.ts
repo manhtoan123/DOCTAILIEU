@@ -42,7 +42,9 @@ it('bounds active lookahead, preserves chunk text, and Stop cannot start queued 
  await vi.waitFor(()=>expect(pending).toHaveLength(1));pending[0].resolve(response());await vi.waitFor(()=>expect(p.states.at(-1)).toBe('playing'));
  await vi.waitFor(()=>expect(pending).toHaveLength(4));
  expect(p.player.resources().pending).toBe(3);expect(p.player.resources().requests).toBeLessThanOrEqual(12);
- expect(pending.map(p=>p.text)).toEqual(['Sentence0.','Sentence1.','Sentence2.','Sentence3.']);
+ // Parallel cache-key hashes may finish out of order; playback still owns its
+ // source index. The first request stays solo and lookahead preserves exact text.
+ expect(pending[0].text).toBe('Sentence0.');expect(pending.slice(1).map(p=>p.text).sort()).toEqual(['Sentence1.','Sentence2.','Sentence3.']);
  p.player.stop();const count=pending.length;for(const item of pending)item.resolve(response());await new Promise(resolve=>setTimeout(resolve,30));
  expect(pending.every(p=>p.signal.aborted)).toBe(true);expect(pending).toHaveLength(count);expect(p.states.at(-1)).toBe('idle');expect(p.player.resources()).toMatchObject({requests:0,pending:0,activeAudio:false,activeUrl:false});
  expect(p.cache.put).toHaveBeenCalledTimes(1);
@@ -58,6 +60,15 @@ it('expired sessions wait at the same cursor and Stop cancels the next check',as
  expect(p.fetcher).toHaveBeenCalledTimes(1);
  expect(p.states.at(-1)).toBe('loading');expect(p.player.position()).toEqual({offset:6,audioTime:2.5});
  await vi.advanceTimersByTimeAsync(1000);expect(p.fetcher).toHaveBeenCalledTimes(1);p.player.stop();await vi.advanceTimersByTimeAsync(300001);expect(p.fetcher).toHaveBeenCalledTimes(1);expect(p.states.at(-1)).toBe('idle');
+});
+
+it('waiting for a session does not delay the first audio repair after reconnection',async()=>{
+ vi.useFakeTimers();const p=await setup(vi.fn().mockResolvedValueOnce(Response.json({error:'capcut_session_expired'},{status:401})).mockImplementation(async()=>response())),timeout=vi.spyOn(globalThis,'setTimeout');
+ // This case measures retry scheduling, not native WebCrypto completion time.
+ vi.spyOn(await import('../src/features/tts/services/tts-audio-cache'),'ttsAudioCacheKey').mockResolvedValue('0'.repeat(64));
+ p.player.start('First.',p.voice,options,{offset:0,audioTime:2.5});await vi.waitFor(()=>expect(timeout.mock.calls.some(([,delay])=>delay===60000)).toBe(true));
+ await vi.advanceTimersByTimeAsync(60000);await vi.waitFor(()=>expect(p.states.at(-1)).toBe('playing'));expect(p.fetcher).toHaveBeenCalledTimes(2);p.audios[0].onerror!();
+ await vi.advanceTimersByTimeAsync(50);expect(p.fetcher).toHaveBeenCalledTimes(3);expect(p.states.at(-1)).toBe('playing');expect(p.player.position()).toEqual({offset:0,audioTime:2.5});
 });
 
 it('missing/denied IndexedDB is optional and abort during blob preparation cannot publish a cache row',async()=>{

@@ -37,7 +37,7 @@ test('prewarm preserves actual reading and Read next restores that bookmark acro
   transport.online=true;await sync(page);await sync(other);await expect.poll(async()=> (await progress(other))?.chapterId).toBe(ids[0]);expect((await progress(other))?.mode).toBe('ai');expect(other.url()).not.toMatch(/\/(read|r)\//);
   await other.goto(`/book/${book}`,{waitUntil:'domcontentloaded'});await expect(other.locator('.story-progress')).toContainText('Chương 1');
   await other.evaluate(async()=>{const {db}=await import('/src/core/db.ts');await db.settings.put({key:'reader-options',value:{preloadAi:false,autoNext:false}});});
-  await other.getByRole('button',{name:'Đọc tiếp',exact:true}).click();await expect(other).toHaveURL(new RegExp(readerRoutePath({kind:'read',bookId:book,chapterId:ids[0]})+'$'));await expect(other.locator('.prose')).toContainText('Bản dịch 0');
+  await other.getByRole('link',{name:'Đọc tiếp',exact:true}).click();await expect(other).toHaveURL(new RegExp(readerRoutePath({kind:'read',bookId:book,chapterId:ids[0]})+'$'));await expect(other.locator('.prose')).toContainText('Bản dịch 0');
   await other.getByRole('button',{name:'Bản gốc',exact:true}).click();await expect(other.locator('.prose')).toContainText('甲');await expect.poll(async()=> (await progress(other))?.mode??'raw').toBe('raw');await other.goto(`/read/${book}/${ids[0]}`,{waitUntil:'domcontentloaded'});await expect(other.locator('.prose')).toContainText('甲');await other.goto('/',{waitUntil:'domcontentloaded'});expect((await progress(other))?.chapterId).toBe(ids[0]);
  }finally{release();await otherContext.close();}
 });
@@ -59,7 +59,7 @@ test('partial AI rendering cannot clamp a saved position before the complete tra
  await expect.poll(async()=>{const box=await page.locator('[data-paragraph="60"]').boundingBox();return !!box&&box.y>=-5&&box.y<200;}).toBe(true);
  await expect.poll(async()=> (await progress(page))?.paragraph).toBeGreaterThanOrEqual(60);
  await page.locator('[data-paragraph="65"]').evaluate(e=>e.scrollIntoView({block:'start'}));await expect.poll(async()=> (await progress(page))?.paragraph).toBeGreaterThanOrEqual(64);
- const saved=(await progress(page))!;await page.goto(`/book/${book}`);await page.getByRole('button',{name:'Đọc tiếp',exact:true}).click();await expect(page).toHaveURL(new RegExp(readerRoutePath({kind:'read',bookId:book,chapterId:ids[1]})+'$'));
+ const saved=(await progress(page))!;await page.goto(`/book/${book}`);await page.getByRole('link',{name:'Đọc tiếp',exact:true}).click();await expect(page).toHaveURL(new RegExp(readerRoutePath({kind:'read',bookId:book,chapterId:ids[1]})+'$'));
  await expect.poll(async()=>{const box=await page.locator(`[data-paragraph="${saved.paragraph}"]`).boundingBox();return !!box&&box.y>=-5&&box.y<300;}).toBe(true);
 });
 

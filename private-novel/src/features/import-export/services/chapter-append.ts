@@ -4,7 +4,7 @@ import {importFiles,type ImportStatus} from './importer';
 import {ttsHash} from '../../tts/services/tts-cursor';
 import {validateSharedRecord,SHARED_STATE_MAX_ROW_BYTES,type SharedRecord} from '../../sync-cloud/services/shared-state-schema';
 import {APPEND_PREFIX,APPEND_PACKET_PREFIX,type AppendManifest,type AppendPacket} from './chapter-append-schema';
-export interface AppendPreview {book:Book;before:Chapter[];stageId:string;staged:Chapter[];source:SourceFile;start:number;match?:'exact'|'title'|'manual';blockedIds?:string[]}
+export interface AppendPreview {book:Book;before:Chapter[];stageId:string;staged:Chapter[];source:SourceFile;start:number;match?:'exact'|'title'|'manual';blockedIds?:string[];inferredHeadings?:number}
 export interface PreparedAppend {kind:'append';recordJson:string;anchor:Chapter;anchorEdit?:{key:string;value:unknown};before:Chapter[];packets:SharedRecord[];chapters:Chapter[];source?:SourceFile}
 const check=(signal?:AbortSignal)=>{if(signal?.aborted)throw new DOMException('Đã hủy cập nhật.','AbortError');};
 const normalize=(s:string)=>s.replace(/\r\n?/g,'\n').trim();
@@ -68,7 +68,7 @@ export async function prepareTxtAppend(bookId:string,file:File,encoding:string,m
  try{
   const staged=await importFiles([file],book.title,encoding,pattern,true,onProgress,signal,{dedupe:'none',maxChars});stageId=staged.id;check(signal);
   const fresh=await readyChapters(stageId),sources=await db.sources.where('bookId').equals(stageId).toArray();if(sources.length!==1||sources[0].blob.size!==file.size)throw Error('Nguồn cập nhật chưa đầy đủ.');
-  const match=mode==='new-only'?{start:await findNewOnlyStart(before,fresh,signal),match:'exact' as const}:await resolveAppendMatch(before,fresh,signal);check(signal);return {book,before,stageId,staged:fresh,source:sources[0],...match};
+  const match=mode==='new-only'?{start:await findNewOnlyStart(before,fresh,signal),match:'exact' as const}:await resolveAppendMatch(before,fresh,signal);check(signal);return {book,before,stageId,staged:fresh,source:sources[0],...match,...(staged.inferredHeadings?{inferredHeadings:staged.inferredHeadings}:{})};
  }catch(error){if(stageId)await discardAppendPreview({stageId});throw error;}
 }
 export async function makeAppendRecords(bookId:string,before:Chapter[],chapters:Chapter[],source:SourceFile,baseSha256:string,signal?:AbortSignal){

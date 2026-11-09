@@ -8,15 +8,20 @@ export const AI_MODELS = [
   { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
   { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
   { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-  { id: 'gemma-4-26b-a4b-it', label: 'Gemma 4 26B A4B' },
   { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
+  { id: 'gemma-4-26b-a4b-it', label: 'Gemma 4 26B A4B' },
   { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (Preview)' },
   { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
   { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (Preview)' },
   { id: 'gemma-4-31b-it', label: 'Gemma 4 31B' },
+  { id: 'qwen/qwen3.8-27b', label: 'Qwen 3.8 27B (Groq)' },
 ] as const;
 
 export type AiModelId = typeof AI_MODELS[number]['id'];
+export const isGroqModel=(model:string)=>model==='qwen/qwen3.8-27b';
+export const isGemmaModel=(model:string)=>model==='gemma-4-26b-a4b-it'||model==='gemma-4-31b-it';
+export const disablesAiThinking=(model:string)=>isGroqModel(model)||isGemmaModel(model);
 export const DEFAULT_AI_MODEL: AiModelId = 'gemini-3.5-flash';
 /** Google troubleshooting, checked 15/10/2026: Gemini 3.6+ ignores sampling controls. */
 export const supportsAiTemperature=(model:string)=>!/^gemini-(?:3\.(?:[6-9]|\d{2,})|[4-9])(?:[.-]|$)/.test(model);
@@ -25,7 +30,7 @@ export const supportsAiTemperature=(model:string)=>!/^gemini-(?:3\.(?:[6-9]|\d{2
  * Removed from the picker 10/10/2026 but still present in saved prompt rows and caches.
  * Reading maps them to the current default instead of failing the whole prompt stock.
  */
-export const LEGACY_AI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.6-flash'] as const;
+export const LEGACY_AI_MODELS = ['gemini-3.6-flash'] as const;
 
 export function isAiModelId(value: unknown): value is AiModelId {
   return typeof value === 'string' && AI_MODELS.some(model => model.id === value);

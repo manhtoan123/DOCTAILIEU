@@ -32,7 +32,7 @@ test('AI popup saves one book Name without translating again; next chapter uses 
  await expect.poll(()=>page.evaluate(async()=>{const {db}=await import('/src/core/db.ts');return(await db.names.where('bookId').equals('name-ai').toArray()).map(n=>[n.key,n.value]);})).toEqual([['林儿','Tiểu Lâm']]);
  await expect.poll(()=>page.locator('.prose [data-paragraph="0"]').evaluate(el=>{const copy=el.cloneNode(true) as HTMLElement;copy.querySelectorAll('button').forEach(b=>b.remove());return copy.textContent?.trim();})).toBe(before?.trim());expect(calls).toHaveLength(1);expect(await page.evaluate(()=>(window as any).__nameStops)).toBe(0);
  await chooser.locator('button[data-source="林儿"]').click();await expect(popup).toBeVisible();await page.keyboard.press('Escape');await expect(popup).toHaveCount(0);await expect(chooser).toBeVisible();await page.keyboard.press('Escape');await expect(chooser).toHaveCount(0);
- await page.getByRole('button',{name:'Chương sau →',exact:true}).first().click();await expect.poll(()=>calls.length).toBe(2);expect(calls[1].names['林儿']).toBe('Tiểu Lâm');
+ await page.getByRole('link',{name:'Chương sau →',exact:true}).first().click();await expect.poll(()=>calls.length).toBe(2);expect(calls[1].names['林儿']).toBe('Tiểu Lâm');
 });
 test('live Name changes preserve current and prewarmed AI requests',async({page})=>{
  await seed(page,true);const calls:any[]=[];
@@ -40,7 +40,7 @@ test('live Name changes preserve current and prewarmed AI requests',async({page}
  await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect.poll(()=>calls.length).toBe(2);
  await page.evaluate(async()=>{const {db}=await import('/src/core/db.ts');await db.names.put({id:'live-name',bookId:'name-ai',key:'林儿',value:'Tiểu Lâm'});});
  await expect(page.locator('.prose')).toContainText('Lâm Nhi mở cánh cửa.');
- await page.getByRole('button',{name:'Chương sau →',exact:true}).first().click();await expect.poll(()=>calls.length).toBe(3);
+ await page.getByRole('link',{name:'Chương sau →',exact:true}).first().click();await expect.poll(()=>calls.length).toBe(3);
  expect(calls[2].names['林儿']).toBe('Tiểu Lâm');
 });
 

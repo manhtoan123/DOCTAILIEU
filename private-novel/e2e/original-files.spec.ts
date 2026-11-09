@@ -29,7 +29,7 @@ async function setup(page:Page,mode:Mode,dataHandler?:(route:Route)=>Promise<voi
   const events={created:0,revoked:0};Reflect.set(window,'originalFileEvents',events);const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL);
   URL.createObjectURL=blob=>{events.created++;return create(blob);};URL.revokeObjectURL=url=>{events.revoked++;revoke(url);};
  },{book,source,chapter,descriptor,bytes:[...bytes],mode});
- await page.getByRole('button',{name:'Thông tin Original fixture',exact:true}).click();await expect(page.getByRole('heading',{name:'Original fixture',exact:true})).toBeVisible();
+ await page.getByRole('link',{name:'Thông tin Original fixture',exact:true}).click();await expect(page.getByRole('heading',{name:'Original fixture',exact:true})).toBeVisible();
  return {metadata:()=>metadata,data:()=>data};
 }
 async function snapshot(page:Page){return page.evaluate(async({book,source,chapter})=>{const {db}=await import('/src/core/db.ts');const original=await db.sources.get(source);return {book:await db.books.get(book),chapter:await db.chapters.get(chapter),name:await db.names.get('original-name'),prompt:(await db.settings.get('ai-book-settings:'+book))?.value,source:original?{id:original.id,sha256:original.sha256,bytes:original.bytes,dataStatus:original.dataStatus,actual:[...new Uint8Array(await original.blob.arrayBuffer())]}:null};},{book,source,chapter});}
@@ -40,17 +40,17 @@ test('collapsed file metadata stays lazy and local UTF16 bytes download unchange
  const calls=await setup(page,'local');const before=await snapshot(page);expect(calls.metadata()).toBe(0);expect(calls.data()).toBe(0);
  await open(page);expect(calls.data()).toBe(0);await download(page);expect(calls.data()).toBe(0);expect(await snapshot(page)).toEqual(before);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
- await page.getByRole('button',{name:'← Tủ sách',exact:true}).click();expect(await page.evaluate(()=>Reflect.get(window,'originalFileEvents'))).toEqual({created:1,revoked:1});
+ await page.getByRole('link',{name:'← Tủ sách',exact:true}).click();expect(await page.evaluate(()=>Reflect.get(window,'originalFileEvents'))).toEqual({created:1,revoked:1});
 });
 for(const mode of ['missing','none'] as const)test(`verified cloud download for ${mode} local source does not persist bytes or mutate reader data`,async({page})=>{
  const calls=await setup(page,mode);const before=await snapshot(page);expect(calls.data()).toBe(0);await open(page);expect(calls.data()).toBe(0);await download(page);expect(calls.data()).toBe(1);expect(await snapshot(page)).toEqual(before);
- await page.getByRole('button',{name:'Đọc từ đầu',exact:true}).click();await expect(page.locator('.prose')).toContainText('Nội dung giữ nguyên.');
+ await page.getByRole('link',{name:'Đọc từ đầu',exact:true}).click();await expect(page.locator('.prose')).toContainText('Nội dung giữ nguyên.');
 });
 test('corrupt cloud original fails in its panel without downloading or changing source rows',async({page})=>{
  await setup(page,'missing',route=>route.fulfill({body:Buffer.alloc(bytes.length),headers:{'Content-Type':'application/octet-stream','Content-Length':String(bytes.length),'X-Content-SHA256':sha}}));const before=await snapshot(page);await open(page);await page.getByRole('button',{name:`Tải ${name}`,exact:true}).click();await expect(page.getByRole('alert')).toContainText('Không tải được file gốc');expect(await page.evaluate(()=>Reflect.get(window,'originalFileEvents').created)).toBe(0);expect(await snapshot(page)).toEqual(before);
 });
 test('leaving story detail during a held cloud request discards the late download',async({page})=>{
  let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve;});await setup(page,'none',async route=>{await held;await route.fulfill({body:bytes,headers:{'Content-Type':'application/octet-stream','Content-Length':String(bytes.length),'X-Content-SHA256':sha}});});await open(page);
- const requested=page.waitForRequest(request=>request.url().endsWith('/data'));await page.getByRole('button',{name:`Tải ${name}`,exact:true}).click();await requested;await expect(page.getByRole('button',{name:'Đang tải…',exact:true})).toBeDisabled();await page.getByRole('button',{name:'← Tủ sách',exact:true}).click();
+ const requested=page.waitForRequest(request=>request.url().endsWith('/data'));await page.getByRole('button',{name:`Tải ${name}`,exact:true}).click();await requested;await expect(page.getByRole('button',{name:'Đang tải…',exact:true})).toBeDisabled();await page.getByRole('link',{name:'← Tủ sách',exact:true}).click();
  const unexpected=page.waitForEvent('download',{timeout:1000}).then(()=>true,()=>false);release();expect(await unexpected).toBe(false);expect(await page.evaluate(()=>Reflect.get(window,'originalFileEvents').created)).toBe(0);expect((await snapshot(page)).source).toBeNull();
 });

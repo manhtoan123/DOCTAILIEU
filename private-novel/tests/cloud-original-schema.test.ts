@@ -10,7 +10,7 @@ describe('candidate immutable original descriptor',()=>{
     expect(parseOriginalDescriptor(descriptor)).toEqual(descriptor);expect(parseOriginalDescriptorJson(JSON.stringify(descriptor))).toEqual(descriptor);
     const decomposed={...descriptor,name:'e\u0301 100% complete.txt',relativePath:'root/e\u0301 100% complete.txt'};expect(parseOriginalDescriptor(decomposed)).toEqual(decomposed);
     expect(parseOriginalDescriptor({...descriptor,relativePath:descriptor.name})).toMatchObject({relativePath:descriptor.name});
-    for(const encoding of ORIGINAL_ENCODINGS)expect(parseOriginalDescriptor({...descriptor,encoding,...(encoding==='epub'?{name:'truyện😀.epub',relativePath:'Kho chữ Hán/Root/A/truyện😀.epub'}:{})}).encoding).toBe(encoding);
+    for(const encoding of ORIGINAL_ENCODINGS)expect(parseOriginalDescriptor({...descriptor,encoding,...(['epub','pdf','docx'].includes(encoding)?{name:`truyện😀.${encoding}`,relativePath:`Kho chữ Hán/Root/A/truyện😀.${encoding}`}:{})}).encoding).toBe(encoding);
   });
   it.each([null,undefined,[],1,'text',{},new Date(),{...descriptor,version:2},{...descriptor,version:'1'},{...descriptor,extra:'future'},{...descriptor,sourceId:undefined}])('rejects unsupported shape/version %j',value=>{expect(()=>parseOriginalDescriptor(value)).toThrow('invalid_original_descriptor');});
   it.each([0,-1,1.5,NaN,Infinity,MAX_ORIGINAL_BYTES+1,Number.MAX_SAFE_INTEGER+1,'1'])('rejects invalid declared byte count %j',bytes=>{expect(()=>parseOriginalDescriptor({...descriptor,bytes})).toThrow();});

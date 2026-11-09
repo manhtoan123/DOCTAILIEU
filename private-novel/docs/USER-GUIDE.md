@@ -2,11 +2,33 @@
 
 Chạy trong thư mục `private-novel/`: `npm.cmd run dev`, mở `http://127.0.0.1:5173/`. Đây là development trên máy hiện tại; chưa phải web private đã triển khai.
 
+## Nhật ký dịch AI
+
+Vào **Cài đặt → Nhật ký** (`/settings/ai-log`). Số liệu dùng chung thư phòng trên điện thoại/PC, bắt đầu từ bản 28/10/2026; không hồi dựng lịch sử RAM cũ. Lọc 24 giờ/7 ngày/30 ngày và model để xem thành công, lỗi, cả hai tỉ lệ, nguyên nhân, giờ bắt đầu theo giờ Việt Nam và thời gian trung bình/median/P90. N luôn là số mẫu thực; cache và Dừng không làm giảm tỉ lệ model.
+
+Bảng request đo qua kiểm tra tự động ở server, không chấm nghĩa/văn phong. Các lần đổi key lỗi rồi thành công vẫn hiện nguyên nhân upstream riêng. Hoàn thành chương là báo cáo từ app sau lắp ghép, tính thời gian thực từ lúc bắt đầu; không đoán model của chương khi chưa có thông tin chắc chắn. Bảng request gồm cả thử prompt; thử prompt không được đếm là chương đọc. Tối đa 5.000 sự kiện/30 ngày; dữ liệu có thể thiếu nếu đóng trang, lỗi mạng/lưu trữ hoặc hàng đợi 100 bản ghi bị đầy. Không lưu nguồn/bản dịch/prompt/Name/key. Chi tiết và kiểm chứng: [AI-LOG-M0.md](AI-LOG-M0.md).
 ## Thêm và đọc truyện
+
+**Dịch AI không đếm ngược thử lại (28/10/2026):** trang đọc TXT/EPUB, dịch sẵn, thử prompt đơn và so sánh A/B dùng chính sách thử ngay. Bỏ backoff tự đặt 600 ms/2,5 giây, thời gian nghỉ model 15 giây, chờ chung vì quota, chờ giữa phần và lịch tự chạy lại sau 2–60 giây. Khi lỗi mạng/408/5xx hoặc quota, server thử key khả dụng khác theo thứ tự, mỗi key tối đa một lần trong một request; retry toàn chương mang số slot vừa dùng để ưu tiên key khác cả khi Worker đổi instance. Slot chỉ là số thứ tự, không chứa key. Giữ tối đa hai lượt dịch đồng thời, deadline HTTP, số lượt thử, pin model và các phần đã hoàn tất.
+
+Nếu provider có `Retry-After` hợp lệ, key đó được loại khỏi lựa chọn cho tới khi khả dụng; tác vụ thử key/model khác ngay, không ngủ chờ key ấy. Không tự đặt cooldown 60 giây khi 429 thiếu chỉ dẫn. Nếu đã thử hết lựa chọn trong giới hạn, web giữ tiến độ và nút thử lại, không tự lên lịch hoặc lặp vô hạn. Thông báo hết lượt không hứa tự phục hồi. Tab cũ cần tải lại để dùng chính sách mới; giao thức cũ còn tương thích. Tham khảo ý tưởng thử peer còn lại, loại peer đã thử và giữ giới hạn lượt từ [LiteLLM Weighted Failover](https://github.com/BerriAI/litellm-docs/blob/main/docs/routing.md#weighted-failover); không cài thêm thư viện/provider.
+
+Kiểm chứng bản 28/10: 199 file / 2.466 unit test đạt; build đạt; native Worker kiểm chuyển 503/Retry-After sang key khác và streaming bằng upstream giả lập. E2E đúng luồng đạt 26/26 ở preview và 26/26 trên web deploy (Edge desktop + Android mô phỏng, API/IDB tổng hợp cô lập cloud). Đồng hồ đứng yên vẫn thử ngay; tiến 15 phút sau khi hết lựa chọn không phát sinh request; Stop không gửi lượt tiếp. Astra High review độc lập diff cuối không còn finding. Deploy Pages `c42c1181` / JS `index-DsmG-1oB.js`, AI Worker `0a211620-270f-4baf-9501-50017dfba21c` 100%. Chưa đo tốc độ/quota của Google thật hoặc Android thật; chỉ loại thời gian chờ do app tự đặt, thời gian tạo nội dung và chờ request đang chạy vẫn có. Log chi tiết tại `.dsh-tmp/ai-foreground/immediate-*.log`.
+
+**Ưu tiên model (28/10/2026):** “Chương này” dùng chuỗi Gemini 3.8 Flash → 3.7 Flash → 3.5 Flash → **2.5 Flash → 3.5 Flash-Lite** → Gemma 4 26B A4B → Gemini 3 Flash Preview. “Chương sau” khi còn dịch sẵn bỏ qua **3.5 Flash-Lite**. Menu model đặt Lite sau 2.5. Các lựa chọn model/prompt thủ công vẫn được giữ; thứ tự này theo yêu cầu người dùng, không phải kết luận so sánh chất lượng.
+
+Nếu mở chương đang prewarm dở, web giữ nguyên request/tác vụ đang chạy. Request thành công được dùng luôn; chỉ sau khi thất bại mới chọn model tiếp theo theo chính sách “Chương này”, có Lite sau 2.5. Nếu prewarm đã bỏ qua Lite và đang chạy Gemma, web vẫn đợi Gemma; chỉ xét Lite khi Gemma thất bại. Không bỏ kết quả hoặc trộn model khi đã có phần hoàn tất được ghim. Mã `gemini-3.5-flash-lite` được gọi đúng endpoint Lite, không còn ánh xạ thành 3.5 Flash; mã cũ 3.6 vẫn có cơ chế tương thích. Nguồn ý tưởng về giữ cấu hình fallback qua các lượt thử: [LiteLLM fallback controls](https://github.com/BerriAI/litellm/blob/main/litellm/router_utils/fallback_event_handlers.py). Ở đây dùng vai trò runtime dùng chung, không đưa vai trò vào định danh cache và không cài thêm thư viện/hạ tầng.
+
+**Dịch AI cho TXT:** chương có nội dung gốc dưới **3.000 ký tự** được dịch nguyên chương, kể cả khi bật chia phần song song. Khi model gặp timeout hoặc lỗi mạng tạm thời và còn model dự phòng, web chuyển sớm sang model tiếp theo; model cuối hoặc chỉ có một model vẫn được thử lại tối đa hai lần. Bản dịch bị cắt hoặc còn chữ nguồn được thử lại nguyên chương tối đa hai lần, trong giới hạn lượt/thời gian hiện có. Các lần thử diễn ra ngay, ưu tiên key khác còn khả dụng; giữ giới hạn lượt và thời gian thực hiện. Nút **Dừng** hủy lượt đang chạy và các lượt còn xếp hàng. Từ đúng 3.000 ký tự trở lên, cơ chế chia tiếp tục áp dụng theo lựa chọn và ngân sách đầu ra; khi chia hoặc phục hồi sau lỗi (bị cắt, timeout), hệ thống không giới hạn số lần chia chương cố định mà tiếp tục phân chia đệ quy đến khi hoàn thành hoặc đạt ngưỡng tối thiểu an toàn của đoạn văn. Cách đếm gồm khoảng trắng/xuống dòng, dùng UTF-16 như bộ đếm hiện có. Bản dịch hoàn chỉnh đã lưu được giữ; quy tắc áp dụng khi cần dịch mới. EPUB giữ luồng dịch theo cấu trúc riêng.
+
+Khi mở chương đang được dịch sẵn, web dùng tiếp tác vụ đó và ưu tiên các yêu cầu đang chờ của chương vừa mở. Bảng **Chương này** cập nhật model đang chạy, kể cả khi chuyển model dự phòng; không cần dịch lại từ đầu. Request đang chạy được giữ; key đang bận hoặc bị giới hạn được bỏ qua khi chọn key tiếp theo.
+
+**Đọc sớm khi đang dịch:** với TXT dưới 3.000 ký tự, các đoạn AI đã trả đủ xuống dòng có thể hiện trước với nhãn **Bản xem trước**. Vẫn chỉ gửi một request nguyên chương. Bản tạm chưa được lưu vào cache hoàn chỉnh hoặc dùng để nghe; nếu lượt dịch lỗi, đổi model, hết thời gian hay bị Dừng, bản tạm được xóa. Chỉ bản kết thúc hợp lệ mới được lưu và nghe. EPUB và chương dài tiếp tục dùng các phần hoàn tất như trước. Streaming giúp có nội dung để đọc sớm hơn; không đảm bảo tổng thời gian tạo bản dịch giảm.
 
 **Nhập folder:** Thêm truyện TXT → Nhập folder: mỗi file một chương. Chọn folder, kiểm tra truyện/chương và danh sách file không phải TXT, bấm Chuẩn bị nhập folder rồi Xác nhận các folder vào thư viện. Mỗi folder có TXT trực tiếp là một truyện, folder con có TXT thành truyện riêng; 2.txt đứng trước10.txt. Không tách lại heading trong file. Hủy bản nhập xóa phần staging. Trần hiện tại2MiB/file,128.000 ký tự/chương,32MiB/folder; quá lớn/chương rỗng/encoding sai báo lỗi thay vì bỏ/chia. Trình chọn folder trên Android thật chưa xác minh; EPUB chưa hỗ trợ.
 
-1. **Thêm truyện TXT**: chọn một file hoặc dán nội dung; chọn encoding/Regex nếu cần.
+1. **Thêm truyện** → **Chọn file** để nhập TXT, EPUB, PDF hoặc DOCX. Có thể kéo thả, chọn nhiều file hoặc chọn **Nhập folder truyện**.
+   Muốn dán văn bản, mở **Dán nội dung truyện**. Encoding, giới hạn chương và Regex nằm trong **Cách đọc TXT**. Bản đếm chương nằm ngoài phần thu gọn; thanh nhập/hủy vẫn thấy khi cuộn.
 2. **Tách chương & xem trước**: kiểm tra các phần. Heading trong TXT tạo mục lục; nội dung chưa vào thư viện cho đến khi xác nhận.
 3. **Xác nhận vào thư viện**: mở Reader. Mỗi file là một truyện; nguồn gốc ở ổ D: không bị chỉnh sửa.
 4. **Chương trước / Mục lục / Chương sau**: ở hai đầu trang. Trong mục lục có ô tìm tên và phân trang.
@@ -15,12 +37,16 @@ Chạy trong thư mục `private-novel/`: `npm.cmd run dev`, mở `http://127.0.
 Trong Tủ sách, bấm **bìa hoặc tên truyện** để xem thông tin và danh sách chương.
 Phân cấp: **Tác giả (Album) → Series (Album con) → Truyện → Chương**. Tủ sách chỉ hiện Album tầng ngoài; mở tác giả mới thấy Album con/Series. Đường dẫn folder cũ tự hiển thị theo cây, kể cả khi folder cha không có truyện trực tiếp; không cần nhập lại. Nút **← Album cha** và đường dẫn Album dùng để quay về tầng trước. Truyện nằm trực tiếp trong Album tác giả hiện ở nhóm **Truyện ngoài Series**. **Tạo Album con / Series** tạo nhánh trong Album đang mở; thêm truyện tại nhánh nào thì truyện vào đúng nhánh đó.
 Tên Album và truyện ưu tiên tên Việt; tên Trung gốc nằm nhỏ, mờ bên dưới khi hai tên khác nhau. Album dùng bộ từ điển Convert đã lưu trên thiết bị.
-Chọn **Lưới / Danh sách** để đổi cách xem; lựa chọn được nhớ trên trình duyệt này.
+Chọn **Lưới / Danh sách / Thu gọn** để đổi cách xem; lựa chọn được nhớ trên trình duyệt này. Lưới dùng thẻ bìa riêng, giữ tên dài đầy đủ và đặt nút mở/tùy chọn ở đáy thẻ. Danh sách dùng bìa nhỏ; Thu gọn chỉ hiện tên và số chương. Tìm kiếm và phạm vi Album giữ nguyên khi đổi chế độ.
 Ô tìm kiếm nhận tên truyện, tác giả và tên chương Việt / Trung, có thể nhập tiếng Việt không dấu. Trong Album, kết quả thuộc Album đó và các Album con, không lẫn nhánh tác giả khác. Bấm **Chương: …** trong kết quả để mở thẳng chương khớp đầu tiên. Tên chương của truyện chỉ có trên kho chung tìm được sau khi mở truyện để tải mục lục về máy.
+Album/Series, tên và bìa truyện, Mở sách, kết quả tìm chương, danh sách chương, mục lục và Chương trước/Chương sau dùng liên kết thật. Chuột phải chọn **Mở liên kết trong tab mới**, hoặc Ctrl+click/chuột giữa; điện thoại có thể nhấn giữ. Bấm trái vẫn chuyển trong ứng dụng. URL Album giữ cả nhánh con để mở tab mới, tải lại và quay lại đúng vị trí.
+
 **Đọc tiếp** mở vị trí đã lưu; **Đọc từ đầu** hoặc bấm một chương mở từ đầu chương đó.
 Reader **← Thông tin truyện** quay lại trang truyện; **← Tủ sách** giữ từ khóa tìm truyện trong phiên.
-**Mở sách →** ở Tủ sách vẫn đọc tiếp trực tiếp. Trang truyện có tìm tên/số chương và 60 mục mỗi trang;
-chương đang đọc được đánh dấu. Xem thông tin không thay đổi TXT hay tiến độ.
+**Mở sách →** ở Tủ sách vẫn đọc tiếp trực tiếp. Trang truyện có tìm tên/số chương và 60 mục mỗi trang.
+**Đến cuối** mở ngay trang cuối của danh sách chương đang xem, kể cả kết quả tìm kiếm; nút tự khóa khi đã ở trang cuối. Thao tác không đổi tiến độ đọc.
+**Đến chương đang đọc** bỏ bộ lọc tìm chương, mở đúng trang và đưa tiêu điểm đến chương đã lưu, kể cả khi có chương bị ẩn. Nút chỉ định vị trong danh sách, không mở Reader hay đổi tiến độ. Trong chế độ quản lý, các chương đang chọn được giữ; nút tạm khóa ở mục Đã xóa hoặc khi đang sửa/xác nhận xóa.
+Chương đang đọc được đánh dấu. Xem thông tin không thay đổi TXT hay tiến độ.
 
 ## Bật, ẩn và nhớ cài đặt
 
@@ -32,11 +58,15 @@ chương đang đọc được đánh dấu. Xem thông tin không thay đổi T
 | Nghe sách | Mở bảng giọng/tốc độ/câu | Ẩn bảng; **âm thanh vẫn tiếp tục** | Nút ■ hoặc ■ nổi mới dừng |
 | Chạm từ Convert | Luôn bật trong bản Convert mặc định | Chuyển sang **Xem bản gốc** trong Công cụ | Sửa tạm theo phiên; nút đĩa lưu cố định |
 
-Mặc định có nền Sepia/Sáng/Tối/Xám. Bảng màu và color picker cho đổi nền/chữ riêng; chọn một theme xóa màu tùy chọn để theme có hiệu lực. Font dùng font hệ thống có sẵn; không tải font từ nguồn tham khảo.
+Trong **Cài đặt → Giao diện → Màu giao diện**, chọn **Trắng**, **Giấy** hoặc **Tối**. Màu áp dụng cho tủ sách, trang thông tin truyện, cài đặt, hộp thoại và trang đọc; tự lưu sau khi chọn và giữ khi tải lại. Trang đọc cũng có ba lựa chọn này trong mục **Nền**. Thiết bị chưa có lựa chọn dùng màu Giấy; lựa chọn đã lưu được giữ.
+
+Bảng màu và color picker trong phần hiển thị nâng cao vẫn cho đổi nền/chữ riêng của trang đọc; chọn một màu giao diện xóa hai màu tùy chọn này để bộ màu có hiệu lực. Ảnh nền tủ truyện, font và giọng đọc được giữ. Font dùng font hệ thống có sẵn; không tải font từ nguồn tham khảo.
 
 ## Convert và Name
 
 **Từ điển chỉ cần lưu một lần:** chọn Vietphrase/Names/Hán-Việt rồi bấm **Lưu ... file vào trình duyệt**. Tải lại trang tự mở bộ đã lưu; thông báo “Đang mở từ điển đã lưu” là đọc lại vào RAM, không cần chọn file lại. Sau khi lưu, app xin quyền lưu trữ bền vững nếu trình duyệt hỗ trợ; bị từ chối vẫn dùng IndexedDB bình thường. Đổi origin/thiết bị/profile hoặc xóa dữ liệu web không chuyển bộ cũ sang nơi mới; hãy giữ file nguồn để nhập lại khi cần.
+
+Trong bản Convert, vùng đang chọn sáng lên khi bấm mũi tên của bảng tra từ. Nhấp đúp từ để lấy dòng đang hiển thị, nhấp ba lần để lấy đoạn. Khi dòng hoặc đoạn không có ánh xạ nguồn liên tục, trình đọc giữ vùng từ đã xác định. Kiểm tra trên Edge 893 px và 393 px với văn bản tổng hợp. Dùng hình học của các ô chữ qua [Element.getClientRects](https://developer.mozilla.org/en-US/docs/Web/API/Element/getClientRects), giữ nguyên cơ chế tra từ và lưu Name. Đã triển khai ngày 09/11/2026.
 
 Nạp các từ điển TXT của bạn trong tab **Từ điển**. Reader mở bằng bản Convert và xử lý trong Worker trên máy. Chạm một từ để mở bảng nhỏ hv/HV/zw/Tr/tc ngay cạnh từ; dùng **Mở rộng** nếu cần cụm dài hơn. Dấu ✓ chỉ thay đúng lần xuất hiện đang chọn trong phiên. Nút đĩa lưu Name cố định cho truyện và áp dụng lại mọi lần xuất hiện phù hợp. Muốn kiểm tra chữ Trung thô, chọn **Công cụ → Xem bản gốc**.
 
@@ -108,9 +138,9 @@ Nguồn cũ cần một lượt xác minh để tạo dấu phiên bản mới. 
 
 ## 19/10/2026 — Phòng tối
 
-Các Album nằm trong **Phòng tối**. Cuộn đến cuối nội dung rồi nhấn dòng giới thiệu nhỏ “THU PHONG là trang web cung cấp dịch vụ dịch tự động truyện chữ Trung.” để vào. Bấm Tủ sách để về Thư phòng. Đường dẫn `/phong-toi` mở lại được sau reload. Truyện chưa gán Album vẫn ở Thư phòng, không còn tiêu đề nhóm “Truyện chưa vào Album”.
+Các Album nằm trong **Phòng tối**. Cuộn đến cuối Tủ sách rồi chọn **Phòng tối** để vào. Bấm **Tủ sách** để quay về. Đường dẫn `/phong-toi` mở lại được sau khi tải lại trang. Truyện chưa gán Album vẫn ở Tủ sách.
 
-Giữ tác giả (Album) → series (Album con) → truyện → chương. Không có nút × xóa trên thẻ Album; nút đỏ **Xóa Album và truyện** nằm bên trong Album có thể xóa theo quy tắc hiện hành. Tìm truyện/chương trong Phòng tối tìm cả các nhánh Album. Việc tách phòng chỉ đổi giao diện, không di chuyển hay nhập lại dữ liệu.
+Thứ tự là tác giả (Album) → series (Album con) → truyện → chương. Chọn tên Album để mở, hoặc dùng đường dẫn phía trên tên để trở về Album cha. Ở Phòng tối, ô tìm lọc Album và truyện; khi mở một Album, ô tìm còn dò tên chương đã tải. Để sửa tên hoặc xóa, chọn **Quản lý** rồi chọn mục cần thao tác.
 
 ## Nhập một TXT tuyển tập thành nhiều truyện
 

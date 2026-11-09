@@ -1,3 +1,5 @@
 .ai-name-words{max-height:55dvh;overflow:auto;white-space:pre-wrap;line-height:1.8;font-size:20px;padding:4px;overscroll-behavior:contain}
 .reader .ai-name-words>button{display:inline;min-height:0;border:0;border-radius:2px;padding:0;margin:0;background:transparent;color:inherit;font:inherit;line-height:inherit;white-space:pre-wrap}
 .reader .ai-name-words>button:hover,.reader .ai-name-words>button:focus-visible{background:#ffec9b;color:#222}
+
+.ai-name-words .word-selected{background:#e9bc4d88;box-shadow:inset 0 -2px #a56e00}

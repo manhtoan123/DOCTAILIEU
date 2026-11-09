@@ -4,7 +4,7 @@ import {db} from '../src/core/db';
 import {hasChinese,displayTitle,displaySourceName,sanitizeDownloadFilename,sanitizeSourceFilename} from '../src/features/library/services/title-resolver';
 
 vi.mock('../src/features/names-convert/services/language-client', () => ({
-  convert: vi.fn(async (text: string) => {
+  convertLocal: vi.fn(async (text: string) => {
     const map: Record<string, string> = {
       '山门': 'Sơn môn',
       '第一章 序言': 'Chương 1 lời mở đầu',
@@ -26,7 +26,7 @@ vi.mock('../src/features/names-convert/services/language-client', () => ({
 }));
 
 import {convertBatchTitles,convertSingleTitle,prepareBookTitles} from '../src/features/names-convert/services/title-converter';
-import {convert} from '../src/features/names-convert/services/language-client';
+import {convertLocal as convert} from '../src/features/names-convert/services/language-client';
 import type {Token} from '../src/features/names-convert/services/language';
 import {validateCloudSnapshot} from '../src/features/sync-cloud/services/cloud-snapshot';
 import {validateSharedRecord} from '../src/features/sync-cloud/services/shared-state-schema';

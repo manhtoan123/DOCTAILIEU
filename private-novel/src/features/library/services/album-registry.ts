@@ -4,6 +4,7 @@ import {normalizeAlbum} from './albums';
 import type {Book} from '../../../core/domain';
 import {ALBUM_NAMES_PREFIX,albumNameKey,albumNameSetting,nameAlbumRoot,parseAlbumNameKey} from '../../names-convert/services/album-name-schema';
 import {validateSharedRecord} from '../../sync-cloud/services/shared-state-schema';
+import {validateAlbumNameCapacity} from '../../names-convert/services/scoped-names';
 
 export const ALBUM_REGISTRY_KEY='album-registry-v1';
 export interface AlbumEntry {id:string;name:string;updatedAt:number}
@@ -43,8 +44,9 @@ async function readState():Promise<State>{
 function transaction<T>(operation:(state:State)=>Promise<T>):Promise<T>{
   // Native readwrite transactions serialize across both connections and tabs.
   // All awaits below are IndexedDB operations; no external work inside the transaction.
-  return db.transaction('rw',[db.settings,db.books],async()=>operation(await readState()));
+  return db.transaction('rw',[db.settings,db.books,db.names],async()=>operation(await readState()));
 }
+const validateMovedNames=(...albums:(string|undefined)[])=>validateAlbumNameCapacity(albums.map(nameAlbumRoot).filter((root):root is string=>!!root));
 function find(registry:AlbumRegistry,id:string):AlbumEntry{
   const album=registry.albums.find(a=>a.id===id);if(!album)throw new Error('Album đã bị xóa hoặc không tồn tại.');return album;
 }
@@ -75,23 +77,35 @@ export async function renameAlbum(id:string,value:string):Promise<AlbumEntry>{
       if(records.some(r=>parseAlbumNameKey(r.key)[0]===albumName))throw Error('Album đích đã có kho Name; dữ liệu được giữ nguyên.');
       for(const r of records){const [root,key]=parseAlbumNameKey(r.key);if(root!==old.name)continue;const next=validateSharedRecord({...r,key:albumNameKey(albumName,key)});await db.settings.put({key:albumNameSetting(next.key),value:next});await db.settings.put({key:albumNameSetting(r.key),value:{...r,value:null}});}
       for(const book of books)if(book.album&&inside(book.album))await db.books.update(book.id,{album:book.album===old.name?albumName:albumName+book.album.slice(old.name.length)});
-      const byId=new Map(renamed.map(a=>[a.id,a]));registry.albums=registry.albums.map(a=>byId.get(a.id)??a);await store(registry);return byId.get(id)!;
+      const byId=new Map(renamed.map(a=>[a.id,a]));registry.albums=registry.albums.map(a=>byId.get(a.id)??a);await validateMovedNames(old.name,albumName);await store(registry);return byId.get(id)!;
     }
-    const updated={...old,name:albumName,updatedAt:Date.now()};
-    for(const book of books)if(book.album===old.name)await db.books.put({...book,album:albumName});
-    registry.albums=registry.albums.map(a=>a.id===id?updated:a);await store(registry);return updated;
+    // Existing callers may explicitly move one label to another parent. Management
+    // renames keep the parent and carry the full Series subtree in that case.
+    const parent=(value:string)=>value.includes('/')?value.slice(0,value.lastIndexOf('/')):'';
+    if(parent(old.name)!==parent(albumName)){
+      const updated={...old,name:albumName,updatedAt:Date.now()};
+      for(const book of books)if(book.album===old.name)await db.books.put({...book,album:albumName});
+      registry.albums=registry.albums.map(a=>a.id===id?updated:a);await validateMovedNames(old.name,albumName);await store(registry);return updated;
+    }
+    const inside=(value:string)=>value===old.name||value.startsWith(old.name+'/');
+    const renamedName=(value:string)=>name(albumName+value.slice(old.name.length));
+    const renamed=registry.albums.filter(a=>inside(a.name)).map(a=>({...a,name:renamedName(a.name),updatedAt:Date.now()}));
+    if(registry.albums.some(a=>!inside(a.name)&&(a.name===albumName||a.name.startsWith(albumName+'/')))||books.some(b=>b.album&&!inside(b.album)&&(b.album===albumName||b.album.startsWith(albumName+'/'))))throw Error('Album đích đã có truyện hoặc series.');
+    for(const book of books)if(book.album&&inside(book.album))await db.books.put({...book,album:renamedName(book.album)});
+    const byId=new Map(renamed.map(a=>[a.id,a]));registry.albums=registry.albums.map(a=>byId.get(a.id)??a);await validateMovedNames(old.name,albumName);await store(registry);return byId.get(id)!;
   });
 }
 export function removeAlbum(id:string):Promise<void>{return transaction(async({registry,books})=>{
   const album=find(registry,id);
   for(const book of books)if(book.album===album.name){const {album:_album,...retained}=book;await db.books.put(retained);}
-  registry.albums=registry.albums.filter(a=>a.id!==id);await store(registry);
+  registry.albums=registry.albums.filter(a=>a.id!==id);await validateMovedNames(album.name);await store(registry);
 });}
 export function moveBookToAlbum(bookId:string,albumId?:string):Promise<void>{return withBookLock(bookId,()=>transaction(async({registry,books})=>{
   const book=books.find(b=>b.id===bookId);if(!book)throw new Error('Chỉ chuyển truyện đã nhập xong trên thiết bị này.');
   const album=albumId===undefined?undefined:find(registry,albumId);
   if(book.album===album?.name)return;
   const {album:_album,...retained}=book;await db.books.put(album?{...retained,album:album.name}:retained);
+  await validateMovedNames(book.album,album?.name);
 }));}
 
 /** Deletion must never unassign books imported concurrently. */

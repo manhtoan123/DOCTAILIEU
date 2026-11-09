@@ -1,10 +1,12 @@
-import {removeSharedDictionary,loadSharedDictionaries} from '../../sync-cloud/services/shared-dictionaries';
-import {useState} from 'react';
+import {removeSharedDictionary} from '../../sync-cloud/services/shared-dictionaries';
+import {useEffect,useRef,useState} from 'react';
 import {useLiveQuery} from 'dexie-react-hooks';
 import {db} from '../../../core/db';
 import {installDictionaries} from '../services/dictionary-import';
 import {formatBytes,type DictKind} from '../../../core/domain';
 import {resetLanguage} from '../services/language-client';
+import {readServerProfile,replaceServerProfile,serverOrigin,setConvertBackend,useConvertBackend} from '../services/convert-server-client';
+import type {ProfileStatus} from '../services/convert-server-protocol';
 
 import {errorText} from '../../../shared/components/common';
 
@@ -32,11 +34,16 @@ function detectKind(filename: string): DictKind | null {
 interface PendingFile { file: File; kind: DictKind; overrideKind?: DictKind }
 
 export default function DictionaryPanel() {
-  const entries = useLiveQuery(() => db.dictionaries.toArray(), []);
+  const backend=useConvertBackend();
+  const entries=useLiveQuery(async()=>backend==='local'?await db.dictionaries.toArray():undefined,[backend]);
   const [pending, setPending] = useState<PendingFile[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [reports,setReports]=useState<{name:string;valid:number;invalid:number}[]>([]);
+  const [remote,setRemote]=useState<ProfileStatus>();
+  const [uploading,setUploading]=useState(false);
+  const transfer=useRef<AbortController|null>(null);
+  useEffect(()=>()=>transfer.current?.abort(),[]);
 
   function pickFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
@@ -45,8 +52,8 @@ export default function DictionaryPanel() {
     for (const f of Array.from(files)) {
       if (!f.name.toLowerCase().endsWith('.txt')) continue;
       const kind = detectKind(f.name);
-      if (!kind) { unknown.push(f.name); continue; }
-      next.push({ file: f, kind });
+      if (!kind&&backend==='local') { unknown.push(f.name); continue; }
+      next.push({ file: f, kind:kind??'vp' });
     }
     if (unknown.length) setMessage(`Không nhận biết loại: ${unknown.join(', ')} — bỏ qua. Chỉ nhận Vietphrase / PhienAm / HanViet / Names / Names2 / Pronouns / DaiTuNhanXung / LuatNhan.`);
     else setMessage('');
@@ -82,18 +89,71 @@ export default function DictionaryPanel() {
     finally { setBusy(false); }
   }
 
+  async function checkServer(){
+    setBusy(true);setMessage('Đang kiểm tra máy chủ…');
+    try {
+      setRemote(await readServerProfile());setMessage('');
+    } catch(error) {
+      setRemote(undefined);setMessage(errorText(error));
+    } finally {setBusy(false);}
+  }
+
+  async function saveServer(remove=false){
+    if(!remote||remote.state==='loading'||transfer.current)return;
+    const controller=new AbortController();
+    transfer.current=controller;setUploading(true);setBusy(true);
+    setMessage(remove?'Đang gỡ bộ từ điển trên máy chủ…':'Đang gửi và dựng chỉ mục trên máy chủ…');
+    try {
+      setRemote(await replaceServerProfile(remove?[]:pending.map(({file,kind,overrideKind})=>({file,kind:overrideKind??kind})),remote,controller.signal));
+      if(!remove)setPending([]);
+      setMessage(remove?'Đã gỡ bộ từ điển trên máy chủ.':'Đã lưu TXT và dựng chỉ mục trên máy chủ.');
+    } catch(error) {
+      setRemote(undefined);setMessage(errorText(error));
+    } finally {
+      transfer.current=null;setUploading(false);setBusy(false);
+    }
+  }
+
   return (
     <section>
       <div className="section-heading">
         <div>
-          <span className="eyebrow">NGÔN NGỮ CỦA RIÊNG BẠN</span>
           <h1>Từ điển &amp; Convert</h1>
-          <p className="muted">Chọn file và bấm Lưu một lần trên thiết bị này. Những lần mở hoặc tải lại trang sau sẽ tự dùng từ điển đã lưu.</p>
+          <p className="muted">Chọn nơi xử lý khi bấm Convert hoặc tra từ. Reader ở Bản gốc đọc nội dung nguồn và dùng tiêu đề có sẵn.</p>
         </div>
       </div>
+      {(serverOrigin||backend==='server')&&<div className="panel">
+        <label>Đích Convert
+          <select value={backend} disabled={busy} onChange={event=>{
+            try {
+              setConvertBackend(event.target.value==='server'?'server':'local');resetLanguage();
+              setRemote(undefined);setMessage('');setReports([]);
+            } catch(error){setMessage(errorText(error));}
+          }}>
+            {backend==='unset'&&<option value="unset" disabled>Chọn nơi xử lý</option>}
+            <option value="local">Thiết bị này</option>
+            <option value="server">Máy chủ riêng</option>
+          </select>
+        </label>
+        {backend==='server'&&<>
+          <p className="muted">Chữ cần Convert hoặc tra từ, tùy chọn và Name đang áp dụng sẽ gửi tới {serverOrigin??'máy chủ riêng'}. Chỉ những TXT bạn bấm gửi mới được lưu trên đó. Khi kết nối lỗi, hãy thử lại hoặc tự chọn Thiết bị này.</p>
+          <button disabled={busy||!serverOrigin} onClick={()=>void checkServer()}>Kiểm tra máy chủ</button>
+          {remote&&<>
+            <p role="status">{{
+              loading:'Máy chủ đang nạp chỉ mục. Hãy kiểm tra lại sau.',
+              ready:'Máy chủ sẵn sàng.',
+              empty:'Máy chủ chưa có từ điển.',
+              error:'Máy chủ không mở được từ điển. Bạn có thể thay bộ TXT.',
+            }[remote.state]}</p>
+            {!!remote.files.length&&<ol>{remote.files.map((file,index)=><li key={index}>{file.name} · {labels[file.kind]} · {formatBytes(file.bytes)}</li>)}</ol>}
+            {(remote.state==='ready'||remote.state==='error')&&<button disabled={busy} onClick={()=>void saveServer(true)}>Gỡ toàn bộ từ điển trên máy chủ</button>}
+          </>}
+          {uploading&&<button onClick={()=>transfer.current?.abort()}>Hủy cập nhật máy chủ</button>}
+        </>}
+      </div>}
 
       {/* Nhập nhiều file cùng lúc — tự nhận biết */}
-      <div className="panel">
+      {backend!=='unset'&&<div className="panel">
         <h2>Nhập từ điển</h2>
         <p className="muted">
           Chọn một hoặc nhiều file TXT cùng lúc. App tự nhận biết loại dựa theo tên file:<br />
@@ -137,9 +197,9 @@ export default function DictionaryPanel() {
               );
             })}
             <div style={{marginTop:'0.5rem',display:'flex',gap:'0.5rem',alignItems:'center'}}>
-              <button className="primary" disabled={busy} onClick={savePending}>
-                Lưu {pending.length} file vào trình duyệt
-              </button>
+              {backend==='server'?<button className="primary" disabled={busy||!remote||remote.state==='loading'} onClick={()=>void saveServer()}>
+                Gửi {pending.length} file và thay bộ trên máy chủ
+              </button>:<button className="primary" disabled={busy} onClick={savePending}>Lưu {pending.length} file vào trình duyệt</button>}
               <button disabled={busy} onClick={() => { setPending([]); setMessage(''); }}>Hủy</button>
             </div>
           </div>
@@ -147,11 +207,11 @@ export default function DictionaryPanel() {
 
         {message && <p className="notice" role="status">{message}</p>}
         {reports.map((r,i)=><p key={i} className="muted">{r.name}: {r.valid.toLocaleString('vi-VN')} dòng hợp lệ · {r.invalid.toLocaleString('vi-VN')} dòng bị bỏ qua.</p>)}
-        <p className="muted">Các file cùng loại được gộp theo thứ tự đang hiển thị, khóa trùng ưu tiên file sau. Khi lưu sẽ thay bộ cùng loại đang dùng. Chapter, Number và Đại từ giữ đúng tầng ưu tiên. NameList.txt nhập ở bảng Name List cố định bên dưới.</p>
-      </div>
+        <p className="muted">Các file cùng loại theo thứ tự đang hiển thị, khóa trùng ưu tiên file sau. {backend==='server'?'Chọn đúng loại trước khi gửi. Bộ mới thay toàn bộ TXT trên máy chủ.':'Khi lưu sẽ thay bộ cùng loại trên thiết bị.'}</p>
+      </div>}
 
       {/* Danh sách đã lưu */}
-      <div className="panel">
+      {backend==='local'&&<div className="panel">
         <h2>Từ điển đã lưu trên thiết bị</h2>
         <p className="muted">Không cần chọn lại file sau reload. Chỉ nhập lại khi muốn cập nhật bộ từ điển. Đổi thiết bị, đổi địa chỉ web hoặc xóa dữ liệu trình duyệt cần nhập lại.</p>
         <div className="dictionary-list">
@@ -169,7 +229,7 @@ export default function DictionaryPanel() {
           ))}
         </div>
         {entries===undefined?<p role="status">Đang kiểm tra từ điển đã lưu…</p>:!entries.length&&<p className="muted">Chưa lưu từ điển trên địa chỉ web này. Chọn file rồi bấm Lưu để dùng những lần sau.</p>}
-      </div>
+      </div>}
     </section>
   );
 }

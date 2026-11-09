@@ -18,10 +18,10 @@ describe('named local prompt stock',()=>{
     expect((await db.settings.get('ai-translate-settings'))?.value).toEqual(common);expect((await db.settings.get(aiBookSettingsKey('a')))?.value).toEqual(book);
   });
   it('reads a removed model as the current default instead of failing the whole stock',async()=>{
-    await db.settings.put({key:'ai-translate-settings',value:{...AI_DEFAULTS,systemPrompt:'Legacy prompt',model:'gemini-3.5-flash-lite'}});
+    await db.settings.put({key:'ai-translate-settings',value:{...AI_DEFAULTS,systemPrompt:'Legacy prompt',model:'gemini-3.6-flash'}});
     const migrated=await getPromptStock();
     expect(migrated.profiles[0].settings).toEqual({...AI_DEFAULTS,systemPrompt:'Legacy prompt'});
-    expect((await db.settings.get('ai-translate-settings'))?.value).toMatchObject({systemPrompt:'Legacy prompt',model:'gemini-3.5-flash-lite'});
+    expect((await db.settings.get('ai-translate-settings'))?.value).toMatchObject({systemPrompt:'Legacy prompt',model:'gemini-3.6-flash'});
   });
   it.each([null,{}, {version:2,profiles:[]}, {version:1,profiles:[],defaultProfileId:'default'}])('fails closed on corrupt stock %j',async value=>{
     await db.settings.put({key:PROMPT_STOCK_KEY,value});await expect(getPromptStock()).rejects.toThrow();expect((await db.settings.get(PROMPT_STOCK_KEY))?.value).toEqual(value);

@@ -24,7 +24,7 @@ async function setup(page:Page){
     await db.names.add({id:'continuity-name',bookId:'continuity',key:'山门',value:'Cổng Cũ'});
     await db.chapters.bulkAdd([{id:'continuity-a',bookId:'continuity',order:0,title:'Chương A',text:Array(200).fill('山门。').join('\n'),revision:1,sourceId:''},{id:'continuity-b',bookId:'continuity',order:1,title:'Chương B',text:'第二章 BETA。',revision:1,sourceId:''}]);
   });
-  await expect(page.locator('.book-detail h3')).toHaveText('Cổng Cũ');await page.getByRole('button',{name:'Mở sách →',exact:true}).click();
+  await expect(page.locator('.book-detail h3')).toHaveText('Cổng Cũ');await page.getByRole('link',{name:'Mở sách →',exact:true}).click();
   await expect(page.locator('.prose [data-paragraph]')).toHaveCount(200);
   await expect(page.locator('.reader-book-heading h1')).toHaveText('Cổng Cũ');
   // Wait for the initial progress hydration timer before observing reflow.
@@ -57,7 +57,7 @@ test('rapid Name changes discard older result and failed reconvert retains reada
 
 test('chapter switch cannot show old snapshot under the new chapter or accept late jobs',async({page})=>{
   await setup(page);await block(page);await changeName(page,'Tên Muộn');await pending(page);
-  await page.getByRole('navigation',{name:'Điều hướng chương đầu trang'}).getByRole('button',{name:'Chương sau →'}).click();
+  await page.getByRole('navigation',{name:'Điều hướng chương đầu trang'}).getByRole('link',{name:'Chương sau →'}).click();
   await expect(page.locator('.prose')).not.toContainText('Cổng Cũ');await expect(page.locator('.prose')).not.toContainText('Tên Muộn');
   await page.evaluate(()=>(window as any).releaseConvert());await expect(page.locator('.prose')).toContainText('BETA');await expect(page.locator('.prose')).not.toContainText('Tên Muộn');
 });

@@ -32,7 +32,7 @@ let runtime:Miniflare,database:D1Database;
 beforeAll(async()=>{
  runtime=new Miniflare(convertV4MiniflareOptions({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-01-01',d1Databases:['DB']}));
  database=await runtime.getD1Database('DB') as unknown as D1Database;
- for(const file of ['0006_ai_keys.sql','0008_ai_key_health.sql']){
+ for(const file of ['0006_ai_keys.sql','0008_ai_key_health.sql','0017_ai_key_model_blocks.sql']){
   const sql=(await readFile('migrations/'+file,'utf8')).replace(/--[^\n]*/g,'');
   for(const statement of sql.split(';').filter(s=>s.trim()))await database.prepare(statement).run();
  }
@@ -159,18 +159,18 @@ describe('(c) break tests: UI/status must not claim two keys without lease evide
  });
 });
 
-describe('(d) real client<->real handler bridge: cold start is sequential for 2 parts, 2 keys overlap only after part 1',()=>{
- const chapterText=(blocks:number)=>Array.from({length:blocks},()=>'甲'.repeat(1200)).join('\n');
+describe('(d) real client<->real handler bridge: streamed leases start cold parts early, legacy JSON waits for the first result',()=>{
+ const chapterText=(blocks:number)=>Array.from({length:blocks},()=>'甲'.repeat(1500)).join('\n');
  const settings={...AI_DEFAULTS,splitParts:true,fallbackModels:[]};
  const source=(text:string)=>({bookId:'review-parallel',id:'chapter',revision:1,text});
- function installBridge(holdMs:number,pairBarrier=false){
+ function installBridge(holdMs:number,pairBarrier=false,legacyJson=false){
   const upstream:{start:number;end:number;key:string}[]=[];
   const live={current:0,max:0};
   let pairStarted=0;let openPair!:()=>void;const pairGate=new Promise<void>(resolve=>{openPair=resolve;});
   vi.spyOn(globalThis,'fetch').mockImplementation(async(input,init)=>{
    const url=typeof input==='string'?input:input instanceof URL?input.href:input.url;
    if(url.includes('/api/ai/translate')){
-    const headers=new Headers(init?.headers??{});
+    const headers=new Headers(init?.headers??{});if(legacyJson)headers.delete('Accept');
     const forwarded=new Request('https://reader.example/api/ai/translate',{method:'POST',headers,body:String(init?.body??''),signal:init?.signal??undefined});
     return handleAiTranslate(forwarded,{DB:database,GEMINI_API_KEYS:JSON.stringify([KEY_A,KEY_B])});
    }
@@ -178,46 +178,49 @@ describe('(d) real client<->real handler bridge: cold start is sequential for 2 
     const key=new Headers(init?.headers??{}).get('x-goog-api-key')??'';
     const entry={start:performance.now(),end:0,key};
     upstream.push(entry);live.current++;live.max=Math.max(live.max,live.current);
-    // Pair barrier: the two concurrent parts release together, so event-loop/worker delay
-    // between their first requests cannot shrink the measured overlap window.
-    if(pairBarrier&&upstream.length>1){if(++pairStarted===2)openPair();await pairGate;}
+    // Send headers immediately so the first lease can reach the client while
+    // provider work is pending. Hold the first pair's bodies behind a barrier.
+    const paired=pairBarrier&&upstream.length<=2;if(paired&&++pairStarted===2)openPair();
+    const gate=paired?pairGate:Promise.resolve();
+    if(!url.includes('streamGenerateContent')){
+     await gate;await new Promise(resolve=>setTimeout(resolve,holdMs));entry.end=performance.now();live.current--;return Response.json(providerReply);
+    }
     let sink!:ReadableStreamDefaultController<Uint8Array>;
     const body=new ReadableStream<Uint8Array>({start(controller){sink=controller;}});
-    setTimeout(()=>{entry.end=performance.now();live.current--;try{sink.enqueue(encoder.encode('data: '+JSON.stringify(providerReply)+'\r\n\r\n'));sink.close();}catch{/* stream already cancelled */}},holdMs);
+    void gate.then(()=>setTimeout(()=>{entry.end=performance.now();live.current--;try{sink.enqueue(encoder.encode('data: '+JSON.stringify(providerReply)+'\r\n\r\n'));sink.close();}catch{/* stream already cancelled */}},holdMs));
     return new Response(body,{headers:{'Content-Type':'text/event-stream'}});
    }
    throw new Error('unexpected fetch '+url);
   });
   return {upstream,live};
  }
- it('2-part cold chapter: width starts at 1, parts never overlap (key rotation is sequential, not concurrent)',async()=>{
-  const {upstream,live}=installBridge(200);
+ it('4-part cold streamed chapter overlaps actual provider work on two distinct keys',async()=>{
+  const {upstream,live}=installBridge(200,true);
   const session=new AiReadingSession(aiTranslate);
   const progress:AiPartsProgress[]=[];
   try{
-   const result=await session.request(source(chapterText(2)),settings,[],undefined,undefined,state=>progress.push(state));
+   const result=await session.request(source(chapterText(4)),settings,[],undefined,undefined,state=>progress.push(state));
    expect(result.result.trim().length).toBeGreaterThan(0);
-   expect(upstream).toHaveLength(2);
-   // No wall-clock overlap even though the second part may rotate to the other idle key.
-   expect(live.max).toBe(1);
-   expect(upstream[0].end).toBeLessThan(upstream[1].start);
-   expect(progress.every(state=>(state.activeLeases??0)<=1)).toBe(true);
-   expect(progress.some(state=>(state.parallelLeases??0)>=2)).toBe(false);
+   expect(upstream).toHaveLength(4);
+   expect(live.max).toBe(2);
+   expect(Math.min(upstream[0].end,upstream[1].end)-Math.max(upstream[0].start,upstream[1].start)).toBeGreaterThan(100);
+   expect(upstream[0].key).not.toBe(upstream[1].key);
+   const evidence=progress.find(state=>state.activeLeases===2);expect(evidence).toBeDefined();
+   expect(new Set(evidence?.leaseHashes??[]).size).toBe(2);expect(new Set(evidence?.keySlots??[]).size).toBe(2);
+   expect(progress.at(-1)?.activeLeases).toBe(0);
   }finally{session.clear();}
  });
- it('3-part cold chapter: part 1 is alone, parts 2+3 overlap on two distinct keys with two lease hashes and slots',async()=>{
-  // Parts 2+3 wait at a pair barrier and then both hold 500ms: overlap stays ~500ms under load.
+ it('5-part cold streamed chapter overlaps the first pair on two distinct keys with safe lease evidence',async()=>{
+  // Parts 1+2 wait at a body barrier and then hold 500ms while their headers are available.
   const {upstream,live}=installBridge(500,true);
   const session=new AiReadingSession(aiTranslate);
   const progress:AiPartsProgress[]=[];
   try{
-   const result=await session.request(source(chapterText(3)),settings,[],undefined,undefined,state=>progress.push(state));
+   const result=await session.request(source(chapterText(5)),settings,[],undefined,undefined,state=>progress.push(state));
    expect(result.result.trim().length).toBeGreaterThan(0);
-   expect(upstream).toHaveLength(3);
+   expect(upstream).toHaveLength(5);
    expect(live.max).toBe(2);
-   // Part 0 is strictly alone: it ends before the overlap pair starts.
-   expect(upstream[0].end).toBeLessThan(upstream[1].start);
-   const pair=upstream.slice(1);
+   const pair=upstream.slice(0,2);
    const pairOverlap=Math.min(pair[0].end,pair[1].end)-Math.max(pair[0].start,pair[1].start);
    expect(pairOverlap).toBeGreaterThan(150);
    expect(pair[0].key).not.toBe(pair[1].key);
@@ -232,6 +235,15 @@ describe('(d) real client<->real handler bridge: cold start is sequential for 2 
    const exposed=JSON.stringify(progress);
    for(const secret of [KEY_A,KEY_B])expect(exposed).not.toContain(secret);
    expect(exposed).not.toContain(KEY_A.slice(0,8));
+  }finally{session.clear();}
+ });
+ it('legacy JSON cold chapter waits for the first result before overlapping later parts on two keys',async()=>{
+  const {upstream,live}=installBridge(60,false,true),session=new AiReadingSession(aiTranslate),progress:AiPartsProgress[]=[];
+  try{
+   await session.request(source(chapterText(4)),settings,[],undefined,undefined,state=>progress.push(state));
+   expect(upstream).toHaveLength(4);expect(live.max).toBe(2);expect(upstream[0].end).toBeLessThanOrEqual(upstream[1].start);
+   const laterPair=upstream.slice(1,3);expect(Math.min(laterPair[0].end,laterPair[1].end)-Math.max(laterPair[0].start,laterPair[1].start)).toBeGreaterThan(0);expect(laterPair[0].key).not.toBe(laterPair[1].key);
+   expect(progress.at(-1)?.activeLeases).toBe(0);
   }finally{session.clear();}
  });
 });

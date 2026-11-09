@@ -1,0 +1,26 @@
+[Unit]
+Description=Private Novel dictionary Convert
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/private-novel-convert
+ConditionPathIsMountPoint=/var/lib/private-novel-convert
+
+[Service]
+Type=simple
+User=private-novel-convert
+Group=private-novel-convert
+StateDirectory=private-novel-convert
+StateDirectoryMode=0700
+EnvironmentFile=/etc/private-novel-convert/service.env
+ExecStart=/usr/bin/flock -n -F /var/lib/private-novel-convert/profile.lock /usr/bin/node --max-old-space-size=2304 /opt/private-novel-convert/convert-server.mjs
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+MemoryMax=3G
+
+[Install]
+WantedBy=multi-user.target

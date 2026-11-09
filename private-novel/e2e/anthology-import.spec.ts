@@ -5,8 +5,8 @@ const text='Lời giới thiệu\r\n第1章 山河1\r\nNội dung A1.\r\n第1章
 async function begin(page:Page,bytes:Buffer){
   await page.route('**/api/**',route=>route.fulfill({status:503,json:{error:'isolated anthology fixture'}}));
   await page.goto('/phong-toi');
-  await page.getByRole('button',{name:'＋ Thêm truyện TXT / EPUB',exact:true}).click();
-  await page.getByLabel('Chọn file TXT hoặc EPUB',{exact:true}).setInputFiles({name:'Tuyển tập.txt',mimeType:'text/plain',buffer:bytes});
+  await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();
+  await page.getByLabel(/^(Chọn|Đổi) file$/).setInputFiles({name:'Tuyển tập.txt',mimeType:'text/plain',buffer:bytes});
   await page.getByRole('button',{name:'Tách tuyển tập thành nhiều truyện',exact:true}).click();
   await expect(page.getByText('2 truyện dự kiến',{exact:true})).toBeVisible();
 }
@@ -32,7 +32,7 @@ test('edits proposed boundaries without library writes, then imports stories wit
   });
   expect(saved.titles).toEqual(['Giang hải','Sơn hà']);expect(saved.ready).toBe(true);expect(saved.albums).toEqual(['Tác giả thử/Series thử','Tác giả thử/Series thử']);
   expect(saved.counts.every(count=>count>=2)).toBe(true);expect(saved.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));expect(saved.paths.every(path=>path.startsWith('Tuyển tập.txt/'))).toBe(true);
-  await page.goto('/phong-toi');await page.getByRole('button',{name:'Mở Album Tác giả thử',exact:true}).click();await page.getByRole('button',{name:'Mở Album Tác giả thử/Series thử',exact:true}).click();
+  await page.goto('/phong-toi');await page.getByRole('link',{name:'Mở Album Tác giả thử',exact:true}).click();await page.getByRole('link',{name:'Mở Album Tác giả thử/Series thử',exact:true}).click();
   await expect(page.locator('.book-card')).toHaveCount(2);
 });
 test('BOM detection locks UTF16BE for later parts without a BOM',async({page})=>{
@@ -59,9 +59,9 @@ test('large chapter lists use story headers and continue to the existing chapter
 
 test('unrecognized story headers expose the regex control and recover without importing',async({page})=>{
   await page.route('**/api/**',route=>route.fulfill({status:503,json:{error:'isolated anthology fixture'}}));
-  await page.goto('/phong-toi');await page.getByRole('button',{name:'＋ Thêm truyện TXT / EPUB',exact:true}).click();
+  await page.goto('/phong-toi');await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();
   const chapters=Array.from({length:1001},(_,index)=>`第${index+1}章 Chương\nNội dung.`).join('\n');
-  await page.getByLabel('Chọn file TXT hoặc EPUB',{exact:true}).setInputFiles({name:'Tuyển tập.txt',mimeType:'text/plain',buffer:Buffer.from(`BOOK A\n${chapters}\nBOOK B\n${chapters}`)});
+  await page.getByLabel(/^(Chọn|Đổi) file$/).setInputFiles({name:'Tuyển tập.txt',mimeType:'text/plain',buffer:Buffer.from(`BOOK A\n${chapters}\nBOOK B\n${chapters}`)});
   await page.getByRole('button',{name:'Tách tuyển tập thành nhiều truyện',exact:true}).click();
   await expect(page.getByRole('alert')).toContainText('chưa nhận diện đủ tên truyện');
   await expect(page.getByRole('button',{name:'Tiếp tục xem trước chương',exact:true})).toBeDisabled();
@@ -70,10 +70,11 @@ test('unrecognized story headers expose the regex control and recover without im
   await expect(page.getByRole('button',{name:'Tiếp tục xem trước chương',exact:true})).toBeEnabled();
   expect(await page.evaluate(async()=>{const {db}=await import('/src/core/db.ts');return db.books.count();})).toBe(0);
 });
-test('invalid body encoding rolls back the entire derived batch and keeps existing books',async({page})=>{
-  const bytes=Buffer.concat([Buffer.from(text+'\n'+'x'.repeat(3000)),Buffer.from([255])]);await begin(page,bytes);
+test('invalid body encoding is rejected before deriving a batch and keeps existing books',async({page})=>{
+  const bytes=Buffer.concat([Buffer.from(text+'\n'+'x'.repeat(3000)),Buffer.from([255])]);
+  await page.route('**/api/**',route=>route.fulfill({status:503,json:{error:'isolated anthology fixture'}}));await page.goto('/phong-toi');
   await page.evaluate(async()=>{const {db}=await import('/src/core/db.ts');await db.books.add({id:'existing',title:'Giữ nguyên',author:'',status:'ready',chapterCount:1,charCount:1,createdAt:1,updatedAt:1});});
-  await page.getByRole('button',{name:'Tiếp tục xem trước chương',exact:true}).click();await page.getByRole('button',{name:'Nhập nhiều truyện',exact:true}).click();
-  await expect(page.getByRole('alert').filter({hasText:'Có thể cần đổi encoding'})).toBeVisible();
+  await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();await page.getByLabel(/^(Chọn|Đổi) file$/).setInputFiles({name:'Tuyển tập.txt',mimeType:'text/plain',buffer:bytes});await page.getByRole('button',{name:'Tách tuyển tập thành nhiều truyện',exact:true}).click();
+  await expect(page.getByRole('alert').filter({hasText:/encoding|hợp lệ/})).toBeVisible();await expect(page.getByRole('button',{name:'Tiếp tục xem trước chương',exact:true})).toBeDisabled();
   expect(await page.evaluate(async()=>{const {db}=await import('/src/core/db.ts');return {ids:await db.books.toCollection().primaryKeys(),sources:await db.sources.count(),chapters:await db.chapters.count(),jobs:await db.importJobs.count()};})).toEqual({ids:['existing'],sources:0,chapters:0,jobs:0});
 });

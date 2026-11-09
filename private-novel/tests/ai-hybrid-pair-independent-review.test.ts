@@ -9,7 +9,7 @@ import {DEFAULT_SECOND_HALF_PROMPT,LEGACY_SECOND_HALF_PROMPT,aiUserPromptPreview
 import {runHybridStages} from '../src/features/ai/services/ai-hybrid';
 import {handleAiTranslate,resetAiKeyState} from '../server/ai-translate';
 
-const source={bookId:'pair-review-book',id:'pair-review-chapter',revision:1,text:'甲'.repeat(1800)+'乙'.repeat(1800)};
+const source={bookId:'pair-review-book',id:'pair-review-chapter',revision:1,text:'甲'.repeat(3000)+'乙'.repeat(3000)};
 const settings:ReadingAiSettings={...AI_DEFAULTS,model:'gemini-2.5-flash',fallbackModels:[],hybrid:{version:1,liteModel:'gemini-3.5-flash-lite',rules:'',secondHalfPrompt:'{{name}}\n{{firstHalfTranslation}}\n{{text}}'}};
 const cache={read:readAiReadingCache,write:writeAiReadingCache,readParts:readAiParts,writePart:writeAiPart};
 const answer=(result:string,model:string)=>({result,model,finishReason:'STOP' as const,inputTokens:1,outputTokens:2});

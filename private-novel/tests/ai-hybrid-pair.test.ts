@@ -7,7 +7,7 @@ import {DEFAULT_SECOND_HALF_PROMPT,LEGACY_SECOND_HALF_PROMPT,AI_HYBRID_SOURCE_CH
 import {handleAiTranslate,resetAiKeyState} from '../server/ai-translate';
 import {hybridSampleHash,hybridResult} from '../src/features/ai/services/ai-hybrid';
 import {readAiReadingCache,writeAiReadingCache,readAiParts,writeAiPart,AI_READING_CACHE_PREFIX,AI_PART_CACHE_PREFIX} from '../src/features/ai/services/ai-reading-cache';
-const source={bookId:'pair-book',id:'pair-chapter',revision:1,text:'甲'.repeat(1800)+'乙'.repeat(1800)};
+const source={bookId:'pair-book',id:'pair-chapter',revision:1,text:'甲'.repeat(3000)+'乙'.repeat(3000)};
 const template='{{name}}\n{{firstHalfTranslation}}\n[TARGET]\n{{text}}';
 const settings:ReadingAiSettings={...AI_DEFAULTS,model:'gemini-2.5-flash',fallbackModels:[],hybrid:{version:1,liteModel:'gemini-3.5-flash-lite',rules:'',secondHalfPrompt:template}};
 const cache={read:readAiReadingCache,write:writeAiReadingCache,readParts:readAiParts,writePart:writeAiPart};
@@ -46,10 +46,10 @@ it('v3 misses a complete v2 result, reuses its first-stage checkpoint and retain
  const first=answer('Old first','gemini-2.5-flash'),sampleHash=await hybridSampleHash(first.result),wholeDigest=await hybridSampleHash(oldKey);
  const whole={key:AI_READING_CACHE_PREFIX+wholeDigest,value:{version:1,bookId:source.bookId,chapterId:source.id,digest:wholeDigest,accessedAt:1,response:hybridResult(first,answer('Stale second'),sampleHash)}};
  const {hybrid,...normal}=settings,firstKey=JSON.stringify([source.bookId,source.id,source.revision,source.text,{...normal,addressingRules:hybrid!.rules},{}]);
- const stage=JSON.stringify([JSON.stringify(['txt',1800]),0]),plan=JSON.stringify(['hybrid-halves-1',stage,'complete']),digest=await hybridSampleHash(JSON.stringify([firstKey,plan]));
+ const stage=JSON.stringify([JSON.stringify(['txt',3000]),0]),plan=JSON.stringify(['hybrid-halves-1',stage,'complete']),digest=await hybridSampleHash(JSON.stringify([firstKey,plan]));
  const firstRow={key:AI_PART_CACHE_PREFIX+digest+':9999',value:{version:'parts-1',bookId:source.bookId,chapterId:source.id,digest,partId:'9999',accessedAt:1,response:first}};
  await db.settings.bulkPut([whole,firstRow]);const calls:AiTranslateClientRequest[]=[];
- const send=async(req:AiTranslateClientRequest)=>{calls.push(req);expect(req.continuation?.version).toBe(3);if(req.continuation?.version===3){expect(req.continuation.firstHalfSource).toBe(source.text.slice(0,1800));expect(req.continuation.sample).toBe(first.result);}return answer('Fresh second',req.model!);};
+ const send=async(req:AiTranslateClientRequest)=>{calls.push(req);expect(req.continuation?.version).toBe(3);if(req.continuation?.version===3){expect(req.continuation.firstHalfSource).toBe(source.text.slice(0,3000));expect(req.continuation.sample).toBe(first.result);}return answer('Fresh second',req.model!);};
  const session=new AiReadingSession(send,cache);try{const result=await session.request(source,settings,[]);expect(result.result).toBe('Old first\nFresh second');expect(calls).toHaveLength(1);}finally{session.clear();}
  expect(await db.settings.get(whole.key)).toEqual(whole);expect(((await db.settings.get(firstRow.key))?.value as {response:unknown}|undefined)?.response).toEqual(first);
  const reloaded=new AiReadingSession(send,cache);try{expect((await reloaded.request(source,settings,[])).result).toBe('Old first\nFresh second');expect(calls).toHaveLength(1);}finally{reloaded.clear();}

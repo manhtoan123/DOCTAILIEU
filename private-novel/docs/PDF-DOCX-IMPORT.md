@@ -1,0 +1,55 @@
+# Nhập PDF và DOCX có ảnh
+
+## Phạm vi và thiết kế (29/10/2026)
+
+Mỗi PDF có lớp chữ hoặc DOCX thành một truyện riêng; có thể chọn nhiều file cùng lúc. Chuyển đổi chạy trên trình duyệt; không OCR, không gửi tài liệu sang dịch vụ chuyển đổi. Một file: Chọn file → Xem trước tài liệu → kiểm tra từng chương → Nhập truyện. Nhiều file: chọn cả lô → Xem trước các tài liệu → chọn tài liệu/chương để kiểm tra → Nhập nhiều truyện. Không dùng regex chia thành nhiều truyện. Nhập nhiều file cho phép chọn lẫn TXT/EPUB/PDF/DOCX; nhập folder vẫn chỉ nhận TXT/EPUB.
+
+M0: tái sử dụng bố cục, ảnh, Convert/AI và TTS của EPUB. Bản EPUB dẫn xuất có sourceId/SHA riêng; PDF/DOCX gốc lưu nguyên bytes/name/path/SHA trong nguồn riêng cùng bookId. Truyện chỉ được công bố sau khi cả hai nguồn đã lưu; lỗi/cancel dọn staging. Không đổi nguồn hoặc dữ liệu truyện cũ. Giới hạn PDF/DOCX gốc 40 MiB, 2.000 chương (PDF tối đa 2.000 trang), ảnh 8 MiB/ảnh và tổng 24 MiB (dưới trần tài nguyên 32 MiB/phần của reader); ảnh raster tối đa 16 triệu pixel/cạnh 16.384. DOCX ZIP giải nén tối đa 128 MiB và entry 16 MiB, kiểm CRC trước chuyển đổi. Dẫn xuất tối đa 128 MiB, vẫn qua validator/sanitizer EPUB.
+
+Schema nguồn chấp nhận thêm encoding `pdf`/`docx`, kiểm đuôi tương ứng, trần 40 MiB. Backup/restore/cloud sử dụng cùng descriptor; cần triển khai cả frontend và Pages functions sử dụng schema mới trước khi xác nhận sync online. Không có migration dữ liệu cũ.
+
+## Tham khảo và điều chỉnh
+
+- [Mozilla PDF.js](https://github.com/mozilla/pdf.js), [API source](https://github.com/mozilla/pdf.js/blob/master/src/display/api.js): worker cục bộ, lấy lớp chữ/toạ độ và image operators. Sắp chữ/ảnh theo vị trí trang; render trang rồi crop vùng ảnh để tái sử dụng raster reader. Không dùng trình xem PDF nguyên trang. Nhóm image operators chưa hỗ trợ bị từ chối rõ.
+- [Mammoth](https://github.com/mwilliamson/mammoth.js): chuyển DOCX thành HTML ngữ nghĩa, callback ảnh nhúng, tắt truy cập file ngoài. Điều chỉnh thêm ZIP preflight/CRC, xác minh ảnh trước decoder theo đúng reader, XMLSerializer tạo XHTML, từ chối lỗi chuyển ảnh thay vì âm thầm mất ảnh. Chỉ PNG/JPEG/WebP; GIF/SVG/WMF/EMF chưa hỗ trợ.
+
+## Chia chương theo nội dung (điều chỉnh 29/10/2026)
+
+Không coi ranh giới trang PDF hoặc khối HTML DOCX là ranh giới chương. Gom các text run PDF trên cùng dòng trước khi dò `第N章/节/回/话/集`, `Chương N`, `Chapter N` (kể cả Roman/fullwidth) và một số mốc như 序章/终章/番外. DOCX nhận thêm Heading 1/2 ở khối cấp cao nhất do Mammoth chuyển ra h1/h2. Dùng bộ nhận diện sẵn có để tránh coi nhắc tới chương là tiêu đề; không nhận số trang/numeric list đơn lẻ hay mục lục dạng dot-leader+số trang.
+
+Không có tiêu đề phù hợp: đúng một chương `Nội dung`. Nội dung mở đầu trước tiêu đề đầu tiên gắn vào chương đầu, giữ vị trí trước tiêu đề; không tạo chương mở đầu giả. Tiêu đề lặp liên tiếp (không phân biệt hoa/thường, chuẩn hóa khoảng trắng của mốc rõ) không tạo chương mới; nội dung gốc của dòng lặp vẫn giữ. Ảnh và chữ nối xuyên trang theo thứ tự, không bị mất khi gom chương. EPUB dẫn xuất có nav.xhtml để tên chương thật đi vào mục lục/preview thay cho `Mục N`.
+
+Giới hạn reader vẫn giữ: 128.000 UTF-16 và 10.000 text nodes/chương, HTML chương tối đa 1 MiB/450.000 ký tự, nav tối đa 512 KiB, tối đa 2.000 chương. Quá giới hạn thì báo lỗi trước lưu, không tự cắt theo trang hay dung lượng. Đây là nhận diện theo mẫu/Heading, không khẳng định hiểu mọi tiêu đề trong mọi tài liệu; phải xem trước. Không tự tái nhập/chia lại truyện đã có, không sửa ID/tiến độ/nguồn cũ.
+
+Tham khảo [TextItem/getTextContent của PDF.js](https://github.com/mozilla/pdf.js/blob/master/src/display/api.js) (text fragments/toạ độ) và [Mammoth headings](https://github.com/mwilliamson/mammoth.js#usage) (h1/h2 ngữ nghĩa); điều chỉnh để dùng chung bộ dò chương local và giữ ảnh/bytes/SHA. Bằng chứng synthetic: unit document-chapters + packaging + backup; PDF3trang không heading→1chương, 3trang/2heading→2chương và ảnh, tiêu đề nhiều font-run/lặp đầu trang; DOCX explicit/Heading1/2. Không đọc file D: của người dùng. Review độc lập41/41 pass; kết quả root/deploy cuối trong HANDOFF-LOG.
+
+## Nhập nhiều tài liệu (29/10/2026)
+
+M0: mở rộng đúng batch service/atomic Album publication hiện có, không tạo loại dữ liệu hay hạ tầng mới. Một lựa chọn tối đa100 file, mỗi file một bookId riêng theo thứ tự file nhận được. Chọn lẫn TXT/EPUB/PDF/DOCX; cho phép hai file có bytes giống nhau thành hai truyện như hợp đồng batch TXT/EPUB cũ. Nhập đơn giữ chống trùng mặc định.
+
+PDF/DOCX được chuyển đổi tuần tự, không tăng fan-out. Toàn bộ tài liệu được chuẩn bị vào Map<File,File> chỉ đọc trong RAM, chưa ghi IndexedDB. Bộ chọn cho xem từng tài liệu và tiêu đề chương, dùng đúng EPUB dẫn xuất đã xem khi nhập, không chuyển đổi lại sau xác nhận. Chỉ tạo staging sau khi đủ preview hợp lệ và trong trần. Lỗi/hủy không công bố một phần lô; dọn đúng ID mới của lô, không xóa theo SHA hoặc chạm truyện cũ. Lưu đủ file gốc bytes/SHA/path và dẫn xuất riêng; công bố tất cả cùng transaction Album hiện có.
+
+Giữ100 file; TXT/PDF/DOCX40MiB mỗi file, EPUB256MiB. Lô không EPUB256MiB, có EPUB4GiB theo giới hạn có sẵn; tổng nguồn PDF/DOCX vẫn≤256MiB và tổng dẫn xuất preview≤128MiB, kể cả lô có EPUB. Kiểm lại map đầy đủ theo đúng File identity và tổng byte tại ranh giới import; vượt trần báo chọn lô nhỏ hơn trước ghi dữ liệu. Folder chưa nhận PDF/DOCX; không tự nhập lại file/truyện cũ.
+
+Nguồn tham khảo: [Mammoth per-document ArrayBuffer/browser](https://github.com/mwilliamson/mammoth.js#usage), [PDF.js learning example](https://github.com/mozilla/pdf.js/blob/master/examples/learning/helloworld.html). Áp dụng các converter có sẵn theo từng file vào vòng tuần tự và transaction lô local; không thêm dependency/provider. Unit real Dexie kiểm chuẩn bị không ghiDB, file trùng độc lập, lỗi nguồn/chương muộn, hủy, rollback, giữ truyện cũ và các trần; reader/converter được mock trong unit. E2E synthetic riêng kiểm PDF+DOCX+TXT, ảnh preview/reader, SHA nguồn, Album, reload, file PDF trùng và file lỗi/hủy. Kết quả cuối/deploy được ghi ở HANDOFF-LOG.
+
+## Giới hạn
+
+PDF nhiều cột/chữ xoay/ảnh chồng chữ có thể sai thứ tự hoặc crop chứa chữ chồng lên; cần xem trước. Vector vẽ trực tiếp không được trích thành ảnh; không giữ nguyên layout in ấn. PDF ảnh quét hoàn toàn bị từ chối; không OCR. Text items PDF có thể tạo đoạn ngắn. DOCX giữ cấu trúc ngữ nghĩa, không cam kết bố cục Word, ngắt trang hoặc hình nổi chính xác. Cancel được kiểm giữa các bước; tác vụ Mammoth đang chạy chưa thể ngắt CPU tức thì, nhưng không công bố truyện sau hủy. Backup portable lớn vẫn chịu giới hạn packet hiện hành.
+
+## Bằng chứng / deploy
+
+**Lượt phát hành chọn nhiều file: Pagesf7305c55 / index-DHT-pZbN.js**, production29/10/2026. Sau đó có cập nhật khác: HANDOFF ghi Pages828cddb2 / index-CyyVrxQF.js, canonical GET xác nhận index-CyyVrxQF.js có tính năng chọn nhiều. Chạy lại đúng6ca batch trực tiếp trên bản canonical mới nhất:6/6pass9,9s (desktop/Android mô phỏng), log .dsh-tmp/document-batch-latest-production.log; không ghi đè/cố triển khai lại bản cũ. Chọn nhiều PDF/DOCX đã lên website; Pages frontend+Functions được deploy, không deploy Worker AI. Unit phạm vi42/42 pass, review độc lập12/12 pass (real Dexie, converters/package được mock); build exit0. E2E built-preview:12ca nhập đơn/chia chương pass ở lượt trước +6/6ca batch pass sau sửa nhãn accessible của bộ chọn preview. Smoke canonical18ca: lượt đầu16pass,2ca hết timeout5s khi còn chuẩn bị; chạy lại đúng2ca với chờ chuẩn bị tối đa60s thì2/2pass17,5s. Có bằng chứng online cho nhập lẫn PDF/DOCX/TXT→3book/5source, ảnh/chữ/tiêu đề, SHA/bytes nguồn, Album/reload, file trùng độc lập, lỗi file muộn và hủy không ghiDB. Tất cả browser smoke chặn /api, dùng fixture tổng hợp và không ghi cloud thật.
+
+Full `npm.cmd test -- --maxWorkers=2`:2630pass/12fail,214files (4filesAI fail),346,79s. Không có lỗi còn mở trong phạm vi batch; các lỗi AI gồm deadline45s so với cấu hình60s, second-chance/model expectations và test capacity; không đổi AI để làm xanh. Không khẳng định full suite xanh. Logs `.dsh-tmp/document-batch-{unit,build-final,e2e,e2e-final,full-test,deploy,production,production-recheck}.log`, review `.dsh-tmp/batch-documents-independent-review.log`. Reviewer xác nhận diff cuối bao gồm aria label và feature docs; Android thật,100file thật, TTS/AI upstream và cloud ghi thật chưa xác minh.
+
+
+Bản chia theo chương trước khi mở rộng chọn nhiều tài liệu: **Pages72fb6e38 / index-MyF8hrq8.js**, triển khai production29/10/2026 18:25 ICT (frontend+Functions). Build exit0; E2E cuối12/12 pass18,1s trên built-preview, smoke canonical12/12 pass19,6s (desktop và Android mô phỏng). Full `npm.cmd test -- --maxWorkers=2`:2625pass/1fail,213files; còn đúng `ai-speed.test.ts:60` từ lượt trước, ngoài phần sửa. Review độc lập41/41 pass, không còn finding chặn. Logs `.dsh-tmp/document-heading-{unit,full-test,build-final,e2e-final,deploy,production}.log` và `document-chapter-review.log`. API bị chặn trong smoke nên không ghi cloud thật; không sửa/tái nhập truyện cũ. Bộ test xác minh chương có tiêu đề, no-heading một mục, tiếp nối qua trang/ảnh, PDF text runs/running headers và DOCX Heading1/2 thực.
+
+Lượt triển khai ban đầu trước khi đổi cách chia chương:
+
+Kiểm thử dùng PDF/DOCX tổng hợp có chữ trước ảnh và sau ảnh; không dùng nội dung truyện thật hoặc ghi cloud thật. Unit mới 16/16, backup/restore thật qua Dexie 2/2, schema 70/70, HTTP/workerd/R2 13/13 và persisted titles 17/17 pass. Build exit 0; E2E built-preview 4/4 pass kiểm preview trước mutation, reader image, thứ tự, SHA/bytes nguồn, reload và không tràn ngang trên desktop/Android mô phỏng. Full suite lần đầu 2582 pass/15 fail; chạy lại đúng file lỗi ở mức song song thấp hết lỗi môi trường (EPUB DOM xác minh riêng 3/3), còn test AI `ai-speed.test.ts:60` kỳ vọng 3 request nhưng nhận 2, ngoài phần PDF/DOCX. Không sửa AI để làm xanh bộ test. Kết quả/log/lệnh chi tiết tại HANDOFF-LOG. Đã deploy Pages production e533714a ngày 29/10/2026, bundle index-Buwb7LDu.js; frontend và Functions bundle cùng lượt. Smoke trực tiếp canonical https://thu-phong-private.pages.dev chạy 4/4 ca PDF/DOCX desktop/Android mô phỏng pass (14,9 giây), dùng tài liệu tổng hợp và chặn toàn bộ /api để không ghi kho cloud thật. Log .dsh-tmp/document-deploy.log và .dsh-tmp/document-production-smoke.log. Android thật, TTS upstream, AI upstream, cloud online ghi thật và tài liệu thực của người dùng chưa xác minh.
+
+Bộ CMap CJK, font dự phòng, WASM và decoder JS fallback được đóng gói từ chính dependency PDF.js, phục vụ theo allowlist ở dev và emit vào bản build; không CDN. Chưa có fixture riêng kiểm mọi CMap/JBIG2/JPX. Review độc lập đã bao phủ diff cuối của luồng lưu/ảnh/sandbox/schema và tài nguyên PDF; các thay đổi copy App cuối chỉ thay nhãn định dạng, đã build/E2E lại.
+
+01/11/2026 — Sửa Name tại chỗ dùng chung layout EPUB: giữ iframe/tài nguyên khi Convert cập nhật, không chuyển đổi lại PDF/DOCX gốc. Chưa deploy; bằng chứng/giới hạn tại [EPUB live Name](EPUB-LIVE-NAME-UPDATE-2026-11-01.md).

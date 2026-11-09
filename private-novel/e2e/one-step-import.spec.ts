@@ -3,7 +3,7 @@ import {test,expect,type Page} from '@playwright/test';
 const chinese='第1章 起点\r\n你好。😀\r\n第2章 后来\r\n正文结束。\r\n';
 async function open(page:Page){
   await page.goto('/');
-  await page.getByRole('button',{name:'＋ Thêm truyện TXT',exact:true}).click();
+  await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();
 }
 async function snapshot(page:Page){
   return page.evaluate(async()=>{
@@ -37,7 +37,7 @@ test('single explicit import saves split Chinese TXT and lossless source bytes w
 
 test('pasted text uses a single submit and keeps title and mandatory split',async({page})=>{
   await open(page);await page.getByLabel('Tên truyện',{exact:true}).fill('Dán thử');
-  await page.getByLabel('Hoặc dán nội dung',{exact:true}).fill(chinese);
+  await page.getByText('Dán nội dung truyện',{exact:true}).click();await page.getByLabel('Hoặc dán nội dung',{exact:true}).fill(chinese);
   await page.getByRole('button',{name:'Nhập truyện',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect((await snapshot(page)).books[0]).toMatchObject({title:'Dán thử',status:'ready',chapterCount:2});

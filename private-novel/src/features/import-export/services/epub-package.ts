@@ -12,8 +12,8 @@ export async function openEpubPackage(blob:Blob,signal?:AbortSignal):Promise<Epu
  const coverId=epubElements(opf,'meta').find(m=>m.getAttribute('name')==='cover')?.getAttribute('content'),cover=coverId?manifest.get(coverId):Array.from(manifest.values()).find(item=>item.properties.split(/\s+/).includes('cover-image'));
  return {...base,title:(epubElements(opf,'title')[0]?.textContent?.trim()??'').slice(0,300),author:(epubElements(opf,'creator')[0]?.textContent?.trim()??'').slice(0,300),spine,...(cover?{coverPath:cover.path}:{})};
 }
-export async function readEpubChapter(pkg:EpubPackage,path:string,signal?:AbortSignal):Promise<EpubLayout>{
- const text=await epubText(pkg,path,1048576,signal),doc=epubXml(text),layout=sanitizeEpubChapter(text,path);
+export async function readEpubChapter(pkg:EpubPackage,path:string,signal?:AbortSignal,removeAdvertising=false):Promise<EpubLayout>{
+ const text=await epubText(pkg,path,1048576,signal),doc=epubXml(text),layout=sanitizeEpubChapter(text,path,removeAdvertising);
  const seen=new Set<string>();for(const link of epubElements(doc,'link'))if(link.getAttribute('rel')?.split(/\s+/).includes('stylesheet')){try{const cssPath=resolveEpubPath(path,link.getAttribute('href')??'');if(!pkg.entries.has(cssPath)||seen.has(cssPath))continue;if(layout.styles.length>=30)throw Error('EPUB có quá nhiều stylesheet.');seen.add(cssPath);layout.styles.push({path:cssPath,text:await epubText(pkg,cssPath,262144,signal)});}catch(error){if(signal?.aborted)throw error;if(link.getAttribute('href')?.match(/^[a-z][a-z\d+.-]*:/i))continue;throw error;}}
  if(layout.styles.length>30)throw Error('EPUB có quá nhiều stylesheet.');return layout;
 }

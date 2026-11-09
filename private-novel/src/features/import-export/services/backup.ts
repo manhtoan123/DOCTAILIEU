@@ -1,4 +1,5 @@
-import {readEffectiveBookNames} from '../../names-convert/services/scoped-names';
+import {BOOK_METADATA_MAX_CHARS} from '../../../shared/constants/book-metadata';
+import {readEffectiveBookNames,validateAlbumNameCapacity} from '../../names-convert/services/scoped-names';
 import {ALBUM_NAMES_PREFIX,albumNameSetting,nameAlbumRoot,parseAlbumNameKey} from '../../names-convert/services/album-name-schema';
 import {validateSharedRecord,type SharedRecord} from '../../sync-cloud/services/shared-state-schema';
 import {validateHiddenChapterIds} from '../../sync-cloud/services/chapter-state-schema';
@@ -110,14 +111,15 @@ function hasBackupSourceData(source:BackupSourceData){
 
 export async function prepareBackup(bookId:string,options?:BackupOptions){
   const mode:BackupMode=options?.mode||'compact';
-  const book=await db.books.get(bookId);
-  if(!book||book.status!=='ready')throw new Error('Truyện chưa sẵn sàng.');
+  const {book,names,albumNames}=await db.transaction('r',[db.books,db.names,db.settings],async()=>{
+    const book=await db.books.get(bookId);if(!book||book.status!=='ready')throw new Error('Truyện chưa sẵn sàng.');
+    const names=await readEffectiveBookNames(bookId),album=nameAlbumRoot(book.album),albumNames:SharedRecord[]=[];
+    if(album)for(const row of await db.settings.where('key').startsWith(ALBUM_NAMES_PREFIX).toArray()){const record=validateSharedRecord(row.value);if(record.kind==='album-name'&&parseAlbumNameKey(record.key)[0]===album)albumNames.push(record);}
+    return {book,names,albumNames};
+  });
   const refs:{id:string;revision:number;order:number}[]=[];let retainedChars=0;
   await db.chapters.where('bookId').equals(bookId).each(c=>{retainedChars+=c.text.length;refs.push({id:c.id,revision:c.revision,order:c.order});});
   refs.sort((a,b)=>a.order-b.order);
-  const names=await readEffectiveBookNames(bookId);
-  const album=nameAlbumRoot(book.album),albumNames:SharedRecord[]=[];
-  if(album)for(const row of await db.settings.where('key').startsWith(ALBUM_NAMES_PREFIX).toArray()){const record=validateSharedRecord(row.value);if(record.kind==='album-name'&&parseAlbumNameKey(record.key)[0]===album)albumNames.push(record);}
   const convertNames=await readConvertNames();
   const progress=await db.progress.get(bookId);
   const dictionaryRequirements=(await db.dictionaries.toArray()).map(d=>({kind:d.kind,name:d.name,sha256:d.sha256}));
@@ -288,7 +290,7 @@ export async function restoreBackup(id:string,options?:RestoreOptions){
       const body=JSON.parse(row.body) as Body;
       if(i===0){
         const b=body.book;
-        if(!b||typeof b.title!=='string'||b.title.length>1000||!Number.isInteger(b.chapterCount)||!Number.isFinite(b.charCount))throw new Error('Metadata truyện không hợp lệ.');
+        if(!b||typeof b.title!=='string'||b.title.length>BOOK_METADATA_MAX_CHARS||!Number.isInteger(b.chapterCount)||!Number.isFinite(b.charCount))throw new Error('Metadata truyện không hợp lệ.');
         if(b.hiddenChapterIds!==undefined){if(body.manifest?.version!==3||b.epub)throw Error('Trạng thái chương sao lưu không hợp lệ.');b.hiddenChapterIds=validateHiddenChapterIds(b.hiddenChapterIds);}
         expected=b;
         if(body.albumNames!==undefined){
@@ -379,9 +381,19 @@ export async function restoreBackup(id:string,options?:RestoreOptions){
       if(stagingBook?.status!=='staging'||await db.chapters.where('bookId').equals(bookId).count()!==count)throw new Error('Truyện khôi phục không còn ở trạng thái staging đầy đủ.');
       const stagedSources=await db.sources.where('bookId').equals(bookId).toArray();
       if([...sourceIds.values()].some(sourceId=>!stagedSources.some(source=>source.id===sourceId)))throw new Error('File nguồn staging không còn đầy đủ.');
+      // Capture the live legacy consensus before replacing/deleting any old book.
+      // Private rows restored below must not silently revoke inherited author Names.
+      const root=nameAlbumRoot(stagingBook.album),affectedRoots=new Set(root?[root]:[]),legacyValues=new Map<string,Set<string>>();
+      if(root){
+        const incomingKeys=new Set([...albumNames.map(record=>parseAlbumNameKey(record.key)[1]),...(await db.names.where('bookId').equals(bookId).toArray()).map(row=>row.key)]);
+        const members=(await db.books.where('status').equals('ready').toArray()).filter(book=>nameAlbumRoot(book.album)===root).map(book=>book.id);
+        if(members.length)for(const row of await db.names.where('bookId').anyOf(members).toArray())if(incomingKeys.has(row.key)){const values=legacyValues.get(row.key)??new Set<string>();values.add(row.value);legacyValues.set(row.key,values);}
+        for(const [key,values]of legacyValues)if(values.size===1){const record=validateSharedRecord({kind:'album-name',key:JSON.stringify([root,key]),value:[...values][0]}),setting=albumNameSetting(record.key);if(!await db.settings.get(setting))await db.settings.put({key:setting,value:record});}
+      }
       if(replaceBookId){
         const oldBook=await db.books.get(replaceBookId);
         if(!oldBook||oldBook.status!=='ready')throw new Error('Truyện cần ghi đè không còn sẵn sàng.');
+        const oldRoot=nameAlbumRoot(oldBook.album);if(oldRoot)affectedRoots.add(oldRoot);
         if(omitsSourceData){
           // Read and carry bytes inside the same transaction that deletes the old
           // book, so staging never holds a stale copy of the user's source files.
@@ -421,9 +433,10 @@ export async function restoreBackup(id:string,options?:RestoreOptions){
         await db.settings.put({key:CONVERT_NAMES_KEY,value:validateConvertNames([...merged].map(([key,value])=>({key,value})))});
       }
       // Add-only at final activation: never overwrite a current value or tombstone.
-      for(const record of albumNames){const key=albumNameSetting(record.key);if(!await db.settings.get(key))await db.settings.put({key,value:record});}
+      for(const record of albumNames){const key=albumNameSetting(record.key),legacy=legacyValues.get(parseAlbumNameKey(record.key)[1]);if(!await db.settings.get(key)&&!(legacy&&legacy.size>1))await db.settings.put({key,value:record});}
       const active=(await db.chapters.where('bookId').equals(bookId).toArray()).filter(c=>!hidden.includes(c.id));
       if(await db.books.update(bookId,{status:'ready',hiddenChapterIds:hidden,chapterCount:active.length,charCount:active.reduce((n,c)=>n+c.text.length,0),updatedAt:Date.now()})!==1)throw new Error('Không thể kích hoạt truyện khôi phục.');
+      await validateAlbumNameCapacity(affectedRoots); // Validate all affected readers before activation commits.
       await db.restoreJobs.update(jobId,{status:'committed',updatedAt:Date.now()});
     });
     return bookId;

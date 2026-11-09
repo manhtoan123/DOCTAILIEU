@@ -25,7 +25,7 @@ describe('Independent AI reading session regression',()=>{
   it('hydrates legacy partial settings and excludes unknown stored fields from requests',()=>{
     expect(readReadingAiSettings({systemPrompt:'Legacy prompt'})).toEqual({...AI_DEFAULTS,systemPrompt:'Legacy prompt'});
     expect(readReadingAiSettings({model:'unlisted',temperature:NaN,userPromptTemplate:'missing token',systemPrompt:'x'.repeat(8001),apiKey:'synthetic-private'})).toEqual(AI_DEFAULTS);
-    expect(readReadingAiSettings({model:'gemini-3.5-flash-lite'})).toEqual(AI_DEFAULTS);
+    expect(readReadingAiSettings({model:'gemini-3.5-flash-lite'})).toEqual({...AI_DEFAULTS,model:'gemini-3.5-flash-lite'});
     expect(readReadingAiSettings({model:'gemini-3.6-flash'})).toEqual(AI_DEFAULTS);
     expect(readReadingAiSettings({model:'gemini-2.5-flash'})).toEqual({...AI_DEFAULTS,model:'gemini-2.5-flash'});
     expect(readReadingAiSettings(null)).toEqual(AI_DEFAULTS);

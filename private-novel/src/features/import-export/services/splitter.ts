@@ -80,12 +80,20 @@ export function isStubHeading(line: string): boolean {
   return /^(?:#\s*[0-9]+|[0-9]+[\.\-:]?|(?:第\s*[0-9零〇一二两兩三四五六七八九十百千万萬亿億\.\-]+\s*[章節节回话話集]?)|(?:(?:Chương|Chuong|Chapter)\s+\d+[\.\-:]?))$/iu.test(s);
 }
 
-export function findEmbeddedHeading(line: string, episodeStyle = false): { start: number; header: string } | null {
+export function findEmbeddedHeading(line: string, episodeStyle = false,gluedChapterNumbers?:ReadonlySet<number>): { start: number; header: string;inferred?:boolean } | null {
   // A source credit may precede the first chapter (e.g. title @translator   第1集).
   const credit = /^.{1,100}@\S+\s{2,}(第\s*[0-9零〇一二三四五六七八九十百千万]+\s*[章話话集].*)$/u.exec(line.trimEnd());
   const numericEpisode = episodeStyle ? /[。！？.!?…」』）】\]"'”]\s+([0-9]{1,5}\s*[话話集][。.：:]\s*<)/u.exec(line) : null;
   const match = credit || REGEX_EMBEDDED_HEADING.exec(line) || numericEpisode;
-  if (!match) return null;
+  if (!match){
+    if(!gluedChapterNumbers?.size)return null;
+    const glued=/(第[ \t　]{0,4}([0-9０-９]{1,5})[ \t　]{0,4}章\S[^\r\n]{0,78})\s*$/u.exec(line);
+    if(!glued||glued.index===0||glued[1].trim().length>80)return null;
+    const number=Number(glued[2].replace(/[０-９]/gu,c=>String(c.charCodeAt(0)-0xff10)));
+    const before=line.slice(0,glued.index).trimEnd();
+    if(!gluedChapterNumbers.has(number)||/(?:翻到|读到|讀到|看到|提到|说起|說起|读完|讀完|写到|寫到|参考|參考|关于|關於|例如|比如)\s*$/u.test(before)||/[。；;]$/u.test(glued[1].trim())||!isHeading(glued[1]))return null;
+    return {start:glued.index,header:glued[1].trim(),inferred:true};
+  }
   const start = match.index + match[0].length - match[1].length;
   if(start===0)return null;
   const candidate = line.slice(start).trim();
@@ -117,6 +125,7 @@ export function isHeading(line: string, custom?: RegExp): boolean {
 
 /** Bounded working buffer, lossless over BOM/CRLF-normalized text. Long chapters become labelled parts. */
 export class StreamingSplitter {
+  inferredHeadings=0;
   private tail = '';
   private current = '';
   private title: string;
@@ -135,7 +144,8 @@ export class StreamingSplitter {
     private emit: (part: Part) => void,
     private regex?: RegExp,
     private max = 64000,
-    private detect = true
+    private detect = true,
+    private gluedChapterNumbers?:ReadonlySet<number>
   ) {
     if (max !== 0 && (!Number.isInteger(max) || max < 2 || max>128000)) {
       throw new Error('Giới hạn chương phải từ 2 đến 128.000 ký tự hoặc bằng 0 (giữ nguyên chương trong giới hạn an toàn).');
@@ -229,8 +239,9 @@ export class StreamingSplitter {
         // Kiểm tra tiêu đề dính câu cuối của đoạn trước
         // Once a physical line exceeds the retained window it cannot be scanned
         // reliably across feeds. Apply the same policy to full-line input.
-        const embedded = this.regex || s.length>Math.max(180,this.effectiveMax) ? null : findEmbeddedHeading(s, this.episodeStyle);
+        const embedded = this.regex || s.length>Math.max(180,this.effectiveMax) ? null : findEmbeddedHeading(s, this.episodeStyle,this.gluedChapterNumbers);
         if (embedded && embedded.start > 0) {
+          if(embedded.inferred)this.inferredHeadings++;
           const before = s.slice(0, embedded.start);
           const after = s.slice(embedded.start);
           this.append(before);

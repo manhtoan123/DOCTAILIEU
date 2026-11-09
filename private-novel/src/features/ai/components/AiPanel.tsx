@@ -1,14 +1,17 @@
+import {AiAttemptHistory} from './AiAttemptHistory';
+import {AiModelChoice} from './AiModelChoice';
 import type {AiChapterView} from '../types/ai-chapter-view';
 import {aiDivisionReasonText} from '../services/ai-division';
 import {useEffect,useRef,useState} from 'react';
 import {useLiveQuery} from 'dexie-react-hooks';
 import {db} from '../../../core/db';
 import {aiBookSettingsKey,queueAiSettings,type ReadingAiSettings} from '../services/ai-reading';
-import {readReaderAiPreferences,selectReaderPrompt,setReaderSplitParts} from '../types/ai-reader-settings';
+import {readReaderAiPreferences,selectReaderPrompt,setReaderModel,setReaderSplitParts} from '../types/ai-reader-settings';
 import {getPromptStock,readStoredPromptStock} from '../prompt/prompt-stock';
 import {currentPromptChoice} from '../prompt/prompt-list';
 import type {AiJobView} from './AiJobStatus';
 import {errorText} from '../../../shared/components/common';
+import {AiExecutionView} from './AiExecutionView';
 export type ChapterModelView=AiChapterView;
 interface Props {
  bookId:string;current:ChapterModelView;next:ChapterModelView;job:AiJobView;
@@ -17,7 +20,7 @@ interface Props {
  onStop?:()=>void;onRetry?:()=>void;onPauseRetry?:()=>void;
 }
 function ModelRow({label,view}:{label:string;view:ChapterModelView}){
- return <div className="ai-model-row" aria-label={label}><span>{label}</span><div><strong>{view.model||view.label}</strong>{view.model&&<small role="status">{view.label}</small>}{view.progress?<small className="ai-division-count">{view.progress.done}/{view.progress.total} phần hoàn tất</small>:view.division&&<small className="ai-division-count">{view.division.parts} phần</small>}{view.division&&view.division.reasons.length>0&&<small className="ai-division-reason">{aiDivisionReasonText(view.division)}</small>}{!view.division&&view.content==='complete'&&<small>Chưa lưu thông tin chia phần</small>}</div></div>;
+ return <div className="ai-model-entry"><div className="ai-model-row" aria-label={label}><span>{label}</span><div><strong>{view.model||view.label}</strong>{view.model&&<small role="status">{view.label}</small>}{view.progress?<small className="ai-division-count">{view.progress.done}/{view.progress.total} phần hoàn tất</small>:view.division&&<small className="ai-division-count">{view.division.parts} phần</small>}{view.division&&view.division.reasons.length>0&&<small className="ai-division-reason">{aiDivisionReasonText(view.division)}</small>}{!view.division&&view.content==='complete'&&<small>Chưa lưu thông tin chia phần</small>}</div></div><AiAttemptHistory workId={view.workId} label={label}/></div>;
 }
 export function AiPanel({bookId,current,next,job,preload,onPreloadChange,onClose,onOpenSettings,onSettingsChange,notify,onStop,onRetry,onPauseRetry}:Props){
  const panel=useRef<HTMLElement>(null),alive=useRef(false),operation=useRef(0),busyRef=useRef(false),[splitOverride,setSplitOverride]=useState<boolean|undefined>(undefined),[ready,setReady]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -26,15 +29,18 @@ export function AiPanel({bookId,current,next,job,preload,onPreloadChange,onClose
  useEffect(()=>{if(!busy&&splitOverride!==undefined&&!!state?.settings?.splitParts===splitOverride)setSplitOverride(undefined);},[state,busy,splitOverride]);
  const choice=state?.settings?currentPromptChoice(state.stock,bookId,state.settings,state.chosenId):{profiles:[],value:'',label:'Đang tải prompt…',savedVersion:false};
  async function choose(id:string){if(!id||busyRef.current||!state?.settings)return;const ticket=++operation.current;busyRef.current=true;setBusy(true);try{const settings=await selectReaderPrompt(id,bookId);if(alive.current&&operation.current===ticket)onSettingsChange(settings);}catch(e){if(alive.current)notify(errorText(e));}finally{if(alive.current&&operation.current===ticket){busyRef.current=false;setBusy(false);}}}
+ async function chooseModel(model:string,modelMode:'auto'|'fixed'){if(busyRef.current||!state?.settings)return;const ticket=++operation.current;busyRef.current=true;setBusy(true);try{const settings=await setReaderModel(bookId,model,modelMode);if(alive.current&&operation.current===ticket)onSettingsChange(settings,true);}catch(e){if(alive.current)notify(errorText(e));}finally{if(alive.current&&operation.current===ticket){busyRef.current=false;setBusy(false);}}}
  async function toggleSplit(enabled:boolean){if(busyRef.current||!state?.settings)return;const ticket=++operation.current;busyRef.current=true;setSplitOverride(enabled);setBusy(true);try{const settings=await setReaderSplitParts(bookId,enabled);if(alive.current&&operation.current===ticket)onSettingsChange(settings,true);}catch(e){if(alive.current){setSplitOverride(undefined);notify(errorText(e));}}finally{if(alive.current&&operation.current===ticket){busyRef.current=false;setBusy(false);}}}
  return <section ref={panel} className="reader-panel reader-panel-ai ai-compact" role="dialog" aria-label="Dịch AI" onKeyDown={e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();onClose();}}}>
   <header><strong>Dịch AI</strong><button aria-label="Ẩn Dịch AI" onClick={onClose}>×</button></header>
   <div className="reader-panel-body">
    <section className="ai-model-summary" aria-label="Model dịch chương"><ModelRow label="Chương này" view={current}/><ModelRow label="Chương sau" view={next}/></section>
+   <details className="ai-execution-details"><summary>Cấu hình thực dùng</summary><h4>Chương này</h4><AiExecutionView execution={current.execution}/>{next.content!=='absent'&&<><h4>Chương sau</h4><AiExecutionView execution={next.execution}/></>}<p className="muted">Dấu prompt nhận từ server của bản dịch, gồm System/User Prompt và quy tắc xưng hô; không chứa nội dung nguồn hay Name.</p><p className="muted">Thiết lập cho lượt mới: prompt của truyện hoặc kế thừa chung; nhiệt độ lấy từ cài đặt chung nếu đã có. Chọn prompt mới không đổi dấu cấu hình của bản đã lưu.</p></details>
    <label className="ai-current-prompt">Prompt đang dùng<select aria-label="Chọn prompt" value={choice.value} disabled={busy||!state?.settings} onChange={e=>void choose(e.target.value)}><option value="">{choice.value?'Tùy chỉnh của truyện':choice.label}{choice.savedVersion?' · đang dùng':''}</option>{choice.profiles.map(p=><option key={p.id} value={p.id}>{p.title}{p.bookId?' · riêng':''}</option>)}</select></label>
+   {state?.settings?<AiModelChoice settings={state.settings} disabled={busy} onChange={patch=>void chooseModel(patch.model??state.settings!.model,patch.modelMode??state.settings!.modelMode??'fixed')}/>:<p role="status">Đang tải chế độ dịch…</p>}
    {(error||state?.error)&&<p role="alert" className="ai-compact-error">{error||state?.error}</p>}
    <label className="ai-preload-toggle"><span>Dịch sẵn chương sau</span><input type="checkbox" role="switch" aria-label="Dịch sẵn chương kế tiếp" checked={preload} onChange={e=>onPreloadChange(e.target.checked)}/></label>
-   <label className="ai-preload-toggle"><span>Dịch chia phần song song</span><input type="checkbox" role="switch" aria-label="Dịch chia phần song song" checked={splitOverride??!!state?.settings?.splitParts} disabled={busy||!state?.settings} onChange={e=>void toggleSplit(e.target.checked)}/></label>
+   <label className="ai-preload-toggle" title="TXT dưới 3.000 ký tự luôn dịch nguyên chương; lựa chọn song song áp dụng từ 3.000 ký tự."><span>Dịch chia phần song song</span><input type="checkbox" role="switch" aria-label="Dịch chia phần song song" checked={splitOverride??!!state?.settings?.splitParts} disabled={busy||!state?.settings} onChange={e=>void toggleSplit(e.target.checked)}/></label>
    {(job.error||onPauseRetry||onStop)&&<section className="ai-compact-job" aria-label="Điều khiển lượt dịch">
     {job.error&&<p role="status">{job.error}</p>}{job.retryIn!==undefined&&<small>Tự thử lại sau {job.retryIn} giây</small>}
     <div className="ai-actions">{onStop&&<button onClick={onStop}>{job.target==='Chương sau'?'Dừng chương sau':'Dừng chương này'}</button>}{onRetry&&<button onClick={onRetry}>{job.progress?.done||job.progress?.half===2?'Tiếp tục phần còn thiếu':'Thử lại AI'}</button>}{job.configuration&&job.error&&<button onClick={onOpenSettings}>{job.configuration==='keys'?'Kiểm tra API keys':'Sửa cấu hình AI'}</button>}{onPauseRetry&&<button onClick={onPauseRetry}>{job.target==='Chương sau'?'Dừng chương sau':'Dừng chương này'}</button>}</div>

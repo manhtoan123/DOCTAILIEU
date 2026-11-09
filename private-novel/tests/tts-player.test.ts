@@ -1,6 +1,9 @@
 import {afterEach,it,expect,vi} from 'vitest';
+// This suite covers the retained legacy gateway contract. CapCut/default is covered separately.
+vi.mock('../src/features/tts/services/tts-gateway',async importOriginal=>({...await importOriginal<typeof import('../src/features/tts/services/tts-gateway')>(),usesCapcutTts:()=>false,ttsGateway:()=>'https://ottsy.weilbyte.dev/api/generation'}));
 import {TikTokPlayer,tiktokVoices,sentences,type SpeechState} from '../src/features/tts/services/tts';
-afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();});
+const players:TikTokPlayer[]=[];
+afterEach(()=>{for(const player of players.splice(0))player.stop();vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();});
 const options={rate:1.4,pitch:1,flex:0};
 const mp3=btoa(String.fromCharCode(0xff,0xf3,0xe4,0xc4,1,2,3,4));
 const response=(data:unknown={success:true,data:mp3},headers:Record<string,string>={})=>new Response(JSON.stringify(data),{headers:{'Content-Type':'application/json',...headers}});
@@ -14,29 +17,30 @@ function setup(fetcher=vi.fn().mockImplementation(async()=>response())){
   vi.stubGlobal('fetch',fetcher);vi.stubGlobal('Audio',FakeAudio);
   const create=vi.spyOn(URL,'createObjectURL').mockReturnValue('blob:synthetic');const revoke=vi.spyOn(URL,'revokeObjectURL').mockImplementation(()=>{});
   const player=new TikTokPlayer((state,_sentence,message)=>{states.push(state);if(message)errors.push(message);},ended);
+  players.push(player);
   return {player,fetcher,states,errors,audios,create,revoke,ended};
 }
 async function playing(p:ReturnType<typeof setup>){await vi.waitFor(()=>expect(p.states.at(-1)).toBe('playing'));}
-it('automatically retries the same sentence after repeated gateway failure',async()=>{
+it('immediately repairs the same sentence after a temporary gateway failure',async()=>{
  vi.useFakeTimers();const fetcher=vi.fn().mockResolvedValueOnce(new Response('',{status:503})).mockResolvedValueOnce(new Response('',{status:503})).mockImplementation(async()=>response());const p=setup(fetcher);
- p.player.start('Xin chào.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(600);
- expect(p.states.at(-1)).toBe('loading');expect(p.errors[0]).toContain('Tự thử lại');expect(p.player.position().offset).toBe(0);
- await vi.advanceTimersByTimeAsync(2000);expect(p.states.at(-1)).toBe('playing');expect(fetcher).toHaveBeenCalledTimes(3);expect(fetcher.mock.calls[2][1].body).toBe(fetcher.mock.calls[0][1].body);p.player.stop();
+ p.player.start('Xin chào.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(50);
+ expect(p.states.at(-1)).toBe('playing');expect(p.errors[0]).toContain('Tự thử lại ngay');expect(p.player.position().offset).toBe(0);
+ expect(fetcher).toHaveBeenCalledTimes(3);expect(fetcher.mock.calls[2][1].body).toBe(fetcher.mock.calls[0][1].body);p.player.stop();
 });
 it('refetches corrupt gateway audio and only publishes the validated replacement',async()=>{
  vi.useFakeTimers();const p=setup(vi.fn().mockResolvedValueOnce(response({success:true,data:'%%%='})).mockImplementation(async()=>response()));
- p.player.start('Test.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(0);expect(p.create).not.toHaveBeenCalled();expect(p.states.at(-1)).toBe('loading');
- await vi.advanceTimersByTimeAsync(2000);expect(p.states.at(-1)).toBe('playing');expect(p.create).toHaveBeenCalledTimes(1);p.player.stop();
+ p.player.start('Test.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(50);
+ expect(p.states.at(-1)).toBe('playing');expect(p.fetcher).toHaveBeenCalledTimes(2);expect(p.create).toHaveBeenCalledTimes(1);p.player.stop();
 });
 it.each(['pause','stop'] as const)('%s cancels automatic recovery without restarting playback',async action=>{
- vi.useFakeTimers();const fetcher=vi.fn().mockResolvedValueOnce(new Response('',{status:503})).mockResolvedValueOnce(new Response('',{status:503})).mockImplementation(async()=>response());const p=setup(fetcher);
- p.player.start('Test.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(600);p.player[action]();await vi.advanceTimersByTimeAsync(60000);
+ vi.useFakeTimers();let release!:(response:Response)=>void;const fetcher=vi.fn().mockResolvedValueOnce(new Response('',{status:503})).mockImplementationOnce(()=>new Promise<Response>(resolve=>{release=resolve;})).mockImplementation(async()=>response());const p=setup(fetcher);
+ p.player.start('Test.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(50);expect(fetcher).toHaveBeenCalledTimes(2);p.player[action]();release(new Response('',{status:503}));await vi.advanceTimersByTimeAsync(60000);
  expect(fetcher).toHaveBeenCalledTimes(2);expect(p.states.at(-1)).toBe(action==='stop'?'idle':'paused');p.player.stop();
 });
 it('audio recovery retains the current offset and media time instead of restarting the chapter',async()=>{
  vi.useFakeTimers();const p=setup();p.player.start('First.Second.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(0);
  p.audios[0].onended!();await vi.advanceTimersByTimeAsync(0);Object.assign(p.audios[0],{currentTime:2.5});p.audios[0].onerror!();
- expect(p.player.position()).toEqual({offset:6,audioTime:2.5});await vi.advanceTimersByTimeAsync(2000);
+ expect(p.player.position()).toEqual({offset:6,audioTime:2.5});await vi.advanceTimersByTimeAsync(50);
  expect(p.states.at(-1)).toBe('playing');expect(p.player.position()).toEqual({offset:6,audioTime:2.5});expect(p.ended).not.toHaveBeenCalled();p.player.stop();
 });
 it('429 recovery respects Retry-After and waits for connection without making requests',async()=>{
@@ -44,6 +48,25 @@ it('429 recovery respects Retry-After and waits for connection without making re
  p.player.start('Test.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(9000);expect(p.fetcher).toHaveBeenCalledTimes(1);
  await vi.advanceTimersByTimeAsync(3000);expect(p.fetcher).toHaveBeenCalledTimes(1);vi.stubGlobal('navigator',{onLine:true});await vi.advanceTimersByTimeAsync(1000);
  expect(p.states.at(-1)).toBe('playing');expect(p.fetcher).toHaveBeenCalledTimes(2);p.player.stop();
+});
+it('reconnection immediately wakes recovery at the saved cursor instead of waiting for its poll',async()=>{
+ vi.useFakeTimers();const events=new EventTarget();vi.stubGlobal('window',events);let online=false;vi.stubGlobal('navigator',{get onLine(){return online;}});
+ const p=setup(vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch')).mockRejectedValueOnce(new TypeError('Failed to fetch')).mockImplementation(async()=>response()));
+ p.player.start('Test.',tiktokVoices[0],options,{offset:0,audioTime:2.5});await vi.advanceTimersByTimeAsync(50);expect(p.fetcher).toHaveBeenCalledTimes(2);expect(p.states.at(-1)).toBe('loading');
+ online=true;events.dispatchEvent(new Event('online'));await vi.advanceTimersByTimeAsync(0);
+ expect(p.fetcher).toHaveBeenCalledTimes(3);expect(p.states.at(-1)).toBe('playing');expect(p.player.position()).toEqual({offset:0,audioTime:2.5});p.player.stop();
+});
+it.each(['pause','stop'] as const)('%s cancels an offline recovery and its stale online callback',async action=>{
+ vi.useFakeTimers();const events=new EventTarget();vi.stubGlobal('window',events);const added=vi.spyOn(events,'addEventListener');let online=false;vi.stubGlobal('navigator',{get onLine(){return online;}});
+ const p=setup(vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));p.player.start('Test.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(50);
+ const listener=added.mock.calls.find(([type])=>type==='online')?.[1] as EventListener;expect(listener).toBeDefined();p.player[action]();online=true;listener(new Event('online'));events.dispatchEvent(new Event('online'));await vi.advanceTimersByTimeAsync(60000);
+ expect(p.fetcher).toHaveBeenCalledTimes(2);expect(p.states.at(-1)).toBe(action==='stop'?'idle':'paused');p.player.stop();
+});
+it('the first HTTP503 Retry-After survives immediate recovery and online events',async()=>{
+ vi.useFakeTimers();const events=new EventTarget();vi.stubGlobal('window',events);vi.stubGlobal('navigator',{onLine:true});
+ const p=setup(vi.fn().mockResolvedValueOnce(new Response('',{status:503,headers:{'Retry-After':'2'}})).mockImplementation(async()=>response()));
+ p.player.start('Test.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(50);expect(p.fetcher).toHaveBeenCalledTimes(1);events.dispatchEvent(new Event('online'));await vi.advanceTimersByTimeAsync(1900);expect(p.fetcher).toHaveBeenCalledTimes(1);
+ await vi.advanceTimersByTimeAsync(100);expect(p.fetcher).toHaveBeenCalledTimes(2);expect(p.states.at(-1)).toBe('playing');p.player.stop();
 });
 it('does not loop when autoplay permission is denied',async()=>{
  vi.useFakeTimers();const p=setup();p.player.start('Test.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(0);p.player.pause();p.audios[0].play.mockRejectedValueOnce(new DOMException('Permission required','NotAllowedError'));p.player.resume();await vi.advanceTimersByTimeAsync(60000);
@@ -76,8 +99,8 @@ it.each([
   ['stream oversize',()=>new Response(' '.repeat(2097153),{headers:{'Content-Type':'application/json'}}),'quá lớn'],
   ['HTTP error',()=>new Response('unavailable',{status:503}),'HTTP 503']
 ])('reports %s without publishing invalid audio',async(_name,make,message)=>{
-  const p=setup(vi.fn().mockImplementation(async()=>make()));p.player.start('Test.',tiktokVoices[0],options);
-  await vi.waitFor(()=>expect(p.errors).toHaveLength(1));expect(p.errors[0]).toContain(message);expect(p.fetcher).toHaveBeenCalledTimes(message==='HTTP 503'?2:1);expect(p.create).not.toHaveBeenCalled();p.player.stop();
+  vi.useFakeTimers();const p=setup(vi.fn().mockImplementation(async()=>make()));p.player.start('Test.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(50);
+  expect(p.errors).toHaveLength(message==='quá lớn'?1:2);expect(p.errors.every(error=>error.includes(message))).toBe(true);expect(p.fetcher).toHaveBeenCalledTimes(message==='HTTP 503'?4:message==='quá lớn'?1:2);expect(p.create).not.toHaveBeenCalled();p.player.stop();
 });
 it('bounds the entire request even if fetch ignores abort',async()=>{
   vi.useFakeTimers();const p=setup(vi.fn().mockReturnValue(new Promise(()=>{})));p.player.start('Test.',tiktokVoices[0],options);
@@ -135,6 +158,11 @@ function pendingSetup(){
 }
 const retained=(p:ReturnType<typeof setup>)=>(p.player as unknown as {requests:Map<string,unknown>}).requests.size;
 
+it('repairs a failed next-chunk request immediately while the current audio is still playing',async()=>{
+ vi.useFakeTimers();const p=pendingSetup();p.player.start('One.Two.Three.',tiktokVoices[0],options);p.pending[0].resolve(response());await vi.advanceTimersByTimeAsync(50);expect(p.states.at(-1)).toBe('playing');expect(p.pending).toHaveLength(3);
+ p.pending[1].reject(new TypeError('Failed to fetch'));await vi.advanceTimersByTimeAsync(50);expect(p.pending).toHaveLength(4);expect(p.pending[3].text).toBe('Two.');expect(p.player.position().offset).toBe(0);expect(p.states.at(-1)).toBe('playing');expect(p.player.resources().pending).toBeLessThanOrEqual(3);p.player.stop();
+});
+
 it('requests the next two chunks before ended, shares pending work and bounds the retained window',async()=>{
   const p=pendingSetup();p.player.start('One.Two.Three.Four.Five.',tiktokVoices[0],options);
   expect(p.pending.map(r=>r.text)).toEqual(['One.']);expect(p.audios).toHaveLength(0);p.pending[0].resolve(response());await playing(p);
@@ -173,7 +201,7 @@ it('keeps a failed prefetch handled and reports it once when the chunk becomes c
   await Promise.resolve();await Promise.resolve();
   expect(p.states.at(-1)).toBe('playing');expect(p.errors).toEqual([]);p.player.pause();expect(p.states.at(-1)).toBe('paused');p.player.resume();await playing(p);
   p.audios[0].onended!();await vi.waitFor(()=>expect(p.errors).toHaveLength(1));expect(p.states.at(-1)).toBe('loading');
-  expect(p.errors[0]).toContain('synthetic prefetch failure. Tự thử lại');expect(p.fetcher).toHaveBeenCalledTimes(4);expect(p.audios).toHaveLength(1);expect(p.pending[2].signal.aborted).toBe(true);expect(retained(p)).toBe(0);p.player.stop();
+  expect(p.errors[0]).toContain('synthetic prefetch failure. Tự thử lại ngay');await vi.waitFor(()=>expect(p.pending).toHaveLength(6));expect(p.pending.slice(4).map(request=>request.text)).toEqual(['Two.','Three.']);expect(p.player.position().offset).toBe(4);expect(p.audios).toHaveLength(1);expect(p.pending[2].signal.aborted).toBe(true);expect(p.player.resources().pending).toBeLessThanOrEqual(3);p.player.stop();
 });
 
 it('evicts completed chunks so repeated text outside the window is fetched anew',async()=>{
@@ -186,9 +214,9 @@ it('evicts completed chunks so repeated text outside the window is fetched anew'
 it('skips punctuation-only tails after the 200-codepoint boundary',()=>{const text='A'+'!'.repeat(201)+'Next.';const list=sentences(text);expect(list).toHaveLength(2);expect(list[1].start).toBe(202);for(const s of list){expect(/[\p{L}\p{N}]/u.test(s.text)).toBe(true);expect(text.slice(s.start,s.end)).toBe(s.text);}});
 
 it('retries transient HTTP500 once with exactly the same voice and text',async()=>{const fetcher=vi.fn().mockResolvedValueOnce(new Response('temporary',{status:500})).mockResolvedValue(response());const p=setup(fetcher);p.player.start('Xin chào.',tiktokVoices[0],options);await playing(p);expect(fetcher).toHaveBeenCalledTimes(2);expect(fetcher.mock.calls[0][1].body).toBe(fetcher.mock.calls[1][1].body);p.player.stop();});
-it('Stop cancels retry delay without making a second request',async()=>{vi.useFakeTimers();const fetcher=vi.fn().mockResolvedValue(new Response('temporary',{status:500}));const p=setup(fetcher);p.player.start('Xin chào.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(0);p.player.stop();await vi.advanceTimersByTimeAsync(1000);expect(fetcher).toHaveBeenCalledTimes(1);expect(p.states.at(-1)).toBe('idle');});
+it('Stop cancels the immediate retry before another request can start',async()=>{vi.useFakeTimers();const fetcher=vi.fn().mockResolvedValue(new Response('temporary',{status:500}));const p=setup(fetcher);p.player.start('Xin chào.',tiktokVoices[0],options);p.player.stop();await vi.advanceTimersByTimeAsync(1000);expect(fetcher).toHaveBeenCalledTimes(1);expect(p.states.at(-1)).toBe('idle');});
 it('retries a transient network failure once with exactly the same sentence and voice',async()=>{const fetcher=vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValue(response());const p=setup(fetcher);p.player.start('Xin chào.',tiktokVoices[0],options);await playing(p);expect(fetcher).toHaveBeenCalledTimes(2);expect(fetcher.mock.calls[0][1].body).toBe(fetcher.mock.calls[1][1].body);p.player.stop();});
-it('backs off automatically after the immediate network retry is exhausted',async()=>{const fetcher=vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));const p=setup(fetcher);p.player.start('Xin chào.',tiktokVoices[0],options);await vi.waitFor(()=>expect(p.errors).toHaveLength(1),{timeout:3000});expect(p.errors[0]).toContain('Failed to fetch');expect(fetcher).toHaveBeenCalledTimes(2);expect(p.create).not.toHaveBeenCalled();p.player.stop();});
+it('bounds the immediate recovery burst before backing off persistent network failures',async()=>{vi.useFakeTimers();const fetcher=vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));const p=setup(fetcher);p.player.start('Xin chào.',tiktokVoices[0],options);await vi.advanceTimersByTimeAsync(50);expect(p.errors[0]).toContain('Tự thử lại ngay');expect(p.errors.at(-1)).toContain('Tự thử lại sau 2 giây');expect(fetcher).toHaveBeenCalledTimes(4);await vi.advanceTimersByTimeAsync(1900);expect(fetcher).toHaveBeenCalledTimes(4);expect(p.create).not.toHaveBeenCalled();p.player.stop();await vi.advanceTimersByTimeAsync(60000);expect(fetcher).toHaveBeenCalledTimes(4);});
 it('does not retry a request that was cancelled through its abort signal',async()=>{const fetcher=vi.fn().mockRejectedValue(new DOMException('Aborted','AbortError'));const p=setup(fetcher);p.player.start('Xin chào.',tiktokVoices[0],options);await vi.waitFor(()=>expect(fetcher).toHaveBeenCalledTimes(1));await new Promise(resolve=>setTimeout(resolve,700));expect(fetcher).toHaveBeenCalledTimes(1);expect(p.errors).toEqual([]);expect(p.create).not.toHaveBeenCalled();p.player.stop();});
 
 it('reuses one media element and ignores a previous chunk callback on that same element',async()=>{

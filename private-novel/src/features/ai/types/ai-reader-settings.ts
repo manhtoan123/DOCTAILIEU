@@ -1,16 +1,17 @@
 import {db} from '../../../core/db';
 import {AI_DEFAULTS,aiBookSettingsKey,queueAiSettings,readReadingAiSettings} from '../services/ai-settings';
 import type {ReadingAiSettings} from './ai-settings-type';
+import {normalizeAiModel} from './ai-models';
 import {AI_QUALITY_ORDER} from '../services/ai-fallback';
 import {DEFAULT_SECOND_HALF_PROMPT} from '../services/ai-hybrid-prompt';
 import {getEligibleProfiles,readStoredPromptStock} from '../prompt/prompt-stock';
 import {validatePromptSettings} from '../prompt/prompt-schema';
 export const AI_COMMON_SETTINGS_KEY='ai-translate-settings';
-export const READER_FIRST_MODEL=AI_QUALITY_ORDER[0],READER_SECOND_MODEL='gemini-3.5-flash-lite' as const;
+export const READER_FIRST_MODEL='gemma-4-26b-a4b-it',READER_SECOND_MODEL='gemini-3.5-flash-lite' as const;
 const rowObject=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
 /** Runtime policy only: never migrate stored profiles, caches or book data on read. */
 export function automaticAiSettings(value:unknown):ReadingAiSettings{
- const {hybrid,...settings}=readReadingAiSettings(value);return {...settings,model:READER_FIRST_MODEL,fallbackModels:undefined,splitParts:settings.splitParts??true,addressingRules:settings.addressingRules??hybrid?.rules??''};
+ const {hybrid,...settings}=readReadingAiSettings(value);return {...settings,model:value===undefined?READER_FIRST_MODEL:settings.model,modelMode:settings.modelMode??'fixed',fallbackModels:[],splitParts:settings.splitParts??true,addressingRules:settings.addressingRules??hybrid?.rules??''};
 }
 /** Global templates/options; each book retains its chosen prompt and hybrid switch. */
 export function resolveReaderAiSettings(bookValue:unknown,commonValue:unknown):ReadingAiSettings{
@@ -44,6 +45,15 @@ export function setReaderSplitParts(bookId:string,enabled:boolean):Promise<Readi
   return resolveReaderAiSettings(value,preferences.common);
  }));
 }
+/** Model choice belongs to this reader scope, independently of the selected prompt. */
+export function setReaderModel(bookId:string,model:string,modelMode?:'auto'|'fixed'):Promise<ReadingAiSettings>{
+ const selected=normalizeAiModel(model);if(!selected)return Promise.reject(Error('Model không hợp lệ.'));
+ return queueAiSettings(aiBookSettingsKey(bookId),()=>db.transaction('rw',db.settings,async()=>{
+  const preferences=await readReaderAiPreferences(bookId);
+  const value={...rowObject(preferences.book??preferences.common),...readReadingAiSettings(preferences.book??preferences.common),model:selected,modelMode:modelMode??preferences.settings.modelMode??'fixed'};
+  await db.settings.put({key:aiBookSettingsKey(bookId),value});return resolveReaderAiSettings(value,preferences.common);
+ }));
+}
 /** Select a snapshot atomically; choosing a prompt does not change the hybrid switch. */
 export function selectReaderPrompt(id:string,bookId?:string):Promise<ReadingAiSettings>{
  const key=bookId?aiBookSettingsKey(bookId):AI_COMMON_SETTINGS_KEY;
@@ -51,7 +61,8 @@ export function selectReaderPrompt(id:string,bookId?:string):Promise<ReadingAiSe
   const stock=await readStoredPromptStock(),profile=getEligibleProfiles(stock,bookId).find(p=>p.id===id);if(!profile||profile.id===stock.defaultProfileId)throw Error('Prompt không thuộc phạm vi này hoặc đã bị xóa.');
   const [row,common]=await Promise.all([db.settings.get(key),db.settings.get(AI_COMMON_SETTINGS_KEY)]),previous=readReadingAiSettings(row?.value);
   const template=profile.settings.hybrid??previous.hybrid;
-  const value={...profile.settings,...(bookId?{splitParts:previous.splitParts??automaticAiSettings(common?.value).splitParts}:{}),hybrid:bookId?(previous.hybrid?{...previous.hybrid,...template}:undefined):template,chosenProfileId:profile.id,chosenProfileSettings:{...profile.settings}};
+  const model=automaticAiSettings(row?.value??common?.value).model;
+  const value={...profile.settings,model,modelMode:automaticAiSettings(row?.value??common?.value).modelMode,...(bookId?{splitParts:previous.splitParts??automaticAiSettings(common?.value).splitParts}:{}),hybrid:bookId?(previous.hybrid?{...previous.hybrid,...template}:undefined):template,chosenProfileId:profile.id,chosenProfileSettings:{...profile.settings}};
   await db.settings.put({key,value});return bookId?resolveReaderAiSettings(value,common?.value):automaticAiSettings(value);
  }));
 }

@@ -133,9 +133,9 @@ describe('AI client response classification', () => {
   });
   it('accepts a mapped or aliased model for a removed id instead of failing the open tab', async () => {
     respond(Response.json({...valid, model: DEFAULT_AI_MODEL}));
-    expect(await aiTranslate({text: req.text, model: 'gemini-3.5-flash-lite'})).toMatchObject({model: DEFAULT_AI_MODEL});
-    respond(Response.json({...valid, model: 'gemini-3.5-flash-lite'}));
-    expect(await aiTranslate({text: req.text, model: 'gemini-3.5-flash-lite'})).toMatchObject({model: 'gemini-3.5-flash-lite'});
+    expect(await aiTranslate({text: req.text, model: 'gemini-3.6-flash'})).toMatchObject({model: DEFAULT_AI_MODEL});
+    respond(Response.json({...valid, model: 'gemini-3.6-flash'}));
+    expect(await aiTranslate({text: req.text, model: 'gemini-3.6-flash'})).toMatchObject({model: 'gemini-3.6-flash'});
   });
   it('still rejects a response for a different listed model', async () => {
     respond(Response.json({...valid, model: 'gemini-3.8-flash'}));

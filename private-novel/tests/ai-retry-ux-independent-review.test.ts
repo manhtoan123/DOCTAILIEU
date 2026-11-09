@@ -28,7 +28,7 @@ it('review: going offline during model cooldown pauses the next send until onlin
  vi.useFakeTimers();vi.spyOn(Math,'random').mockReturnValue(0);
  const browser=new EventTarget(),connection={onLine:true};vi.stubGlobal('window',browser);vi.stubGlobal('navigator',connection);
  const send=vi.fn().mockRejectedValueOnce(new AiTranslateClientError('ai_rate_limited','Busy',429,'http',undefined,undefined,1000)).mockResolvedValue('done');
- const controller=new AbortController(),pending=new AiRecovery().run('model',controller.signal,send);
+ const controller=new AbortController(),pending=new AiRecovery().run('gemini-2.5-flash',controller.signal,send);
  await vi.advanceTimersByTimeAsync(900);connection.onLine=false;
  await vi.advanceTimersByTimeAsync(1000);expect(send).toHaveBeenCalledTimes(1);
  connection.onLine=true;browser.dispatchEvent(new Event('online'));
@@ -39,9 +39,9 @@ it('review: reconnection rechecks a cooldown extended by an already in-flight si
  vi.useFakeTimers();vi.spyOn(Math,'random').mockReturnValue(0);
  const browser=new EventTarget(),connection={onLine:true};vi.stubGlobal('window',browser);vi.stubGlobal('navigator',connection);
  const recovery=new AiRecovery(),controller=new AbortController();let rejectSibling!:(error:unknown)=>void;
- const sibling=recovery.run('model',controller.signal,()=>new Promise((_,reject)=>{rejectSibling=reject;}),true,0).catch(e=>e);
+ const sibling=recovery.run('gemini-2.5-flash',controller.signal,()=>new Promise((_,reject)=>{rejectSibling=reject;}),true,0).catch(e=>e);
  const send=vi.fn().mockRejectedValueOnce(new AiTranslateClientError('ai_rate_limited','Busy',429,'http',undefined,undefined,1000)).mockResolvedValue('done');
- const pending=recovery.run('model',controller.signal,send);
+ const pending=recovery.run('gemini-2.5-flash',controller.signal,send);
  await vi.advanceTimersByTimeAsync(900);connection.onLine=false;await vi.advanceTimersByTimeAsync(200);
  rejectSibling(new AiTranslateClientError('ai_rate_limited','Busy',429,'http',undefined,undefined,5000));await sibling;
  await vi.advanceTimersByTimeAsync(400);connection.onLine=true;browser.dispatchEvent(new Event('online'));
@@ -64,7 +64,7 @@ it.each(['txt','epub'] as const)('review: automatic %s recovery starts a fresh b
 
 it.each(['txt','epub'] as const)('review: manual hybrid %s retry respects the failed second-half model cooldown',async format=>{
  vi.useFakeTimers();
- const selected={...settings,hybrid:{version:1 as const,liteModel:'gemini-3.1-flash-lite' as const,rules:''}},text='甲'.repeat(1800)+'乙'.repeat(1800),input={...source,text};
+ const selected={...settings,hybrid:{version:1 as const,liteModel:'gemini-3.1-flash-lite' as const,rules:''}},text='甲'.repeat(format==='txt'?3000:1800)+'乙'.repeat(format==='txt'?3000:1800),input={...source,text};
  const limited=new AiTranslateClientError('ai_rate_limited','Busy',429,'http',undefined,undefined,120000);
  const send=vi.fn(async(req:AiTranslateClientRequest)=>{if(req.continuation)throw limited;return answer(req,format==='txt'?'First':JSON.stringify({'0':'First'}));});
  const session=format==='txt'?new AiReadingSession(send):new EpubAiSession(undefined,send);
@@ -87,7 +87,7 @@ it('review: ordinary EPUB manual retry preserves server cooldown across its recr
 });
 
 it.each(['txt','epub'] as const)('review: hybrid %s records exactly one chapter metric and preserves node mapping',async format=>{
- const before=new Set(getAiRunMetrics().map(row=>row.workId)),text='甲'.repeat(1800)+'乙'.repeat(1800),selected={...settings,hybrid:{version:1 as const,liteModel:'gemini-3.1-flash-lite' as const,rules:''}},input={...source,text};
+ const before=new Set(getAiRunMetrics().map(row=>row.workId)),text='甲'.repeat(format==='txt'?3000:1800)+'乙'.repeat(format==='txt'?3000:1800),selected={...settings,hybrid:{version:1 as const,liteModel:'gemini-3.1-flash-lite' as const,rules:''}},input={...source,text};
  const send=vi.fn(async(req:AiTranslateClientRequest)=>answer(req,format==='epub'?JSON.stringify(Object.fromEntries(Object.keys(JSON.parse(req.text)).map(key=>[key,req.continuation?'Second':'First']))):req.continuation?'Second':'First'));
  if(format==='txt'){const session=new AiReadingSession(send);try{expect((await session.request(input,selected,[])).result).toBe('First\nSecond');}finally{session.clear();}}
  else{const session=new EpubAiSession(undefined,send);try{expect((await session.request(input,selected,[],{path:'c.xhtml',nodes:['甲'.repeat(1800),'乙'.repeat(1800)],body:'<p>synthetic</p>',styles:[]})).nodes).toEqual(['First','Second']);}finally{session.clear();}}

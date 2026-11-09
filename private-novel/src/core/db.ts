@@ -20,8 +20,9 @@ db.use({stack:'dbcore',name:'source-sync-revision',level:10,create:down=>({...do
     return table.mutate({...request,values:request.values.map((source:SourceFile)=>({...source,syncRevision:sourceRevision(source)}))});
   }};
 }})});
-export async function deleteBook(id: string) {
-  await db.transaction('rw',[db.books,db.chapters,db.sources,db.progress,db.names,db.importJobs],async()=>{
+export async function deleteBook(id: string,guard?:(book:Book|undefined)=>void|Promise<void>) {
+  await db.transaction('rw',[db.books,db.chapters,db.sources,db.progress,db.names,db.importJobs,...(guard?[db.settings]:[])],async()=>{
+    if(guard)await guard(await db.books.get(id));
     await db.chapters.where('bookId').equals(id).delete(); await db.sources.where('bookId').equals(id).delete();
     await db.names.where('bookId').equals(id).delete(); await db.progress.delete(id); await db.importJobs.where('bookId').equals(id).delete();
     await db.books.delete(id);

@@ -4,7 +4,7 @@ import {aiTranslate,AiTranslateClientError,parseAiRetryAfter} from '../src/featu
 import {isTransientAiFailure} from '../src/features/ai/services/ai-recovery';
 
 // Explicit single-model configuration retains the existing bounded recovery policy.
-const AI_DEFAULTS={...DEFAULT_READING_SETTINGS,fallbackModels:[]};
+const AI_DEFAULTS={...DEFAULT_READING_SETTINGS,model:'gemini-3.5-flash',fallbackModels:[]};
 const source={bookId:'book',id:'next',revision:1,text:'合成故事。'};
 const result={result:'Truyện tổng hợp.',model:AI_DEFAULTS.model,finishReason:'STOP',inputTokens:1,outputTokens:2};
 const transient=()=>new AiTranslateClientError('ai_gateway_error','Temporary',502,'content_type');
@@ -14,11 +14,11 @@ afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();vi.unstubAllGlobals();});
 
 describe('bounded AI reading recovery',()=>{
   it('promotes the same prewarm timeout-splitting job, preserving successful children',async()=>{
-    const long={...source,text:'中'.repeat(800)},send=vi.fn().mockRejectedValueOnce(new AiTranslateClientError('ai_timeout','timeout',504)).mockResolvedValue(result);
+    const long={...source,text:'a'.repeat(6000)},send=vi.fn().mockRejectedValueOnce(new AiTranslateClientError('ai_timeout','timeout',504)).mockResolvedValue(result);
     const session=new AiReadingSession(send),job=session.request(long,AI_DEFAULTS,[]);
     expect(session.request(long,AI_DEFAULTS,[])).toBe(job);
     expect(await job).toMatchObject({result:'Truyện tổng hợp.\nTruyện tổng hợp.'});expect(send).toHaveBeenCalledTimes(3);
-    expect(send.mock.calls.map(c=>c[0].text.length)).toEqual([800,400,400]);expect(await session.request(long,AI_DEFAULTS,[])).toEqual(await job);expect(send).toHaveBeenCalledTimes(3);
+    expect(send.mock.calls.map(c=>c[0].text.length)).toEqual([6000,3000,3000]);expect(await session.request(long,AI_DEFAULTS,[])).toEqual(await job);expect(send).toHaveBeenCalledTimes(3);
   });
   it('recovers prewarm with identical request and promotion retains the exact promise',async()=>{
     const send=vi.fn().mockRejectedValueOnce(transient()).mockResolvedValue(result);
@@ -31,7 +31,7 @@ describe('bounded AI reading recovery',()=>{
     expect(send).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(await job).toEqual(result);expect(send).toHaveBeenCalledTimes(2);
-    expect(send.mock.calls[1]).toEqual(send.mock.calls[0]);
+    expect(send.mock.calls[1][0]).toEqual(send.mock.calls[0][0]);expect(send.mock.calls[1][1]).toBe(send.mock.calls[0][1]);expect(send.mock.calls[1][2]).toEqual(expect.any(Function));
     expect(await session.request(source,AI_DEFAULTS,[])).toEqual(result);
     expect(send).toHaveBeenCalledTimes(2);
   });

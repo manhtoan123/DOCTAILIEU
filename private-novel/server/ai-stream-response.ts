@@ -1,22 +1,25 @@
 import {secure} from './auth';
 import {AI_STREAM_TYPE,type AiStreamLease} from '../src/features/ai/services/ai-stream-protocol';
-/** Only safe progress markers and the already-validated JSON response cross the boundary. */
-export function aiStreamResponse(request:Request,run:(request:Request,activity:(lease?:AiStreamLease)=>void)=>Promise<Response>):Response{
+/** Safe activity, opt-in provisional text, and the final validated JSON response. */
+export function aiStreamResponse(request:Request,run:(request:Request,activity:(lease?:AiStreamLease,text?:string,phase?:'repair'|'repair-progress')=>void)=>Promise<Response>):Response{
  const controller=new AbortController(),encoder=new TextEncoder();
  const abort=()=>controller.abort();request.signal.addEventListener('abort',abort,{once:true});if(request.signal.aborted)abort();
  const forwarded=new Request(request,{signal:controller.signal});
- let stopped=false,lastProgress=-Infinity,leaseSent=false;
+ let stopped=false,lastProgress=-Infinity,leaseSent=false,answerProgressSent=false;
  const stream=new ReadableStream<Uint8Array>({
   start(sink){
    const emit=(value:unknown)=>{if(!stopped)sink.enqueue(encoder.encode(JSON.stringify(value)+'\n'));};
-   const activity=(lease?:AiStreamLease)=>{
+   let previewEvents=0,previewBytes=0;
+   const activity=(lease?:AiStreamLease,text?:string,phase?:'repair'|'repair-progress')=>{
+    if(phase){if(request.headers.get('X-AI-Han-Repair')==='1'&&(phase==='repair'||Date.now()-lastProgress>=250)){lastProgress=Date.now();emit({type:'repair',phase:phase==='repair'?'start':'progress'});}return;}
+    if(text&&request.headers.get('X-AI-Preview')==='1'&&previewEvents<3000){const bytes=encoder.encode(JSON.stringify({type:'text',text})+'\n').length;if(previewBytes+bytes<=512000){previewEvents++;previewBytes+=bytes;emit({type:'text',text});}}
     // Lease evidence is emitted once, as soon as the server has reserved a key.
     if(lease&&!leaseSent){leaseSent=true;lastProgress=Date.now();emit({type:'progress',lease});return;}
-    if(Date.now()-lastProgress>=250){lastProgress=Date.now();emit({type:'progress'});}
+    if(text&&!answerProgressSent||Date.now()-lastProgress>=250){if(text)answerProgressSent=true;lastProgress=Date.now();emit({type:'progress'});}
    };
    void run(forwarded,activity).then(async response=>{
     const headers:Record<string,string>={};
-    for(const key of ['X-AI-Request-Id','X-AI-Duration-Ms','X-AI-Failure-Reason','X-AI-Parallel','X-AI-Keys-Available','X-AI-Lease-Id-Hash','X-AI-Key-Slot','Retry-After']){const value=response.headers.get(key);if(value!==null)headers[key]=value;}
+    for(const key of ['X-AI-Request-Id','X-AI-Duration-Ms','X-AI-Failure-Reason','X-AI-Parallel','X-AI-Keys-Available','X-AI-Lease-Id-Hash','X-AI-Key-Slot','X-AI-Execution','X-AI-Thought-Tokens','X-AI-Total-Tokens','Retry-After']){const value=response.headers.get(key);if(value!==null)headers[key]=value;}
     emit({type:'result',status:response.status,headers,data:await response.json()});
    }).catch(()=>emit({type:'result',status:502,headers:{},data:{error:'ai_network_error'}})).finally(()=>{
     request.signal.removeEventListener('abort',abort);if(!stopped){stopped=true;sink.close();}

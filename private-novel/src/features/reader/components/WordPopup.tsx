@@ -13,10 +13,11 @@ export interface WordPopupProps {
   error?:string;
   canExpandLeft:boolean;
   canExpandRight:boolean;
+  canSelectRange?:boolean;
   anchor:{left:number;top:number;right:number;bottom:number};
   onSourceChange:(value:string)=>void;
   onCustomChange:(value:string)=>void;
-  onExpand:(direction:'left'|'right')=>void;
+  onExpand:(direction:'left'|'right',count:number)=>void;
   onApply:(value:string,persistent:boolean)=>void;
   onClose:()=>void;
   onManage:()=>void;
@@ -37,6 +38,13 @@ export default function WordPopup(props:WordPopupProps){
   const {source,hanviet,meanings,translated,custom,loading,busy,error,anchor,onClose}=props;
   const box=useRef<HTMLDivElement>(null);
   const closeButton=useRef<HTMLButtonElement>(null);
+  const lastExpand=useRef<{direction:'left'|'right';at:number;count:number}|undefined>(undefined);
+  function expand(direction:'left'|'right',detail:number){
+    const last=lastExpand.current,at=performance.now();
+    const count=props.canSelectRange&&detail>0&&last?.direction===direction&&at-last.at<450?Math.min(3,last.count+1):1;
+    lastExpand.current=detail>0?{direction,at,count}:undefined;
+    if(count>1||(direction==='left'?props.canExpandLeft:props.canExpandRight))props.onExpand(direction,count);
+  }
   const dismiss=useRef({busy,onClose});
   dismiss.current={busy,onClose};
   const [hv,setHv]=useState(hanviet);
@@ -105,9 +113,9 @@ export default function WordPopup(props:WordPopupProps){
     <button type="button" className="stv-word-close stv-word-close-outside" aria-label="Đóng Chỉnh Name bên trái" title="Đóng" disabled={busy} onClick={onClose}>×</button>
     <div className="stv-word-scroll" style={{maxHeight:typeof position.maxHeight==='number'?Math.max(1,position.maxHeight-12):undefined}}>
       <header className="stv-word-header">
-        <button type="button" aria-label="Mở rộng sang trái" title="Mở rộng sang trái" disabled={busy||!props.canExpandLeft} onClick={()=>props.onExpand('left')}>←</button>
+        <button type="button" aria-label="Mở rộng sang trái" title="Mở rộng sang trái" disabled={busy||!props.canExpandLeft&&!props.canSelectRange} onClick={event=>expand('left',event.detail)}>←</button>
         <span>Mở rộng</span>
-        <button type="button" aria-label="Mở rộng sang phải" title="Mở rộng sang phải" disabled={busy||!props.canExpandRight} onClick={()=>props.onExpand('right')}>→</button>
+        <button type="button" aria-label="Mở rộng sang phải" title="Mở rộng sang phải" disabled={busy||!props.canExpandRight&&!props.canSelectRange} onClick={event=>expand('right',event.detail)}>→</button>
         <button ref={closeButton} type="button" className="stv-word-close" aria-label="Đóng Chỉnh Name" title="Đóng" disabled={busy} onClick={onClose}>×</button>
       </header>
       <div className="stv-word-row">

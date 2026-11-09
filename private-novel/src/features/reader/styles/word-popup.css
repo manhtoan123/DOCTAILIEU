@@ -9,6 +9,7 @@
 .stv-word-popup .stv-word-header{display:flex;align-items:center;gap:8px;height:30px;padding:0 0 5px;position:relative}
 .stv-word-popup .stv-word-header>span{font-size:14px}
 .stv-word-popup .stv-word-header>button:first-child,.stv-word-popup .stv-word-header>button:nth-of-type(2){width:27px;font-size:17px}
+.stv-word-popup .stv-word-header>button{touch-action:manipulation}
 .reader .stv-word-popup .stv-word-close{color:#fff;background:#dc3545;border-color:#dc3545;width:23px;height:23px;font-size:19px;line-height:16px;padding:0;margin-left:auto}
 .stv-word-popup .stv-word-close:hover:not(:disabled){background:#c82333}
 .stv-word-popup .stv-word-close-outside{position:absolute;left:-25px;top:0;margin:0}

@@ -1,15 +1,23 @@
+import {AI_LOG_CONTEXT_HEADER,AI_LOG_CONTEXT_MAX_BYTES,type AiLogRequestContext} from '../../../shared/types/ai-log';
+import {supportsAiLogV2} from './ai-log-client';
 /**
  * AI client (frontend) — gọi /api/ai/translate.
  * Gemini key chỉ ở server. Không cần mã kết nối hoặc đăng nhập.
  */
 import { DEFAULT_AI_MODEL, normalizeAiModel } from '../types/ai-models';
-import {hasCopiedSource} from './ai-source-copy';
 import {nameSourceKey,parseNameValue} from '../../names-convert/services/name-images';
 import {validContinuation,aiUserPromptPreview,hybridTemplateValid,type AiContinuation} from './ai-hybrid-prompt';
-import {AI_STREAM_TYPE,AI_STREAM_FIRST_MS,AI_STREAM_IDLE_MS,AI_STREAM_TOTAL_MS,AI_STREAM_CLIENT_GRACE_MS,type AiStreamLease} from './ai-stream-protocol';
+import {AI_STREAM_TYPE,aiFirstAnswerMs,AI_STREAM_IDLE_MS,AI_STREAM_TOTAL_MS,AI_STREAM_CLIENT_GRACE_MS,type AiStreamLease} from './ai-stream-protocol';
 import {readAiStreamResponse} from './ai-stream-client';
+import {readExecutionHeader,readUsageHeader,type AiExecution} from './ai-execution';
+import {readAiHanRepair} from './ai-han-repair';
+import type {AiHanAudits} from './ai-han-audit';
+import type {PolishFallbackRange,PolishTerm,SkippedPolishPart} from './polish-output';
 
 export interface AiTranslateClientRequest {
+  task?:'name-extraction';
+  reportFreeKeys?:boolean;
+  polishOutput?:boolean;
   text: string;
   context?:string;
   systemPrompt?: string;
@@ -22,8 +30,16 @@ export interface AiTranslateClientRequest {
 }
 
 /** Safe lease evidence returned by the server: identifiers only, never credential material. */
-export interface AiLeaseInfo {requestId:string;leaseIdHash:string;keySlot?:number;keysAvailable?:number}
-export interface AiTranslateClientResponse {
+export interface AiLeaseInfo {requestId:string;leaseIdHash:string;keySlot?:number;keysAvailable?:number;freeKeys?:number}
+export interface AiTranslateClientResponse extends AiHanAudits {
+  polishTerms?:PolishTerm[];
+  polishSkipped?:SkippedPolishPart[];
+  polishFallback?:PolishFallbackRange[];
+  /** Observed server request identity; excluded from request/cache identity. */
+  logRequestId?:string;
+  execution?:AiExecution;
+  thinkingTokens?:number;
+  totalTokens?:number;
   division?:import('./ai-division').AiDivision;
   textMap?:import('./ai-text-map').AiTextMap;
   result: string;
@@ -49,6 +65,8 @@ export type AiTranslateError =
   | string;
 
 export class AiTranslateClientError extends Error {
+  /** Request-local evidence only; never persisted as translated content. */
+  answerStarted=false;
   constructor(
     public readonly code: AiTranslateError,
     message: string,
@@ -63,7 +81,7 @@ export class AiTranslateClientError extends Error {
   }
 }
 export function aiFailureAction(code?:string):'keys'|'settings'|undefined{
-  if(code==='ai_auth_error'||code==='ai_not_configured')return 'keys';
+  if(code==='ai_auth_error'||code==='ai_not_configured'||code==='ai_provider_unavailable')return 'keys';
   if(code&&['ai_request_rejected','invalid_prompt','prompt_too_large','ai_invalid_model','invalid_request','invalid_names','invalid_temperature'].includes(code))return 'settings';
 }
 
@@ -76,9 +94,10 @@ const FRIENDLY: Record<string, string> = {
   ai_gateway_error: 'Máy chủ trung gian chưa trả được bản dịch. Thử lại sau.',
   ai_response_too_large: 'Phản hồi dịch vượt giới hạn kích thước.',
   ai_location_unavailable: 'Google chưa hỗ trợ vị trí máy chủ hiện tại. Cần đổi tuyến máy chủ được hỗ trợ.',
-  ai_incomplete_result: 'Gemini chưa dịch trọn vẹn. Không hiển thị bản bị cắt; thử đoạn ngắn hơn.',
+  ai_incomplete_result: 'AI chưa trả kết quả hoàn tất hợp lệ. Phần chưa được xác nhận vẫn giữ bản trước.',
   invalid_prompt: 'Prompt không hợp lệ. User Prompt phải chứa {{text}}.',
   ai_not_configured: 'Chức năng dịch AI chưa được cấu hình trên server.',
+  ai_provider_unavailable:'Nhà cung cấp không có key khả dụng. Auto có thể thử model dự phòng; chế độ cố định cần kiểm tra key hoặc chọn model khác.',
   ai_rate_limited: 'API đang bận, vui lòng thử lại sau ít phút.',
   ai_timeout: 'Yêu cầu dịch quá thời gian. Thử đoạn ngắn hơn hoặc thử lại.',
   ai_upstream_error: 'Server Gemini trả lỗi. Thử lại sau.',
@@ -96,21 +115,30 @@ const SERVER_FAILURE_REASONS = new Set(['untranslated_source','output_limit','re
   'upstream_usage', 'upstream_finish_reason', 'upstream_empty_result', 'size_limit', 'upstream_http',
   'timeout', 'cancelled', 'network']);
 
-export function friendlyAiError(code: string): string {
+export function friendlyAiError(code: string,reason?:string): string {
+  if((code==='ai_incomplete_result'||code==='ai_invalid_response')&&(reason==='upstream_finish_reason'||reason==='finish_reason'))return 'Nhà cung cấp AI không trả trạng thái kết thúc hợp lệ. Chưa xác nhận phần này hoàn tất.';
+  if(code==='ai_incomplete_result'&&reason==='output_limit')return 'AI chạm giới hạn đầu ra; phần này chưa hoàn tất.';
   if (code.startsWith('ai_empty_result:'))
     return `Gemini trả kết quả rỗng (${code.slice('ai_empty_result:'.length)}).`;
   return FRIENDLY[code] ?? `Lỗi dịch AI: ${code}`;
 }
 
 export function assertAiTranslationCoverage(input:AiTranslateClientRequest,result:AiTranslateClientResponse):void{
-  const source=[input.text,input.context??'',input.continuation?.version===3?input.continuation.firstHalfSource:''].join('\n');
-  if(hasCopiedSource(source,result.result,Object.values(input.names??{})))throw new AiTranslateClientError('ai_untranslated_result',friendlyAiError('ai_untranslated_result'),502,'untranslated_source');
+  // Provider output is accepted when it is nonempty and schema-valid. Some models
+  // legitimately preserve names, punctuation, or source fragments.
 }
+
+/** Negotiated metadata is a header only; never provider input or cache identity. */
+export function aiLogRequestHeaders(context?:AiLogRequestContext):Record<string,string>{if(!context||!supportsAiLogV2())return {};try{const value=JSON.stringify(context);if(value.length>AI_LOG_CONTEXT_MAX_BYTES||!/^[\x20-\x7e]+$/.test(value))return {};return {[AI_LOG_CONTEXT_HEADER]:value};}catch{return {};}}
 
 export async function aiTranslate(
   req: AiTranslateClientRequest,
   signal?: AbortSignal,
   onLease?: (lease: AiLeaseInfo) => void,
+  onText?: (text:string)=>void,
+  immediate=false,
+  avoidKeySlot?:number,
+  logContext?:AiLogRequestContext,
 ): Promise<AiTranslateClientResponse> {
   // Legacy JSON keeps its 40s watchdog. Negotiated activity has separate first,
   // idle and hard bounds; empty transport bytes never extend the idle deadline.
@@ -118,8 +146,9 @@ export async function aiTranslate(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let hardTimer: ReturnType<typeof setTimeout> | undefined;
   let abort!: () => void;
-  let activity!:(phase?:'progress'|'legacy')=>void;
+  let activity!:(phase?:'progress'|'legacy'|'repair'|'repair-progress')=>void;
   const startedAt=Date.now();
+  let answerStarted=false;
   const cancelled = new Promise<never>((_, reject) => {
     abort = () => {
       controller.abort();
@@ -129,14 +158,17 @@ export async function aiTranslate(
       controller.abort();
       reject(new AiTranslateClientError('ai_timeout', friendlyAiError('ai_timeout'), undefined, 'client_deadline'));
     };
-    timer=setTimeout(expire,AI_STREAM_FIRST_MS+AI_STREAM_CLIENT_GRACE_MS);
-    activity=(phase='progress')=>{clearTimeout(timer);const remaining=phase==='legacy'?40_000-(Date.now()-startedAt):AI_STREAM_IDLE_MS+AI_STREAM_CLIENT_GRACE_MS;if(remaining<=0)expire();else timer=setTimeout(expire,remaining);};
+    timer=setTimeout(expire,aiFirstAnswerMs(req.model??DEFAULT_AI_MODEL)+AI_STREAM_CLIENT_GRACE_MS);
+    activity=(phase='progress')=>{if(phase==='progress')answerStarted=true;clearTimeout(timer);const remaining=phase==='legacy'?40_000-(Date.now()-startedAt):phase==='repair'?aiFirstAnswerMs(req.model??DEFAULT_AI_MODEL)+AI_STREAM_CLIENT_GRACE_MS:AI_STREAM_IDLE_MS+AI_STREAM_CLIENT_GRACE_MS;if(remaining<=0)expire();else timer=setTimeout(expire,remaining);};
     hardTimer=setTimeout(expire,AI_STREAM_TOTAL_MS+15_000);
     signal?.addEventListener('abort', abort, {once: true});
     if (signal?.aborted) abort();
   });
   try {
-    return await Promise.race([translateResponse(req, controller.signal,activity,onLease), cancelled]);
+    return await Promise.race([translateResponse(req, controller.signal,activity,onLease,onText,immediate,avoidKeySlot,logContext), cancelled]);
+  } catch(error) {
+    if(error instanceof AiTranslateClientError)error.answerStarted=answerStarted;
+    throw error;
   } finally {
     clearTimeout(timer);
     clearTimeout(hardTimer);
@@ -157,17 +189,18 @@ export function parseAiRetryAfter(value: string | null, now = Date.now()): numbe
   return Number.isFinite(date) ? Math.max(0, date - now) : undefined;
 }
 
-async function translateResponse(req: AiTranslateClientRequest, signal: AbortSignal,activity:(phase?:'progress'|'legacy')=>void,onLease?:(lease:AiLeaseInfo)=>void): Promise<AiTranslateClientResponse> {
+async function translateResponse(req: AiTranslateClientRequest, signal: AbortSignal,activity:(phase?:'progress'|'legacy'|'repair'|'repair-progress')=>void,onLease?:(lease:AiLeaseInfo)=>void,onText?:(text:string)=>void,immediate=false,avoidKeySlot?:number,logContext?:AiLogRequestContext): Promise<AiTranslateClientResponse> {
   if(req.continuation||req.addressingRules!==undefined){
     if(req.continuation&&!validContinuation(req.continuation)||!hybridTemplateValid(req.userPromptTemplate??'{{text}}')||req.addressingRules!==undefined&&(typeof req.addressingRules!=='string'||req.addressingRules.length>2000))throw new AiTranslateClientError('invalid_prompt','Dịch kết hợp cần đúng một {{text}} và toàn bộ mẫu hợp lệ.');
     if(aiUserPromptPreview(req).length+(req.systemPrompt?.length??0)>128000||new TextEncoder().encode(JSON.stringify(req)).byteLength>256*1024)throw new AiTranslateClientError('prompt_too_large','Toàn bộ mẫu vượt giới hạn dịch kết hợp. Giữ tiến độ; hãy chọn chế độ thường cho chương này.');
   }
   if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
   let res: Response;
+  const {reportFreeKeys,polishOutput,...body}=req;
   try { res = await fetch('/api/ai/translate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json','Accept':AI_STREAM_TYPE },
-    body: JSON.stringify(req),
+    headers: { 'Content-Type': 'application/json','Accept':AI_STREAM_TYPE,...(polishOutput?{}:{'X-AI-Han-Repair':'1'}),...aiLogRequestHeaders(logContext),...(reportFreeKeys?{'X-AI-Free-Keys':'1'}:{}),...(onText?{'X-AI-Preview':'1'}:{}),...(immediate?{'X-AI-Immediate':'1'}:{}),...(immediate&&Number.isSafeInteger(avoidKeySlot)&&avoidKeySlot!>=1&&avoidKeySlot!<=32?{'X-AI-Avoid-Key-Slot':String(avoidKeySlot)}:{}) },
+    body: JSON.stringify(body),
     signal,
   }); } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw error;
@@ -181,7 +214,7 @@ async function translateResponse(req: AiTranslateClientRequest, signal: AbortSig
   const notifyLease=(lease:AiLeaseInfo)=>{if(notifiedLease)return;notifiedLease=true;onLease?.(lease);};
   if(res.ok&&res.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase()===AI_STREAM_TYPE){
     // The first-activity deadline starts at send time, not at delayed headers.
-    try{res=await readAiStreamResponse(res,signal,()=>activity(),lease=>notifyLease(lease));}
+    try{res=await readAiStreamResponse(res,signal,phase=>activity(phase),lease=>notifyLease(lease),onText);}
     catch(error){if(signal.aborted)throw new DOMException('Cancelled','AbortError');throw new AiTranslateClientError('ai_network_error',friendlyAiError('ai_network_error'),undefined,'body_stream');}
   }else activity('legacy');
   if(signal.aborted){void res.body?.cancel().catch(()=>{});throw new DOMException('Cancelled','AbortError');}
@@ -201,7 +234,7 @@ async function translateResponse(req: AiTranslateClientRequest, signal: AbortSig
   if(debug)notifyLease(debug);
   const retryAfterMs = res.status === 429 ? parseAiRetryAfter(res.headers.get('retry-after')) : undefined;
   const fail = (code: string, reason?: string): never => {
-    throw new AiTranslateClientError(code, friendlyAiError(code), res.status, reason, requestId, durationMs, retryAfterMs);
+    throw new AiTranslateClientError(code, friendlyAiError(code,reason), res.status, reason, requestId, durationMs, retryAfterMs);
   };
   const httpCode = res.status === 429 ? 'ai_rate_limited'
     : res.status === 408 || res.status === 504 ? 'ai_timeout'
@@ -257,9 +290,13 @@ async function translateResponse(req: AiTranslateClientRequest, signal: AbortSig
     if (!Number.isInteger(record[field]) || (record[field] as number) < 0 || (record[field] as number) > 1_000_000)
       return fail('ai_invalid_response', 'usage');
   }
-  const completed={result: record.result, model: record.model as string, finishReason: 'STOP',
+  const completed={...(requestId?{logRequestId:requestId}:{}),result: record.result, model: record.model as string, finishReason: 'STOP',execution:readExecutionHeader(res.headers),thinkingTokens:readUsageHeader(res.headers,'X-AI-Thought-Tokens'),totalTokens:readUsageHeader(res.headers,'X-AI-Total-Tokens'),
     inputTokens: record.inputTokens as number, outputTokens: record.outputTokens as number,...(res.headers.get('X-AI-Parallel')==='2'?{parallel:2 as const}:{}),...(debug?{debug}:{})};
-  try{assertAiTranslationCoverage(req,completed);}catch(error){if(error instanceof AiTranslateClientError)return fail(error.code,error.reason??'untranslated_source');throw error;}
+  if(record.hanRepair!==undefined){
+    const repair=readAiHanRepair(record.hanRepair,record.result,Object.values(req.names??{}));
+    if(!repair)return fail('ai_invalid_response','result_type');
+    return {...completed,hanRepairs:[{...repair,result:record.result}]};
+  }
   return completed;
 }
 

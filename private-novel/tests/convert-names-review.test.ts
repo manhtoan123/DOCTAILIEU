@@ -40,7 +40,9 @@ it('review: explicit delete preserves other entries and concurrent additions',as
   expect(await readConvertNames()).toEqual([{key:'乙',value:'Ất'},{key:'丙',value:'Bính'}]);
 });
 it('review: Name text round-trip retains equals in values and UTF-16 selection expands whole code points',()=>{
-  const names=parseConvertNames('\uFEFF甲=Giáp=x\r\n𠀀=Tên');expect(parseConvertNames(formatConvertNames(names))).toEqual(names);
+  const names=parseConvertNames('\uFEFF甲=Giáp=x\r\n𠀀=Tên'),formatted=formatConvertNames(names),roundtrip=parseConvertNames(formatted);
+  expect(formatted).toBe('$𠀀=Tên\n$甲=Giáp=x'); // One marker; longer UTF-16 source first.
+  expect(roundtrip).toHaveLength(names.length);expect(roundtrip).toEqual(expect.arrayContaining(names));
   expect(expandConvertSelection('🙂甲𠀀',2,3,'left')).toEqual({sourceStart:0,sourceEnd:3,source:'🙂甲'});
   expect(expandConvertSelection('🙂甲𠀀',2,3,'right')).toEqual({sourceStart:2,sourceEnd:5,source:'甲𠀀'});
 });

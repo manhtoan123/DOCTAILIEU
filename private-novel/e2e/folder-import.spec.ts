@@ -1,6 +1,6 @@
 import {test,expect,type Page} from '@playwright/test';
 async function choose(page:Page){
- await page.goto('/');await page.getByRole('button',{name:'＋ Thêm truyện TXT / EPUB',exact:true}).click();await page.getByRole('button',{name:'Nhập folder truyện',exact:true}).click();
+ await page.goto('/');await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();await page.getByRole('button',{name:'Nhập folder truyện',exact:true}).click();
  await page.getByLabel('Chọn folder truyện',{exact:true}).evaluate((element:HTMLInputElement)=>{
    const data=new DataTransfer();
    for(const [path,text] of [['Kho/A/10.txt','Chương mười\nNội dung 10'],['Kho/A/2.txt','Chương hai\nNội dung 2'],['Kho/B/1.txt','Chương một\nNội dung 2'],['Kho/B/cover.jpg','synthetic']]){

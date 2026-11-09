@@ -37,7 +37,7 @@ it('automatic hybrid recovery reuses the first half and retries only the failed 
     else first++;
     return {result:input.continuation?'Nửa sau hoàn tất.':'Nửa đầu được giữ.',model:input.model!,finishReason:'STOP',inputTokens:1,outputTokens:1};
   });
-  const source={bookId:'retry',id:'chapter',revision:1,text:'甲'.repeat(1800)+'乙'.repeat(1800)};
+  const source={bookId:'retry',id:'chapter',revision:1,text:'甲'.repeat(3000)+'乙'.repeat(3000)};
   const settings={...AI_DEFAULTS,fallbackModels:[],hybrid:{version:1 as const,liteModel:'gemini-3.5-flash-lite' as const,rules:''}};
   try{
     const failure=await session.request(source,settings,[]).catch(e=>e);
@@ -73,7 +73,7 @@ it('a cooled renewed hybrid round keeps the completed first half',async()=>{
   if(input.continuation){second++;if(failing)throw new AiTranslateClientError('ai_timeout','temporary',408);}else first++;
   return {result:input.continuation?'Nửa sau hoàn tất.':'Nửa đầu được giữ.',model:input.model!,finishReason:'STOP',inputTokens:1,outputTokens:1};
  });
- const source={bookId:'round',id:'chapter',revision:1,text:'甲'.repeat(1800)+'乙'.repeat(1800)};
+ const source={bookId:'round',id:'chapter',revision:1,text:'甲'.repeat(3000)+'乙'.repeat(3000)};
  const settings={...AI_DEFAULTS,fallbackModels:[],hybrid:{version:1 as const,liteModel:'gemini-3.5-flash-lite' as const,rules:''}};
  try{
   await expect(session.request(source,settings,[])).rejects.toMatchObject({code:'ai_timeout'});

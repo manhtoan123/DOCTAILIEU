@@ -1,3 +1,4 @@
+import {BOOK_METADATA_MAX_CHARS,BOOK_METADATA_MAX_ENCODED_CHARS,CLOUD_DELETE_METADATA_MAX_BYTES} from '../src/shared/constants/book-metadata';
 import type {R2Bucket, R2Object} from '@cloudflare/workers-types';
 import {streamR2Body} from './r2-stream';
 import {handleCloudDeviceAuth, type CloudDeviceEnv} from './cloud-device-auth';
@@ -17,9 +18,9 @@ const error = (status: number, code: string) => Response.json({error: code}, {st
 class BodyTooLarge extends Error {}
 
 // Never trust Content-Length: count actual streamed bytes before any reservation/write.
-async function boundedBody(request: Request): Promise<Uint8Array<ArrayBuffer>> {
+async function boundedBody(request: Request,limit=MAX_CLOUD_SNAPSHOT_BYTES): Promise<Uint8Array<ArrayBuffer>> {
   const declared = request.headers.get('Content-Length');
-  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > MAX_CLOUD_SNAPSHOT_BYTES)) throw new BodyTooLarge();
+  if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > limit)) throw new BodyTooLarge();
   if (!request.body) return new Uint8Array();
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -29,7 +30,7 @@ async function boundedBody(request: Request): Promise<Uint8Array<ArrayBuffer>> {
       const {done, value} = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > MAX_CLOUD_SNAPSHOT_BYTES) {
+      if (length > limit) {
         await reader.cancel().catch(() => undefined);
         throw new BodyTooLarge();
       }
@@ -98,10 +99,23 @@ async function route(request: Request, env: CloudLibraryEnv, waitUntil:(promise:
   }
   if (!id) return error(404, 'not_found');
   if (request.method === 'DELETE') {
+    // Optional reviewed owner/content precondition; legacy callers retain ID-only deletion.
+    if(request.body){
+      let expected:{title:string;album?:string;sha256:string;bytes:number;updatedAt:number}|null;
+      try{const value=JSON.parse(new TextDecoder('utf-8',{fatal:true,ignoreBOM:false}).decode(await boundedBody(request,CLOUD_DELETE_METADATA_MAX_BYTES)));if(!value||!Object.hasOwn(value,'expected'))throw Error();expected=value.expected;
+        if(expected!==null&&(!expected||typeof expected.title!=='string'||!expected.title||expected.title.length>BOOK_METADATA_MAX_CHARS||expected.album!==undefined&&(typeof expected.album!=='string'||expected.album.length>4096)||!hashPattern.test(expected.sha256)||!Number.isSafeInteger(expected.bytes)||expected.bytes<1||!Number.isSafeInteger(expected.updatedAt)||expected.updatedAt<0))throw Error();
+      }catch{return error(400,'invalid_delete_precondition');}
+      const query=expected===null?"SELECT b.id FROM cloud_books b WHERE b.id=? AND b.state='ready'":env.SHARED_STATE_ENABLED==='1'?"SELECT b.id FROM cloud_books b LEFT JOIN shared_state s ON s.scope=b.id AND s.kind='book' AND s.deleted=0 WHERE b.id=? AND b.state='ready' AND COALESCE(json_extract(s.record,'$.value.title'),b.title)=? AND (CASE WHEN s.id IS NULL THEN COALESCE(b.album,'') ELSE COALESCE(json_extract(s.record,'$.value.album'),'') END)=? AND b.sha256=? AND b.bytes=? AND b.updated_at=?":"SELECT b.id FROM cloud_books b WHERE b.id=? AND b.state='ready' AND b.title=? AND COALESCE(b.album,'')=? AND b.sha256=? AND b.bytes=? AND b.updated_at=?";
+      const condition=expected===null?`NOT EXISTS(${query})`:`EXISTS(${query})`;
+      const bindings=expected===null?[id]:[id,expected.title,expected.album??'',expected.sha256,expected.bytes,expected.updatedAt];
+      await env.DB.prepare(`INSERT INTO cloud_book_deletions(id,deleted_at) SELECT ?,? WHERE ${condition} ON CONFLICT(id) DO NOTHING`).bind(id,Date.now(),...bindings).run();
+      if(!await isDeleted(env,id))return error(409,'delete_selection_changed');
+    }else{
     // This single primary-key write is the linearization point. It precedes all
     // cleanup and blocks both reservation and publication in concurrent PUTs.
     await env.DB.prepare('INSERT INTO cloud_book_deletions (id, deleted_at) VALUES (?, ?) ON CONFLICT(id) DO NOTHING')
       .bind(id, Date.now()).run();
+    }
     const row = await env.DB.prepare('SELECT * FROM cloud_books WHERE id=?').bind(id).first<CatalogRow>();
     if (row) await cleanupDeletedObject(env, row);
     await cleanupCloudOriginals(env,id);
@@ -131,8 +145,8 @@ async function route(request: Request, env: CloudLibraryEnv, waitUntil:(promise:
   const expectedHash = request.headers.get('X-Content-SHA256') ?? '';
   const encodedTitle = request.headers.get('X-Book-Title') ?? '';
   let title: string;
-  try { title = encodedTitle.length <= 2700 ? decodeURIComponent(encodedTitle) : ''; } catch { return error(400, 'invalid_title'); }
-  if (!title.trim() || title.length > 300 || /[\u0000-\u001f\u007f]/.test(title)) return error(400, 'invalid_title');
+  try { title = encodedTitle.length <= BOOK_METADATA_MAX_ENCODED_CHARS ? decodeURIComponent(encodedTitle) : ''; } catch { return error(400, 'invalid_title'); }
+  if (!title.trim() || title.length > BOOK_METADATA_MAX_CHARS || /[\u0000-\u001f\u007f]/.test(title)) return error(400, 'invalid_title');
   // Optional v1 extension; bound encoded input before decoding or any write.
   const encodedAlbum = request.headers.get('X-Book-Album') ?? '';
   let album: string;

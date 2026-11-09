@@ -2,14 +2,26 @@ import {ttsAudioCache,ttsAudioCacheKey} from './tts-audio-cache';
 import {capcutVietnameseVoices} from '../../../shared/constants/capcut-voices';
 import {ContinuousTtsPlayer} from './tts-continuous';
 import {TtsMediaKeepAlive} from './tts-media-keepalive';
-import {ttsGateway,capcutSessionFailure} from './tts-gateway';
+import {ttsGateway,usesCapcutTts,capcutSessionFailure} from './tts-gateway';
 export type SpeechState='idle'|'loading'|'playing'|'paused'|'ended'|'error';
 export interface Sentence {text:string;start:number;end:number}
+/** Spoken punctuation only; source text and UTF16 highlight/cursor offsets stay intact. */
+export function ttsPauseText(text:string):string{
+  if(!/[\r\n]/u.test(text))return text;
+  return text.replace(/([^\r\n]*)(\r\n|[\r\n])/gu,(_match,line:string,newline:string)=>{
+    const end=line.trimEnd();
+    if(!/[\p{L}\p{N}]/u.test(end)||/[.!?,;:…。！？，；：、]["'”’»）)\]}]*$/u.test(end))return line+newline;
+    const closing=end.match(/["'”’»）)\]}]+$/u)?.[0]??'';
+    return end.slice(0,end.length-closing.length)+'.'+closing+newline;
+  }).trimEnd();
+}
 /** Keep natural pauses/whole words within the gateway cap, with exact UTF16 offsets. */
 function boundedTtsChunks(text:string,start:number,limit:number):Sentence[]{
   const points=Array.from(text),chunks:Sentence[]=[];let at=0;
   while(at<points.length){
     let end=Math.min(at+limit,points.length);
+    // Added pauses also count toward the existing gateway character cap.
+    while(end>at+1&&Array.from(ttsPauseText(points.slice(at,end).join(''))).length>limit)end--;
     if(end<points.length){
       let space=0,clause=0;
       for(let i=at+1;i<=end;i++){
@@ -44,7 +56,7 @@ export function sentences(text:string,flex=false):Sentence[]{
     const combined=text.slice(current.start,next.end);
     const combinedLen=Array.from(combined).length;
     const currentLen=Array.from(current.text).length;
-    if(combinedLen<=160&&currentLen<80&&(!hasDoubleNewline||currentLen<30)){
+    if(combinedLen<=160&&Array.from(ttsPauseText(combined)).length<=200&&currentLen<80&&(!hasDoubleNewline||currentLen<30)){
       current.end=next.end;current.text=combined;
     }else{
       grouped.push(current);current={...next};
@@ -52,6 +64,10 @@ export function sentences(text:string,flex=false):Sentence[]{
   }
   if(current)grouped.push(current);
   return grouped;
+}
+/** Editor rows are sentences, not the larger batches used to fetch audio. */
+export function ttsSentenceDraft(text:string):string[]{
+  return text.split(/\r\n|[\r\n]/u).flatMap(line=>sentences(line).map(item=>item.text));
 }
 /** No audio blobs: Web Speech owns audio playback. Resume restarts current sentence for portability. */
 export class BrowserPlayer {
@@ -71,7 +87,7 @@ export const voiceOptions:VoiceOption[]=[
   ...['Hoài My','Nam Minh','Andrew','Ava','Brian','Emma','Seraphina','Florian','Vivienne','Remy'].map((name,i)=>({id:`bing-${i}`,name,provider:'bing' as const,serverId:`BingTTS:${i}`,available:false})),
   ...['Nữ 1','Nữ 2','Nữ 3','Nam 1','Nam 2','Nam 3'].map((name,i)=>({id:`google-cloud-${i}`,name,provider:'google-cloud' as const,serverId:`GoogleCloudTTS:${i}`,available:false})),
   {id:'google-translate-0',name:'Chị Google',provider:'google-translate',serverId:'GoogleTranslateTTS:0',available:false},
-  ...(import.meta.env.VITE_TTS_GATEWAY==='capcut-v2'
+  ...(usesCapcutTts(import.meta.env.VITE_TTS_GATEWAY)
     ?capcutVietnameseVoices.map(voice=>({id:voice.id,name:voice.name,provider:'tiktok' as const,serverId:voice.serverId,available:true}))
     :[
   {id:'tiktok-female-1',name:'Nữ 1',provider:'tiktok' as const,serverId:'BV074_streaming',available:true},
@@ -84,10 +100,12 @@ export const tiktokVoices:TikTokVoice[]=[
 ];
 const TIKTOK_ENDPOINT=ttsGateway(import.meta.env.VITE_TTS_GATEWAY);
 const MAX_RESPONSE_BYTES=2*1024*1024;
-const REQUEST_TIMEOUT_MS=30000;
+// CapCut has a 20s server deadline; allow 5s for transport without a 30s stall.
+const REQUEST_TIMEOUT_MS=25000;
 class TtsRequestError extends Error {
   constructor(message:string,readonly retryAfterMs=0){super(message);}
 }
+function ttsRetryAfter(response:Response){const hint=response.headers.get('Retry-After'),delay=hint&&/^\d+$/.test(hint)?Number(hint)*1000:hint?Date.parse(hint)-Date.now():0;return Number.isFinite(delay)?Math.max(0,Math.min(delay,86400000)):0;}
 class TtsSessionError extends Error {constructor(message:string,readonly waiting=false){super(message);}}
 function canResumeTts(error:Error){
   if(error instanceof TtsSessionError)return error.waiting;
@@ -104,6 +122,7 @@ interface AudioRequest {controller:AbortController;result:Promise<{blob:Blob;err
 let mediaOwner:TikTokPlayer|undefined;
 async function fetchTikTokAudio(text:string,voice:TikTokVoice,signal:AbortSignal){
   if(!tiktokVoices.some(v=>v.available&&v.id===voice.id&&v.serverId===voice.serverId))throw new Error('Giọng TikTok này chưa được hỗ trợ.');
+  const spoken=ttsPauseText(text);
   const controller=new AbortController();
   let timer:ReturnType<typeof setTimeout>|undefined;
   let rejectCancellation!:(reason:Error)=>void;
@@ -111,14 +130,14 @@ async function fetchTikTokAudio(text:string,voice:TikTokVoice,signal:AbortSignal
   const abort=()=>{controller.abort();rejectCancellation(new DOMException('Đã dừng TikTok TTS.','AbortError'));};
   signal.addEventListener('abort',abort,{once:true});
   if(signal.aborted)abort();
-  timer=setTimeout(()=>{controller.abort();rejectCancellation(new Error('TikTok TTS quá thời gian chờ (30 giây).'));},REQUEST_TIMEOUT_MS);
-  const retryDelay=()=>new Promise<void>((resolve,reject)=>{const canceled=()=>{clearTimeout(delay);reject(new DOMException('Đã dừng TikTok TTS.','AbortError'));};const delay=setTimeout(()=>{controller.signal.removeEventListener('abort',canceled);resolve();},600);controller.signal.addEventListener('abort',canceled,{once:true});if(controller.signal.aborted)canceled();});
+  timer=setTimeout(()=>{controller.abort();rejectCancellation(new Error(`Giọng đọc quá thời gian chờ (${REQUEST_TIMEOUT_MS/1000} giây).`));},REQUEST_TIMEOUT_MS);
+  const retryDelay=()=>new Promise<void>((resolve,reject)=>{const canceled=()=>{clearTimeout(delay);reject(new DOMException('Đã dừng TikTok TTS.','AbortError'));};const delay=setTimeout(()=>{controller.signal.removeEventListener('abort',canceled);resolve();},0);controller.signal.addEventListener('abort',canceled,{once:true});if(controller.signal.aborted)canceled();});
   const request=async()=>{
     let response!:Response;
     for(let attempt=0;attempt<2;attempt++){
-      try{response=await fetch(TIKTOK_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,voice:voice.serverId}),signal:controller.signal,credentials:'omit'});}
+      try{response=await fetch(TIKTOK_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:spoken,voice:voice.serverId}),signal:controller.signal,credentials:'omit'});}
       catch(error){
-        // Cancellation and the shared 30s deadline are never retried; a plain
+        // Cancellation and the shared request deadline are never retried; a plain
         // network failure may be transient, so retry once with the same sentence.
         if(controller.signal.aborted||attempt===1||(error as Error)?.name==='AbortError')throw error;
         await retryDelay();continue;
@@ -134,9 +153,10 @@ async function fetchTikTokAudio(text:string,voice:TikTokVoice,signal:AbortSignal
       }
       if(attempt===1||![500,502,503,504].includes(response.status))break;
       void response.body?.cancel().catch(()=>{});
+      const retryAfter=ttsRetryAfter(response);if(retryAfter)throw new TtsRequestError(`TikTok TTS HTTP ${response.status}`,retryAfter);
       await retryDelay();
     }
-    if(!response.ok){const hint=response.headers.get('Retry-After'),seconds=hint&&/^\d+$/.test(hint)?Number(hint)*1000:hint?Date.parse(hint)-Date.now():0;throw new TtsRequestError(`TikTok TTS HTTP ${response.status}`,Number.isFinite(seconds)?Math.max(0,Math.min(seconds,86400000)):0);}
+    if(!response.ok)throw new TtsRequestError(`TikTok TTS HTTP ${response.status}`,ttsRetryAfter(response));
     if(!response.headers.get('Content-Type')?.toLowerCase().includes('application/json'))throw new Error('Gateway chưa trả JSON âm thanh TikTok.');
     const declared=response.headers.get('Content-Length');
     if(declared&&Number(declared)>MAX_RESPONSE_BYTES)throw new Error('Phản hồi TikTok TTS quá lớn.');
@@ -175,22 +195,28 @@ export class TikTokPlayer {
   private nextText='';private nextFirst?:Sentence;private transitionAt?:number;private timings:TtsTiming[]=[];private resumeAttempt=0;private deferredEnd=false;
   private continuous?:ContinuousTtsPlayer;
   private retryTimer?:ReturnType<typeof setTimeout>;
+  private retryOnline?:()=>void;
   private recoveryAttempt=0;private gatewayMs=7000;private secondsPerChar=.065;
-  private clearRetry(){clearTimeout(this.retryTimer);this.retryTimer=undefined;}
+  private clearRetry(){clearTimeout(this.retryTimer);this.retryTimer=undefined;if(this.retryOnline&&typeof window!=='undefined')window.removeEventListener('online',this.retryOnline);this.retryOnline=undefined;}
   private recover(error:Error,sentence:Sentence,generation:number){
     if(generation!==this.generation)return;
     this.clearRetry();this.cancelRequests();this.cleanupAudio();
     if(this.state==='paused'){this.change('paused',sentence);return;}
     if(!canResumeTts(error)){this.keepAlive.pause();this.state='error';this.mediaState('none');this.change('error',sentence,`TikTok TTS lỗi: ${error.message}`);return;}
     const waiting=error instanceof TtsSessionError&&error.waiting;
-    const delay=waiting?60000:Math.max(Math.min(30000,2000*2**Math.min(this.recoveryAttempt++,4)),error instanceof TtsRequestError?error.retryAfterMs:0);
+    const attempt=waiting?this.recoveryAttempt:this.recoveryAttempt++,serverDelay=error instanceof TtsRequestError?error.retryAfterMs:0,notBefore=Date.now()+serverDelay;
+    const delay=waiting?15000:Math.max(attempt===0?0:Math.min(8000,1000*2**Math.min(attempt-1,3)),serverDelay);
     this.state='loading';this.mediaState('paused');
-    this.change('loading',sentence,waiting?'Phiên CapCut cần kết nối lại. Đang giữ vị trí; tự tiếp tục khi phiên được khôi phục.':`Kết nối giọng đọc gián đoạn: ${error.message}. Tự thử lại sau ${Math.ceil(delay/1000)} giây; giữ vị trí nghe.`);
+    this.change('loading',sentence,waiting?'Phiên CapCut cần kết nối lại. Đang giữ vị trí; tự tiếp tục khi phiên được khôi phục.':`Kết nối giọng đọc gián đoạn: ${error.message}. ${delay?'Tự thử lại sau '+Math.ceil(delay/1000)+' giây':'Tự thử lại ngay'}; giữ vị trí nghe.`);
     const retry=()=>{
       this.retryTimer=undefined;if(generation!==this.generation||this.state!=='loading')return;
+      if(Date.now()<notBefore){this.retryTimer=setTimeout(retry,notBefore-Date.now());return;}
       if(typeof navigator!=='undefined'&&navigator.onLine===false){this.retryTimer=setTimeout(retry,1000);return;}
+      this.clearRetry();
       void this.play(generation);
     };
+    // Reconnection can skip local backoff, but cannot bypass a server cooldown.
+    if(!waiting&&typeof window!=='undefined'){const online=()=>{if(this.retryOnline!==online||generation!==this.generation||this.state!=='loading')return;clearTimeout(this.retryTimer);retry();};this.retryOnline=online;window.addEventListener('online',online);}
     this.retryTimer=setTimeout(retry,delay);
   }
   private keepAlive=new TtsMediaKeepAlive();
@@ -235,7 +261,7 @@ export class TikTokPlayer {
     const cancel=()=>finish({error:new DOMException('Đã dừng.','AbortError')});controller.signal.addEventListener('abort',cancel,{once:true});
     entry.start=()=>{entry.started=true;void(async()=>{
       if(TIKTOK_ENDPOINT==='/api/tts'){
-        try{const resource=capcutVietnameseVoices.find(v=>v.serverId===this.voice.serverId)?.resource??'';entry.cacheKey=await ttsAudioCacheKey(TIKTOK_ENDPOINT+':'+this.voice.serverId+':'+resource,sentence.text);const saved=this.badCache.has(entry.cacheKey)?undefined:await ttsAudioCache.get(entry.cacheKey,controller.signal);if(saved){entry.fromCache=true;entry.audioSeconds=saved.duration;return saved.blob;}}catch{/* Storage is optional. */}
+        try{const resource=capcutVietnameseVoices.find(v=>v.serverId===this.voice.serverId)?.resource??'';entry.cacheKey=await ttsAudioCacheKey(TIKTOK_ENDPOINT+':'+this.voice.serverId+':'+resource,ttsPauseText(sentence.text));const saved=this.badCache.has(entry.cacheKey)?undefined:await ttsAudioCache.get(entry.cacheKey,controller.signal);if(saved){entry.fromCache=true;entry.audioSeconds=saved.duration;return saved.blob;}}catch{/* Storage is optional. */}
       }
       if(controller.signal.aborted)throw new DOMException('Đã dừng.','AbortError');
       const started=performance.now(),blob=await fetchTikTokAudio(sentence.text,this.voice,controller.signal);entry.durationMs=performance.now()-started;

@@ -13,7 +13,7 @@ async function seed(page:Page){
     await db.names.bulkPut([{id:'review-name',bookId:'review-a',key:'山门',value:'Cổng A'},{id:'review-other-name',bookId:'review-b',key:'山门',value:'Cổng B'}]);
     await db.progress.put({bookId:'review-a',chapterId:'review-chapter',paragraph:20,offset:0,revision:1,updatedAt:1});
   });
-  await page.getByRole('button',{name:'Mở sách →',exact:true}).click();
+  await page.getByRole('link',{name:'Mở sách →',exact:true}).click();
   await expect(page.locator('.prose')).toContainText('Đoạn 79.');
   await expect.poll(()=>page.locator('[data-paragraph="20"]').evaluate(element=>Math.abs(element.getBoundingClientRect().top))).toBeLessThan(150);
   await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(600);
@@ -36,7 +36,7 @@ for(const rawOtherChapter of [false,true])test(`external chapter revision stops 
   if(rawOtherChapter){
     await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);await db.chapters.put({id:'review-raw-chapter',bookId:'review-a',title:'Chương raw mới',order:1,text:'Âm thanh raw cũ. Câu thứ hai.',revision:1,sourceId:''});await db.books.update('review-a',{chapterCount:2});});
     await page.getByRole('button',{name:'Bản gốc',exact:true}).click();
-    await page.getByRole('navigation',{name:'Điều hướng chương đầu trang'}).getByRole('button',{name:'Chương sau →',exact:true}).click();
+    await page.getByRole('navigation',{name:'Điều hướng chương đầu trang'}).getByRole('link',{name:'Chương sau →',exact:true}).click();
     await expect(page.locator('.prose')).toContainText('Âm thanh raw cũ.');
   }
   await page.getByRole('button',{name:'Nghe truyện nhanh',exact:true}).click();
@@ -59,7 +59,7 @@ test('Back while new revision progress hydration is pending preserves saved revi
     const chapter=await db.chapters.get('review-chapter');await db.chapters.update('review-chapter',{text:chapter.text+'\nDòng mới.',revision:2});
   });
   await expect.poll(()=>page.evaluate(()=>(window as any).__reviewProgressHeld)).toBe(true);
-  await page.getByRole('button',{name:'← Tủ sách',exact:true}).click();
+  await page.getByRole('link',{name:'← Tủ sách',exact:true}).click();
   const saved=await page.evaluate(async()=>{const state=window as any;await state.__releaseReviewProgress();return state.__reviewProgressGet('review-a');});
   expect(saved).toMatchObject({chapterId:'review-chapter',revision:1});
   expect(saved.paragraph).toBeGreaterThan(0);

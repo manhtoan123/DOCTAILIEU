@@ -1,6 +1,7 @@
 import {readEffectiveBookNames} from './scoped-names';
 import {db} from '../../../core/db';
-import {convert} from './language-client';
+import {convertLocal} from './language-client';
+import {convertBackend} from './convert-server-client';
 import {hasChinese, sanitizeSourceFilename} from '../../library/services/title-resolver';
 import {cleanTitle} from '../../../core/domain';
 
@@ -10,14 +11,15 @@ import {cleanTitle} from '../../../core/domain';
  */
 export async function convertBatchTitles(titles: string[], names: {key: string; value: string}[] = []): Promise<string[]> {
   if (!titles.length) return [];
-  if (!titles.some(t => hasChinese(t))) return [...titles];
+  if (convertBackend()!=='local'||!titles.some(t => hasChinese(t))) return [...titles];
 
   const dictCount = await db.dictionaries.count();
   if (dictCount === 0) return [...titles];
 
   try {
+    // Persisted titles can sync. Exclude device-only Vietphrase overrides.
     const combined = titles.join('\n');
-    const tokens = await convert(combined, names, { capitalize: true, standardizePunctuation: true });
+    const tokens = await convertLocal(combined, names, { capitalize: true, standardizePunctuation: true }, false);
     const fullText = tokens.map(t => t.targetText).join('');
     const lines = fullText.split('\n');
     if (lines.length === titles.length) {
@@ -31,7 +33,7 @@ export async function convertBatchTitles(titles: string[], names: {key: string; 
         fallbackResults.push(title);
       } else {
         try {
-          const tTokens = await convert(title, names, { capitalize: true, standardizePunctuation: true });
+          const tTokens = await convertLocal(title, names, { capitalize: true, standardizePunctuation: true }, false);
           const val = tTokens.map(t => t.targetText).join('').trim();
           fallbackResults.push(val || title);
         } catch {

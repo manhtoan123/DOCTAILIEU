@@ -1,5 +1,6 @@
+import {isAiModelId} from '../types/ai-models';
 /** Client for the editable Gemini key pool. The server only ever returns masked values. */
-export interface AiKeyRow { id: string; label: string; masked: string; createdAt: number; source?:string; selected?:boolean; status?:string; lastUsedAt?:number; httpStatus?:number; cooldownUntil?:number; model?:string }
+export interface AiKeyRow { id: string; label: string; masked: string; createdAt: number; source?:string; selected?:boolean; status?:string; lastUsedAt?:number; httpStatus?:number; cooldownUntil?:number; model?:string;blockedModels?:string[] }
 export interface AiKeyList { keys: AiKeyRow[]; stored: number; secretPool: number; active: number; added?: number; rejected?: number; removed?: boolean; excluded?:number }
 
 const MESSAGES: Record<string, string> = {
@@ -19,7 +20,7 @@ function normalize(data: Record<string, unknown>): AiKeyList {
   const keys = rows.flatMap(value => {
     const row = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     return typeof row.id === 'string' && typeof row.masked === 'string'
-      ? [{ id: row.id, label: typeof row.label === 'string' ? row.label : '', masked: row.masked, createdAt: Number(row.createdAt) || 0,source:typeof row.source==='string'?row.source:'stored',selected:row.selected!==false,status:typeof row.status==='string'?row.status:'ready',lastUsedAt:Number(row.lastUsedAt)||0,httpStatus:Number(row.httpStatus)||0,cooldownUntil:Number(row.cooldownUntil)||0,model:typeof row.model==='string'?row.model:'' }]
+      ? [{ id: row.id, label: typeof row.label === 'string' ? row.label : '', masked: row.masked, createdAt: Number(row.createdAt) || 0,source:typeof row.source==='string'?row.source:'stored',selected:row.selected!==false,status:typeof row.status==='string'?row.status:'ready',lastUsedAt:Number(row.lastUsedAt)||0,httpStatus:Number(row.httpStatus)||0,cooldownUntil:Number(row.cooldownUntil)||0,model:typeof row.model==='string'?row.model:'',blockedModels:Array.isArray(row.blockedModels)?row.blockedModels.filter(isAiModelId):[] }]
       : [];
   });
   const count = (value: unknown) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0;

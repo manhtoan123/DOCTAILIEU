@@ -1,10 +1,16 @@
+import {combineAiHanAudits} from './ai-han-audit';
+import {AiTranslateClientError} from './ai-translate';
 import {hasUnknownAiParts} from './ai-leaf-progress';
+import {combineAiExecution} from './ai-execution';
+import {aiCompletedPrefix} from './ai-part-prefix';
 import type {AiLeaseInfo,AiTranslateClientResponse} from './ai-translate';
-import {isTransientAiFailure,waitForAiRetry} from './ai-recovery';
+import {isTransientAiFailure,mayRetryAiModel,waitForAiRetry} from './ai-recovery';
 import {protectAiBoundary} from './ai-boundary';
 import {combineAiDivision,type AiDivision,type AiDivisionReason} from './ai-division';
+import type {AiRequestLimit} from './ai-scheduler';
+import {combinePolishTerms,type PolishFallbackRange,type PolishTerm,type SkippedPolishPart} from './polish-output';
 export interface AiPart {id:string;text:string;context?:string;start:number;end:number}
-export interface AiPartsProgress {total:number;done:number;active:number[];text:string;nodes?:string[];parallel:number;retrying?:number[];waitUntil?:number;recoveryPasses?:number;half?:1|2;halfModels?:[string,string];sample?:string;promptPreview?:string;
+export interface AiPartsProgress {polishTerms?:PolishTerm[];polishSkipped?:SkippedPolishPart[];/** Fallback offsets in completedText. */polishFallback?:PolishFallbackRange[];/** One-based accepted root positions, including noncontiguous parallel results. */completedParts?:number[];/** Accepted contiguous whole source roots; excludes speculative streamed text. */completedSourceEnd?:number;completedText?:string;previewText?:string;total:number;done:number;active:number[];text:string;nodes?:string[];parallel:number;retrying?:number[];waitUntil?:number;recoveryPasses?:number;half?:1|2;halfModels?:[string,string];sample?:string;promptPreview?:string;
  division?:AiDivision;
  leafProgress?:import('./ai-leaf-progress').AiLeafProgress;
  /** Runtime evidence only: no field below is inferred from a configured maximum. */
@@ -34,45 +40,63 @@ export function splitAiText(text:string,protectedKeys:string[]=[],maxChars=AI_PA
  return parts;
 }
 /** One recovery pass for local transient failures; all sends still use the caller's chapter budget. */
-export async function runAiParts(parts:AiPart[],signal:AbortSignal,completed:Map<string,AiTranslateClientResponse>,send:(part:AiPart,onLease?:(lease:AiLeaseInfo)=>void)=>Promise<AiTranslateClientResponse>,publish:(state:AiPartsProgress)=>void,save?:(part:AiPart,result:AiTranslateClientResponse)=>Promise<void>,render?:(completed:Map<string,AiTranslateClientResponse>)=>Pick<AiPartsProgress,'text'|'nodes'>,initialParallel:1|2=1,control?:AiPartsControl,jobId?:string,splitReason?:AiDivisionReason):Promise<AiTranslateClientResponse>{
+export async function runAiParts(parts:AiPart[],signal:AbortSignal,completed:Map<string,AiTranslateClientResponse>,send:(part:AiPart,onLease?:(lease:AiLeaseInfo)=>void,onRelease?:(leaseIdHash:string)=>void)=>Promise<AiTranslateClientResponse>,publish:(state:AiPartsProgress)=>void,save?:(part:AiPart,result:AiTranslateClientResponse)=>Promise<void>,render?:(completed:Map<string,AiTranslateClientResponse>)=>Pick<AiPartsProgress,'text'|'nodes'>,initialParallel:1|2=1,control?:AiPartsControl,jobId?:string,splitReason?:AiDivisionReason,canExpandEarly?:()=>boolean,separator='\n',requestLimit:AiRequestLimit=2,skipFailure?:(error:unknown)=>boolean):Promise<AiTranslateClientResponse>{
  const unknownDivision=hasUnknownAiParts(parts,completed);
- let width=initialParallel,cursor=0,failure:unknown,model=completed.values().next().value?.model,waitUntil=0,throttled=false;const active=new Set<number>(),deferred=new Map<number,number>(),attempts=new Map<number,number>();
- const leases=new Map<number,{leaseIdHash:string;keySlot?:number;requestId?:string}>(),observedLeases=new Set<string>(),observedSlots=new Set<number>();
+ let width:number=initialParallel,cursor=0,failure:unknown,model=completed.values().next().value?.model,waitUntil=0,throttled=false;const active=new Set<number>(),deferred=new Map<number,number>(),attempts=new Map<number,number>();
+ const leases=new Map<string,{owner:number;leaseIdHash:string;keySlot?:number;requestId?:string}>(),observedLeases=new Set<string>(),observedSlots=new Set<number>();
  let keysAvailable:number|undefined,maxActiveLeases=0;
+ let measuredCapacity=false;
+ const skipped=new Map<number,SkippedPolishPart>();
+ const skip=(index:number,error:unknown)=>{
+  if(!signal.aborted&&skipFailure?.(error))skipped.set(index,{part:index+1,message:error instanceof Error?error.message:String(error)});
+  else failure??=error;
+ };
+ const polishTerms=()=>combinePolishTerms(parts.map(part=>completed.get(part.id)?.polishTerms));
+ const skippedParts=()=>[...skipped.values()].sort((a,b)=>a.part-b.part);
  let writeTail:Promise<void>=Promise.resolve();const writes=new Set<Promise<void>>();
- const trace=(event:Pick<AiPartsTrace,'type'|'partId'|'requestId'|'leaseIdHash'|'keySlot'>)=>{try{traceSink?.({...event,at:Date.now(),activeRequests:active.size,parallel:width,...(jobId?{jobId}:{})});}catch{/* instrumentation must never break translation */}};
+ const trace=(event:Pick<AiPartsTrace,'type'|'partId'|'requestId'|'leaseIdHash'|'keySlot'>)=>{try{traceSink?.({...event,at:Date.now(),activeRequests:Math.max(active.size,leases.size),parallel:width,...(jobId?{jobId}:{})});}catch{/* instrumentation must never break translation */}};
  if([...completed.values()].some(r=>r.model!==model))throw Error('Model của các phần dịch không thống nhất.');
  const check=()=>{if(signal.aborted)throw new DOMException('Cancelled','AbortError');};
- const preview=()=>{if(render)return render(completed);const prefix:string[]=[];for(const part of parts){const done=completed.get(part.id);if(!done)break;prefix.push(done.result);}return {text:prefix.join('\n')};};
+ const preview=()=>render?render(completed):{text:aiCompletedPrefix(parts,completed,separator)};
+ let wakeDispatch:(()=>void)|undefined;
+ const expand=(keys:number)=>{
+  if(throttled||control?.throttled)return;
+  const next=Math.min(requestLimit,parts.length,keys);
+  if(next>width){width=next;wakeDispatch?.();}
+ };
  /** Lease evidence comes only from server-issued hashes on requests that actually ran. */
  const evidence=()=>{
-  const activeLeases=new Set<string>();for(const index of active){const lease=leases.get(index);if(lease)activeLeases.add(lease.leaseIdHash);}
+  const activeLeases=new Set<string>();for(const lease of leases.values())if(active.has(lease.owner))activeLeases.add(lease.leaseIdHash);
   if(activeLeases.size>maxActiveLeases)maxActiveLeases=activeLeases.size;
-  return {activeRequests:active.size,activeLeases:activeLeases.size,parallelLeases:maxActiveLeases,...(observedLeases.size?{leaseHashes:[...observedLeases]}:{}),...(observedSlots.size?{keySlots:[...observedSlots]}:{}),...(keysAvailable!==undefined?{keysAvailable}:{})};
+  return {activeRequests:Math.max(active.size,activeLeases.size),activeLeases:activeLeases.size,parallelLeases:maxActiveLeases,...(observedLeases.size?{leaseHashes:[...observedLeases]}:{}),...(observedSlots.size?{keySlots:[...observedSlots]}:{}),...(keysAvailable!==undefined?{keysAvailable}:{})};
  };
  const remember=(result:AiTranslateClientResponse)=>{const debug=result.debug;if(!debug)return;if(debug.leaseIdHash)observedLeases.add(debug.leaseIdHash);if(debug.keySlot!==undefined)observedSlots.add(debug.keySlot);if(debug.keysAvailable!==undefined)keysAvailable=debug.keysAvailable;};
- const emit=()=>{check();if(control?.throttled){throttled=true;width=1;waitUntil=Math.max(waitUntil,control.waitUntil);}publish({total:parts.length,done:parts.filter(p=>completed.has(p.id)).length,active:[...active].map(i=>i+1),parallel:width,...(deferred.size?{retrying:[...deferred.keys()].map(i=>i+1)}:{}),...(attempts.size?{recoveryPasses:attempts.size}:{}),...(waitUntil>Date.now()?{waitUntil}:{}),...(splitReason&&!unknownDivision?{division:combineAiDivision(parts.map(p=>completed.get(p.id)??{}),parts.length>1?splitReason:undefined)}:{}),...evidence(),...preview()});};
+ const emit=()=>{check();if(control?.throttled){throttled=true;width=1;waitUntil=Math.max(waitUntil,control.waitUntil);}publish({...(skipFailure?{polishTerms:polishTerms(),polishSkipped:skippedParts()}:{}),completedParts:parts.flatMap((p,i)=>completed.has(p.id)?[i+1]:[]),total:parts.length,done:parts.filter(p=>completed.has(p.id)).length,active:[...active].map(i=>i+1),parallel:width,...(deferred.size?{retrying:[...deferred.keys()].map(i=>i+1)}:{}),...(attempts.size?{recoveryPasses:attempts.size}:{}),...(waitUntil>Date.now()?{waitUntil}:{}),...(splitReason&&!unknownDivision?{division:combineAiDivision(parts.map(p=>completed.get(p.id)??{}),parts.length>1?splitReason:undefined)}:{}),...evidence(),...preview()});};
  const changed=()=>{if(!signal.aborted)emit();};
  if(control)(control.listeners??=new Set()).add(changed);
  const one=async(index:number)=>{
   const part=parts[index];active.add(index);emit();trace({type:'start',partId:part.id});
   try{check();const result=await send(part,(lease:AiLeaseInfo)=>{
     if(signal.aborted)return;
-    leases.set(index,{leaseIdHash:lease.leaseIdHash,...(lease.keySlot!==undefined?{keySlot:lease.keySlot}:{}),...(lease.requestId?{requestId:lease.requestId}:{})});
+    leases.set(lease.leaseIdHash,{owner:index,leaseIdHash:lease.leaseIdHash,...(lease.keySlot!==undefined?{keySlot:lease.keySlot}:{}),...(lease.requestId?{requestId:lease.requestId}:{})});
     if(lease.leaseIdHash)observedLeases.add(lease.leaseIdHash);
     if(lease.keySlot!==undefined)observedSlots.add(lease.keySlot);
     if(lease.keysAvailable!==undefined)keysAvailable=lease.keysAvailable;
+    if(canExpandEarly?.()){
+     if(requestLimit===2||lease.freeKeys===undefined)expand(Math.min(2,lease.keysAvailable??0));
+     else if(!measuredCapacity){measuredCapacity=true;expand(1+lease.freeKeys);}
+    }
     trace({type:'lease',partId:part.id,requestId:lease.requestId,leaseIdHash:lease.leaseIdHash,keySlot:lease.keySlot});
     try{emit();}catch{/* a cancelled publish must not reject the lease callback */}
-   });check();if(result.finishReason!=='STOP'||!result.result.trim())throw Error('Phần dịch chưa hoàn chỉnh.');model??=result.model;if(result.model!==model)throw Error('Model thay đổi giữa các phần dịch.');remember(result);completed.set(part.id,result);if(result.parallel===2&&!throttled)width=2;emit();trace({type:'end',partId:part.id,...(result.debug?{requestId:result.debug.requestId,leaseIdHash:result.debug.leaseIdHash,keySlot:result.debug.keySlot}:{})});if(save){const write=writeTail.then(()=>{check();return save(part,result);}).catch(error=>{failure??=error;}).finally(()=>writes.delete(write));writeTail=write;writes.add(write);}}
+   },hash=>{leases.delete(hash);if(!signal.aborted)try{emit();}catch{/* release telemetry cannot change request outcome */}});check();if(result.finishReason!=='STOP'||!result.result.trim())throw Error('Phần dịch chưa hoàn chỉnh.');model??=result.model;if(result.model!==model)throw Error('Model thay đổi giữa các phần dịch.');remember(result);completed.set(part.id,result);if(result.parallel===2)expand(2);emit();trace({type:'end',partId:part.id,...(result.debug?{requestId:result.debug.requestId,leaseIdHash:result.debug.leaseIdHash,keySlot:result.debug.keySlot}:{})});if(save){const write=writeTail.then(()=>{check();return save(part,result);}).catch(error=>{failure??=error;}).finally(()=>writes.delete(write));writeTail=write;writes.add(write);}}
   catch(error){
    trace({type:'error',partId:part.id});
-   if(!signal.aborted&&parts.length>1&&(model!==undefined||initialParallel===2)&&isTransientAiFailure(error)&&(attempts.get(index)??0)<1){
-    const rate=error.status===429||error.code==='ai_rate_limited',delay=rate?error.retryAfterMs??30000:600;
+   if(!signal.aborted&&parts.length>1&&(mayRetryAiModel(model??'')||model===undefined&&(error instanceof AiTranslateClientError&&(error.status===429||error.code==='ai_rate_limited')))&&isTransientAiFailure(error)&&(attempts.get(index)??0)<1){
+    const rate=error.status===429||error.code==='ai_rate_limited',delay=error.retryAfterMs??(rate?30000:600);
     if(delay<=30000){attempts.set(index,1);const at=Date.now()+Math.max(0,delay);deferred.set(index,at);if(rate){throttled=true;width=1;waitUntil=Math.max(waitUntil,at);}}
-    else failure??=error;
-   }else failure??=error;
-  }finally{active.delete(index);leases.delete(index);if(!signal.aborted)try{emit();}catch(error){failure??=error;}}
+    else skip(index,error);
+   }else skip(index,error);
+  }finally{active.delete(index);for(const [hash,lease]of leases)if(lease.owner===index)leases.delete(hash);if(!signal.aborted)try{emit();}catch(error){failure??=error;}}
  };
  emit();const running=new Set<Promise<void>>();
  try{while(cursor<parts.length||running.size||deferred.size){
@@ -83,14 +107,23 @@ export async function runAiParts(parts:AiPart[],signal:AbortSignal,completed:Map
    if(retry){index=retry[0];deferred.delete(index);}else if(cursor<parts.length)index=cursor++;else break;
    if(completed.has(parts[index].id))continue;const task=one(index).finally(()=>running.delete(task));running.add(task);
   }
-  if(running.size){await Promise.race(running);continue;}
+  if(running.size){await new Promise<void>(resolve=>{let settled=false;const finish=()=>{if(settled)return;settled=true;wakeDispatch=undefined;resolve();};wakeDispatch=finish;void Promise.race(running).then(finish,finish);});continue;}
   if(failure)break;
-  if(waitUntil>Date.now()||deferred.size){const at=waitUntil>Date.now()?waitUntil:Math.min(...deferred.values());await waitForAiRetry(Math.max(0,at-Date.now()),signal);emit();}else break;
+  if(waitUntil>Date.now()||deferred.size){const at=waitUntil>Date.now()?waitUntil:Math.min(...deferred.values());if(at>Date.now())await waitForAiRetry(at-Date.now(),signal);emit();}else break;
  }}finally{control?.listeners?.delete(changed);await Promise.allSettled([...writes]);}
- check();if(failure)throw failure;const values=parts.map(p=>completed.get(p.id));if(values.some(r=>!r))throw Error('Chương chưa được dịch đầy đủ.');
- const results=values as AiTranslateClientResponse[],last=results.at(-1)!;if(results.some(r=>r.model!==model))throw Error('Model của các phần dịch không thống nhất.');
- if(results.length===1)return last;
+ check();if(failure)throw failure;const values=parts.map(p=>completed.get(p.id));if(values.some((r,index)=>!r&&!skipped.has(index)))throw Error('Chương chưa được dịch đầy đủ.');
+ const results=values.filter((row):row is AiTranslateClientResponse=>!!row),last=results.at(-1);
+ if(!last)throw Error('Mọi phần đều lỗi. Bản Convert được giữ nguyên.');if(results.some(r=>r.model!==model))throw Error('Model của các phần dịch không thống nhất.');
+ if(values.length===1)return last;
+ let targetStart=0;
+ const polishFallback:PolishFallbackRange[]=[];
+ const output=values.map((row,index)=>{
+  const part=parts[index],text=row?.result??part.text;
+  if(!row)polishFallback.push({sourceStart:part.start,sourceEnd:part.end,targetStart,targetEnd:targetStart+text.length});
+  targetStart+=text.length+separator.length;
+  return text;
+ });
  let translatedStart=0;
- const textMap=render?undefined:{version:1 as const,sourceLength:parts.at(-1)!.end,spans:parts.map((part,i)=>{const span={sourceStart:part.start,sourceEnd:part.end,translatedStart,translatedEnd:translatedStart+results[i].result.length};translatedStart=span.translatedEnd+1;return span;})};
- return {...last,division:splitReason&&!unknownDivision?combineAiDivision(results,splitReason):undefined,textMap,result:results.map(r=>r.result).join('\n'),inputTokens:results.reduce((n,r)=>n+r.inputTokens,0),outputTokens:results.reduce((n,r)=>n+r.outputTokens,0)};
+ const textMap=render||skipped.size?undefined:{version:1 as const,sourceLength:parts.at(-1)!.end,spans:parts.map((part,i)=>{const span={sourceStart:part.start,sourceEnd:part.end,translatedStart,translatedEnd:translatedStart+results[i].result.length};translatedStart=span.translatedEnd+separator.length;return span;})};
+ return {...last,...combineAiExecution(results),...combineAiHanAudits(results),division:splitReason&&!unknownDivision?combineAiDivision(results,splitReason):undefined,textMap,...(skipFailure?{polishTerms:polishTerms(),polishSkipped:skippedParts(),...(polishFallback.length?{polishFallback}:{})}:{}),result:output.join(separator),inputTokens:results.reduce((n,r)=>n+r.inputTokens,0),outputTokens:results.reduce((n,r)=>n+r.outputTokens,0)};
 }

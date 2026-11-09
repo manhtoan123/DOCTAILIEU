@@ -3,42 +3,71 @@ import {importEpub} from './epub-import';
 import Dexie from 'dexie';
 import {db,deleteBook,commitImport} from '../../../core/db';
 import {cleanTitle} from '../../../core/domain';
-import {importFiles,throwIfImportAborted,reportImportProgress,type ImportStatus} from './importer';
+import {importFiles,throwIfImportAborted,reportImportProgress,waitForImportStep,type ImportStatus} from './importer';
 import {assertStorageBudget} from '../../../core/storage';
+import {prepareDocument,importDocument} from './document-convert';
+import {createImportProgress} from './txt-import-progress';
 
 export const MAX_BATCH_FILES=100;
 export const MAX_BATCH_FILE_BYTES=40*1024*1024;
 export const MAX_BATCH_SOURCE_BYTES=256*1024*1024;
 export const MAX_EPUB_SELECTION_BYTES=4*1024*1024*1024;
 export const selectionByteLimit=(files:File[])=>files.some(file=>/\.epub$/i.test(file.name))?MAX_EPUB_SELECTION_BYTES:MAX_BATCH_SOURCE_BYTES;
+export function validateBatchSelection(files:File[]):number{
+ if(!files.length||files.length>MAX_BATCH_FILES)throw Error('Chọn từ 1 đến 100 file TXT, EPUB, PDF hoặc DOCX.');
+ let bytes=0,documentBytes=0;
+ for(const file of files){
+  if(!/\.(txt|epub|pdf|docx)$/i.test(file.name))throw Error(`${file.name}: chỉ hỗ trợ TXT, EPUB, PDF hoặc DOCX.`);
+  if(!file.size||file.size>(/\.epub$/i.test(file.name)?MAX_EPUB_ORIGINAL_BYTES:MAX_BATCH_FILE_BYTES))throw Error(`${file.name}: file rỗng hoặc vượt giới hạn TXT/PDF/DOCX 40 MiB / EPUB 256 MiB.`);
+  bytes+=file.size;if(/\.(pdf|docx)$/i.test(file.name))documentBytes+=file.size;
+ }
+ if(bytes>selectionByteLimit(files)||documentBytes>MAX_BATCH_SOURCE_BYTES)throw Error(`Lô nhập vượt giới hạn: ${selectionByteLimit(files)/1048576} MiB toàn lô và 256 MiB nguồn PDF/DOCX; hãy chọn lô nhỏ hơn.`);
+ return bytes;
+}
+export const MAX_BATCH_DOCUMENT_PREVIEW_BYTES=128*1048576;
+/** Conversion is read-only: confirm the whole selection before creating staging books. */
+export async function prepareBatchDocuments(files:File[],onProgress:(p:ImportStatus)=>void,signal:AbortSignal):Promise<Map<File,File>>{
+ throwIfImportAborted(signal);validateBatchSelection(files);
+ const documents=files.filter(file=>/\.(pdf|docx)$/i.test(file.name)),prepared=new Map<File,File>();let bytes=0;
+ for(const [index,file] of documents.entries()){
+  throwIfImportAborted(signal);reportImportProgress(onProgress,{message:`Xem trước ${index+1}/${documents.length} · ${file.name}`,percent:Math.round(index/documents.length*100)});
+  const converted=await prepareDocument(file,signal);throwIfImportAborted(signal);bytes+=converted.size;
+  if(bytes>MAX_BATCH_DOCUMENT_PREVIEW_BYTES)throw Error('Bản đọc PDF/DOCX của lô vượt 128 MiB; hãy chọn ít file hơn. Chưa nhập truyện.');
+  prepared.set(file,converted);
+ }
+ return prepared;
+}
 
 /** Selection order is book order; each TXT has its own Worker and staging book. */
-export async function prepareBatchFiles(files:File[],encoding:string,pattern:string,detect:boolean,onProgress:(p:ImportStatus)=>void,signal:AbortSignal,maxChars?:number,titles?:readonly string[]):Promise<{ids:string[]}>{
+export async function prepareBatchFiles(files:File[],encoding:string,pattern:string,detect:boolean,onProgress:(p:ImportStatus)=>void,signal:AbortSignal,maxChars?:number,titles?:readonly string[],documents?:ReadonlyMap<File,File>):Promise<{ids:string[]}>{
   throwIfImportAborted(signal);
   const selection=[...files];
-  if(!selection.length||selection.length>MAX_BATCH_FILES)throw new Error('Chọn từ 1 đến 100 file TXT hoặc EPUB.');
+  const bytes=validateBatchSelection(selection);
   if(titles&&(titles.length!==selection.length||titles.some(title=>!title.trim()||title.length>300)))throw new Error('Danh sách tên truyện không hợp lệ.');
-  let bytes=0;
-  for(const file of selection){
-    if(!/\.(txt|epub)$/i.test(file.name))throw new Error(`${file.name}: chỉ hỗ trợ file TXT hoặc EPUB.`);
-    if(file.size>(/\.epub$/i.test(file.name)?MAX_EPUB_ORIGINAL_BYTES:MAX_BATCH_FILE_BYTES))throw new Error(`${file.name}: vượt giới hạn TXT 40 MiB / EPUB 256 MiB.`);
-    bytes+=file.size;
-  }
-  if(bytes>selectionByteLimit(selection))throw new Error(`Lô nhập vượt ${selectionByteLimit(selection)/1048576} MiB; hãy chọn lô nhỏ hơn.`);
-  const estimate=typeof navigator==='undefined'?undefined:await navigator.storage?.estimate?.();
+  const estimate=typeof navigator==='undefined'?undefined:await waitForImportStep(async()=>navigator.storage?.estimate?.(),signal);
   assertStorageBudget(estimate,bytes*5);
   throwIfImportAborted(signal);
+  const documentFiles=selection.filter(file=>/\.(pdf|docx)$/i.test(file.name));
+  const prepared=documentFiles.length?(documents??await prepareBatchDocuments(selection,onProgress,signal)):undefined;
+  let previewBytes=0;
+  for(const file of documentFiles){const cached=prepared?.get(file);if(!cached||!cached.size||!/\.epub$/i.test(cached.name))throw Error(`${file.name}: bản xem trước không còn khớp; hãy xem trước lại lô.`);previewBytes+=cached.size;}
+  if(previewBytes>MAX_BATCH_DOCUMENT_PREVIEW_BYTES)throw Error('Bản đọc PDF/DOCX của lô vượt 128 MiB; hãy chọn ít file hơn. Chưa nhập truyện.');
+  throwIfImportAborted(signal);
   const ids:string[]=[];
+  const overall=createImportProgress();
+  let completedBytes=0;
   try{
     for(const [index,file] of selection.entries()){
       throwIfImportAborted(signal);
       const progress=(status:ImportStatus)=>{
-        reportImportProgress(onProgress,{message:`${index+1}/${selection.length} · ${file.name}`,percent:Math.round((index+status.percent/100)/selection.length*100)});
+        const fraction=(completedBytes+file.size*status.percent/100)/bytes;
+        reportImportProgress(onProgress,overall(`${index+1}/${selection.length} · ${status.message}`,Math.min(.99,fraction)));
       };
       const title=titles?.[index].trim()||cleanTitle(file.name);
-      const result=/\.epub$/i.test(file.name)?await importEpub(file,title,progress,signal,{dedupe:'none'}):await importFiles([file],title,encoding,pattern,detect,progress,signal,{dedupe:'none',maxChars});
+      const result=/\.(pdf|docx)$/i.test(file.name)?await importDocument(file,prepared!.get(file)!,title,progress,signal,{dedupe:'none'}):/\.epub$/i.test(file.name)?await importEpub(file,title,progress,signal,{dedupe:'none'}):await importFiles([file],title,encoding,pattern,detect,progress,signal,{dedupe:'none',maxChars});
       ids.push(result.id);
       throwIfImportAborted(signal);
+      completedBytes+=file.size;
     }
     return {ids};
   }catch(error){

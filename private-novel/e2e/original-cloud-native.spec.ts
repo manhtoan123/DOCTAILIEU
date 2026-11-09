@@ -28,7 +28,7 @@ async function bridge(page:Page){
 }
 test('batch TXT automatically stores native R2 originals; fresh device reads chapters and downloads exact source',async({page,browser})=>{
   await bridge(page);await page.goto('/');
-  await page.getByRole('button',{name:'＋ Thêm truyện TXT',exact:true}).click();
+  await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();
   await page.getByLabel('Chọn file TXT',{exact:true}).setInputFiles(['A','B'].map(name=>({name:`${name}.txt`,mimeType:'text/plain',buffer:Buffer.from(raw)})));
   await page.getByRole('button',{name:'Nhập nhiều truyện',exact:true}).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -52,7 +52,7 @@ test('batch TXT automatically stores native R2 originals; fresh device reads cha
     const download=await downloaded;expect(download.suggestedFilename()).toMatch(/^[AB]\.txt$/);
     const stream=await download.createReadStream(),parts:Buffer[]=[];
     for await(const part of stream!)parts.push(Buffer.from(part));expect(Buffer.concat(parts)).toEqual(Buffer.from(raw));
-    await other.getByRole('button',{name:'Đọc từ đầu',exact:true}).click();
+    await other.getByRole('link',{name:'Đọc từ đầu',exact:true}).click();
     await other.getByRole('button',{name:'Bản gốc',exact:true}).click();
     await expect(other.locator('article.prose')).toContainText('你好。');
     expect(await other.evaluate(async()=>{const{db}=await import('/src/core/db.ts');return db.sources.count();})).toBe(0);

@@ -1,15 +1,16 @@
 import {useEffect,useRef,useState} from 'react';
 import {prepareTxtAppend,commitTxtAppend,discardAppendPreview,appendEligibleChapters,type AppendPreview,type AppendMode} from '../services/chapter-append';
-import {db} from '../../../core/db';
+import {textEncodingLabel} from '../services/text-encoding';
 import {ChapterLimit,validChapterLimit} from './ChapterSplitPreview';
 import UpdateTxtPreview from './UpdateTxtPreview';
+import '../styles/txt-update.css';
 export function UpdateTxt({bookId}:{bookId:string}){
- const [file,setFile]=useState<File>(),[encoding,setEncoding]=useState('utf-8'),[maxChars,setMaxChars]=useState(0),[pattern,setPattern]=useState(''),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[preview,setPreview]=useState<AppendPreview>();
+ const [file,setFile]=useState<File>(),[encoding,setEncoding]=useState('auto'),[maxChars,setMaxChars]=useState(0),[pattern,setPattern]=useState(''),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[preview,setPreview]=useState<AppendPreview>();
  const [selected,setSelected]=useState<string[]>([]);
  const fileInput=useRef<HTMLInputElement>(null);
  const [mode,setMode]=useState<AppendMode>('full');
  const controller=useRef<AbortController|undefined>(undefined),current=useRef<AppendPreview|undefined>(undefined),alive=useRef(true);
- useEffect(()=>{alive.current=true;void db.sources.where('bookId').equals(bookId).first().then(s=>{if(alive.current&&s&&['utf-8','gb18030','utf-16le'].includes(s.encoding))setEncoding(s.encoding);});return()=>{alive.current=false;controller.current?.abort();if(current.current)void discardAppendPreview(current.current);};},[bookId]);
+ useEffect(()=>{alive.current=true;return()=>{alive.current=false;controller.current?.abort();if(current.current)void discardAppendPreview(current.current);};},[bookId]);
  const clear=async()=>{const previous=current.current;current.current=undefined;if(alive.current)setPreview(undefined);if(previous)await discardAppendPreview(previous);};
  const prepare=async()=>{
   if(!file||busy)return;if(!validChapterLimit(maxChars)){setMessage('Giới hạn phải là số nguyên từ 100 đến 128.000 ký tự hoặc chọn giữ nguyên chương.');return;}const stop=new AbortController();controller.current=stop;setBusy(true);setMessage('Đang đọc và đối chiếu chương…');
@@ -23,12 +24,42 @@ export function UpdateTxt({bookId}:{bookId:string}){
   finally{if(alive.current)setBusy(false);}
  };
  const eligible=preview?appendEligibleChapters(preview):[];
- return <details className="panel"><summary>Cập nhật chương từ file TXT</summary><label>Loại file cập nhật<select value={mode} disabled={busy||!!preview} onChange={e=>{setMode(e.target.value as AppendMode);setMessage('');}}><option value="full">File TXT đầy đủ</option><option value="new-only">File chỉ có chương mới</option></select></label><p>{mode==='full'?'Chọn file có cả phần đầu và chương mới. Ưu tiên đối chiếu từ cuối file; nếu nội dung khác sẽ gợi ý theo tiêu đề hoặc cho tự tích chọn chương.':'Chọn file chỉ chứa chương muốn thêm, theo đúng thứ tự. Các chương được tích sẽ được nối vào cuối truyện; hãy kiểm tra bản xem trước vì không có chương cũ để đối chiếu mốc.'}</p>
-  <label>{mode==='full'?'File TXT đầy đủ':'File chỉ có chương mới'}<input ref={fileInput} type="file" accept=".txt,text/plain" disabled={busy||!!preview} onChange={e=>{setFile(e.target.files?.[0]);setMessage('');}}/></label>
-  <details><summary>Cách đọc file</summary><p>Tự nhận diện tiêu đề bằng cùng bộ chia chương với Nhập truyện. Mặc định giữ nguyên chương; có thể đổi giới hạn hoặc Regex rồi kiểm tra lại.</p><label>Encoding cập nhật<select value={encoding} disabled={busy||!!preview} onChange={e=>setEncoding(e.target.value)}><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option><option value="utf-16le">UTF-16 LE</option></select></label><ChapterLimit value={maxChars} onChange={setMaxChars} disabled={busy||!!preview}/><label>Regex nhận diện chương cập nhật<input value={pattern} disabled={busy||!!preview} onChange={e=>setPattern(e.target.value)}/></label></details>
-  {message&&<p role="status">{message}</p>}
-  {preview?<><p>{eligible.length} {preview.match==='manual'||preview.match==='title'?'chương cần kiểm tra':'chương mới'}{!!eligible.length&&` · từ “${eligible[0].title}” đến “${eligible.at(-1)!.title}”`}.</p><UpdateTxtPreview key={preview.stageId} preview={preview} selected={selected} onChange={setSelected} disabled={busy}/><button disabled={busy||!selected.length} onClick={()=>void commit()}>Thêm các chương mới</button><button disabled={busy} onClick={()=>{void clear();setMessage('Đã bỏ bản xem trước; truyện được giữ nguyên.');}}>Bỏ bản xem trước</button></>:<button disabled={!file||busy} onClick={()=>void prepare()}>Kiểm tra chương mới</button>}
-  {busy&&<button onClick={()=>controller.current?.abort()}>Hủy cập nhật</button>}
+ const step=preview?2:file?1:0;
+ return <details className="panel txt-update"><summary>Cập nhật chương từ file TXT</summary>
+  <ol className="txt-update-steps" aria-label="Các bước cập nhật chương">
+   {['Chọn file','Kiểm tra chương','Xác nhận thêm'].map((label,index)=><li key={label} aria-current={step===index?'step':undefined} data-complete={index<step||undefined}><span aria-hidden="true">{index+1}</span>{label}</li>)}
+  </ol>
+  <div className="txt-update-inputs">
+   <label>Loại file cập nhật<select value={mode} disabled={busy||!!preview} onChange={e=>{setMode(e.target.value as AppendMode);setMessage('');}}><option value="full">File TXT đầy đủ</option><option value="new-only">File chỉ có chương mới</option></select></label>
+   <label>{mode==='full'?'File TXT đầy đủ':'File chỉ có chương mới'}<input ref={fileInput} type="file" accept=".txt,text/plain" disabled={busy||!!preview} onChange={e=>{setFile(e.target.files?.[0]);setMessage('');}}/></label>
+  </div>
+  <p className="txt-update-help">{mode==='full'?'File có cả chương cũ và chương mới. Web đối chiếu mốc cuối để tìm phần cần thêm.':'File chỉ chứa chương mới, theo đúng thứ tự. Hãy kiểm tra kỹ bản xem trước vì không có chương cũ để đối chiếu.'}</p>
+  <details className="txt-update-options">
+   <summary><span>Cách đọc file</span><small>{encoding==='auto'?'Tự nhận diện':textEncodingLabel(encoding)}</small></summary>
+   <div className="txt-update-options-body">
+    <p className="txt-update-help">Tự nhận diện encoding và tiêu đề chương. Mặc định giữ nguyên chương; chỉ chỉnh bên dưới nếu chữ hoặc cách chia chưa đúng.</p>
+    <label>Encoding cập nhật<select value={encoding} disabled={busy||!!preview} onChange={e=>{setEncoding(e.target.value);setMessage('');}}><option value="auto">Tự nhận diện theo file</option><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option></select></label>
+    <ChapterLimit value={maxChars} onChange={setMaxChars} disabled={busy||!!preview}/>
+    <label>Regex nhận diện chương cập nhật<input value={pattern} disabled={busy||!!preview} onChange={e=>setPattern(e.target.value)} placeholder="Để trống để tự nhận diện"/></label>
+   </div>
+  </details>
+  {message&&<p className="txt-update-status" role="status">{message}</p>}
+  {preview&&<>
+   <div className="txt-update-result">
+    <p><strong>{eligible.length.toLocaleString('vi-VN')}</strong> {preview.match==='manual'||preview.match==='title'?'chương cần kiểm tra':'chương mới'}</p>
+    <p className="txt-update-help">Đã đọc file bằng {textEncodingLabel(preview.source.encoding)}. Chỉ lưu chương sau khi bạn xác nhận bên dưới.</p>
+    {!!eligible.length&&<p className="txt-update-range">Từ “{eligible[0].displayTitle||eligible[0].title}” đến “{eligible.at(-1)!.displayTitle||eligible.at(-1)!.title}”.</p>}
+   </div>
+   {!!preview.inferredHeadings&&<p className="txt-update-caution">Đề xuất {preview.inferredHeadings.toLocaleString('vi-VN')} mốc chương nằm giữa dòng. Kiểm tra tiêu đề và thứ tự trong bản xem trước; số chương không tự chứng minh mốc nối.</p>}
+   <UpdateTxtPreview key={preview.stageId} preview={preview} mode={mode} selected={selected} onChange={setSelected} disabled={busy}/>
+  </>}
+  <div className="txt-update-actions">
+   {preview?<>
+    <button className="txt-update-primary" disabled={busy||!selected.length} onClick={()=>void commit()}>Thêm các chương mới</button>
+    <button disabled={busy} onClick={()=>{void clear();setMessage('Đã bỏ bản xem trước; truyện được giữ nguyên.');}}>Bỏ bản xem trước</button>
+   </>:<button className="txt-update-primary" disabled={!file||busy} onClick={()=>void prepare()}>Kiểm tra chương mới</button>}
+   {busy?<button onClick={()=>controller.current?.abort()}>Hủy cập nhật</button>:!preview&&<span className="txt-update-help">Xem trước, rồi xác nhận thêm.</span>}
+  </div>
  </details>;
 }
 

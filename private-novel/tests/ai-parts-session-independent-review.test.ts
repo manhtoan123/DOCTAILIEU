@@ -2,6 +2,7 @@ import {expect,it,vi} from 'vitest';
 import {AI_DEFAULTS,AiReadingSession,aiReadingKey} from '../src/features/ai/services/ai-reading';
 import {runAiParts,splitAiText,type AiPartsProgress} from '../src/features/ai/services/ai-parts';
 import type {AiTranslateClientResponse} from '../src/features/ai/services/ai-translate';
+import {estimatedAiOutputTokens} from '../src/features/ai/services/ai-output-plan';
 
 const source={bookId:'synthetic-book',id:'synthetic-chapter',revision:1,text:'甲'.repeat(4000)};
 const response=(result:string,model=AI_DEFAULTS.model,parallel?:2):AiTranslateClientResponse=>({result,model,finishReason:'STOP',inputTokens:1,outputTokens:2,...(parallel?{parallel}:{})});
@@ -10,15 +11,16 @@ function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>
 it('independent parts: entire 128k TXT completes beyond the old send/output caps with bounded individual requests',async()=>{
  const large={...source,text:'甲'.repeat(128000)},send=vi.fn(async input=>response('a'.repeat(input.text.length+1000),input.model)),session=new AiReadingSession(send);
  const result=await session.request(large,AI_DEFAULTS,[]);
- expect(send).toHaveBeenCalledTimes(4);expect(send.mock.calls.length).toBe(4);
+ expect(send.mock.calls.length).toBeGreaterThan(4);expect(send.mock.calls.length).toBeLessThanOrEqual(256);expect(send.mock.calls.map(([input])=>input.text).join('')).toBe(large.text);expect(send.mock.calls.every(([input])=>estimatedAiOutputTokens(input.text)<=6144)).toBe(true);
  expect(send.mock.calls.every(([input])=>input.text.length<=32000&&(input.context?.length??0)<=300)).toBe(true);
  expect(result.result.length).toBeGreaterThan(128000);expect(result.result.length).toBeLessThanOrEqual(512000);
  expect(session.get(aiReadingKey(large,AI_DEFAULTS,[]))).toEqual(result);
 });
 it('independent parts: surviving fallback part pins retry even when part zero was not saved',async()=>{
+ const chapter={...source,text:'甲甲a'.repeat(2000)};
  const model='gemini-2.5-flash',settings={...AI_DEFAULTS,fallbackModels:[model]},send=vi.fn(async input=>response('fresh-'+input.text.length,input.model));
  const session=new AiReadingSession(send,{read:async()=>undefined,write:async()=>true,readParts:async()=>[{id:'1',response:response('retained-fallback',model)}]});
- const result=await session.request(source,settings,[]);
+ const result=await session.request(chapter,settings,[]);
  expect(send).toHaveBeenCalledTimes(2);expect(send.mock.calls.every(([input])=>input.model===model)).toBe(true);
  expect(result.model).toBe(model);expect(result.result).toContain('retained-fallback');
 });
@@ -36,14 +38,14 @@ it('independent parts: out-of-order completed sibling stays hidden until its pre
  gap.resolve(response('part-1'));expect((await pending).result).toBe('part-0\npart-1\npart-2');
 });
 it('independent parts: cancel and immediate retry retain finished part but reject late old output/callback/cache write',async()=>{
- const source={bookId:'synthetic-book',id:'synthetic-cancel',revision:1,text:'甲'.repeat(96000)};
+ const source={bookId:'synthetic-book',id:'synthetic-cancel',revision:1,text:'甲'.repeat(7200)},selected={...AI_DEFAULTS,splitParts:true};
  const late=deferred<AiTranslateClientResponse>(),oldProgress:AiPartsProgress[]=[],writes:string[]=[],whole=vi.fn(async()=>true);
- const send=vi.fn().mockResolvedValueOnce(response('retained-first')).mockImplementationOnce(()=>late.promise).mockResolvedValueOnce(response('new-middle')).mockResolvedValueOnce(response('new-last'));
- const session=new AiReadingSession(send,{read:async()=>undefined,write:whole,writePart:async(_source,_settings,_names,_plan,id,result)=>{writes.push(id+':'+result.result);return true;}}),key=aiReadingKey(source,AI_DEFAULTS,[]);
- const old=session.request(source,AI_DEFAULTS,[],undefined,undefined,state=>oldProgress.push(state)),oldRejected=expect(old).rejects.toMatchObject({name:'AbortError'});
+ const send=vi.fn().mockResolvedValueOnce(response('retained-first')).mockImplementationOnce(()=>late.promise).mockResolvedValueOnce(response('new-middle')).mockResolvedValueOnce(response('new-last')).mockResolvedValueOnce(response('new-tail'));
+ const session=new AiReadingSession(send,{read:async()=>undefined,write:whole,writePart:async(_source,_settings,_names,_plan,id,result)=>{writes.push(id+':'+result.result);return true;}}),key=aiReadingKey(source,selected,[]);
+ const old=session.request(source,selected,[],undefined,undefined,state=>oldProgress.push(state)),oldRejected=expect(old).rejects.toMatchObject({name:'AbortError'});
  await vi.waitFor(()=>expect(send).toHaveBeenCalledTimes(2));session.cancel(key);await oldRejected;
- const before=oldProgress.length,retry=session.request(source,AI_DEFAULTS,[]);late.resolve(response('late-old-output'));
- const result=await retry;expect(result.result).toBe('retained-first\nnew-middle\nnew-last');
- expect(send).toHaveBeenCalledTimes(4);expect(oldProgress).toHaveLength(before);expect(writes).toEqual(['0:retained-first','1:new-middle','2:new-last']);expect(whole).toHaveBeenCalledOnce();
+ const before=oldProgress.length,retry=session.request(source,selected,[]);late.resolve(response('late-old-output'));
+ const result=await retry;expect(result.result).toBe('retained-first\nnew-middle\nnew-last\nnew-tail');
+ expect(send).toHaveBeenCalledTimes(5);expect(oldProgress).toHaveLength(before);expect(writes).toEqual(['0:retained-first','1:new-middle','2:new-last','3:new-tail']);expect(whole).toHaveBeenCalledOnce();
  expect(session.get(key)?.result).not.toContain('late-old-output');
 });

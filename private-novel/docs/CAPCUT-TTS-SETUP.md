@@ -11,15 +11,21 @@ Tài liệu này hướng dẫn chi tiết quy trình đưa phiên đăng nhập
 
 ---
 
+## Khôi phục lựa chọn CapCut mặc định (01/11/2026)
+
+- Bundle production `index-ColL-hhl.js` được kiểm tra chứa gateway TikTok cũ và không chứa `/api/tts`; request tổng hợp cùng origin đến `/api/tts` trả HTTP 200 và audio base64. Điều này xác định lỗi lựa chọn frontend trong bản đang chạy; chưa chứng minh nguyên nhân thiếu biến ở lần build cụ thể hoặc xác minh phát audio qua trình duyệt.
+- Code nay mặc định dùng CapCut kể cả khi thiếu `VITE_TTS_GATEWAY`, đồng bộ catalog và nhãn giao diện; chỉ giá trị `legacy-tiktok` chủ động chọn gateway cũ. Phiên vẫn chỉ nằm trên server. Bản sửa chưa deploy. Vitest TTS selector/recovery: 9/9 đạt; E2E Chromium dev-server dừng sau test đầu timeout tại `page.goto`, chưa vào luồng TTS; chưa xác minh browser/Android.
+- Tham khảo [Vite Env Variables and Modes](https://vite.dev/guide/env-and-mode): biến `import.meta.env` được thay tĩnh khi build; áp dụng mặc định an toàn ngay trong selector để build thông thường không phụ thuộc biến shell. Catalog giữ nguồn [jutlyne/capcut-tts](https://github.com/jutlyne/capcut-tts), không thay giao thức hay thêm dependency.
+
 ## Trạng thái hiện hành
 
-- Đã bật CapCut v2 trên Pages `6f16d27c`, bundle `index-DGAjMYUl.js`, dùng `/api/tts` và phiên riêng trong server secret.
+- Đã bật CapCut v2 trên Pages `d07fdcd9`, bundle `index-BT12ui5x.js` (sửa tự nghe tiếp, giữ gateway/phiên CapCut và cấu hình AI), dùng `/api/tts` và phiên riêng trong server secret.
 - Đã xác minh giọng nữ `BV074_streaming` với phiên thật, ba đoạn qua production và thao tác player bằng truyện tổng hợp cô lập cloud. Android thật/chạy nền chưa xác minh.
 - Có 10 giọng Việt đã tạo MP3 và được Edge giải mã/phát: Cô Gái Hoạt Ngôn, Thanh Niên Tự Tin, Nhỏ Ngọt Ngào, Giọng Nữ Phổ Thông, Giọng Bé, Việt Méo, Mai, Kenny Đại Đế, Robot VN, Alex Đại Đế. Chọn trong Cài đặt đọc truyện → Nghe sách → Giọng. Hai ID cũ giữ nguyên; catalog chung với server/cursor/sync.
 - Tự giữ cookie mới nếu endpoint CapCut cấp; `CAPCUT_SESSION_PERSISTENCE=1`, bảng runtime0015. Không lưu mật khẩu hoặc tự đăng nhập. Khi hết phiên, giữ mốc và chờ thử lại60giây; server hạn chế gọi phiên hỏng5phút. Cookie bootstrap mới có namespace riêng nên nhận ngay ở lượt thử kế tiếp.
 - Audio cache riêng trên máy32MiB/256đoạn/24giờ; dọn cache không dọn cursor. Bộ đệm thích nghi12–45giây, tối đa12đoạn giữ lại/3request đang chạy. Tải lại chờ người dùng nhấn Nghe.
 - CapCut Web hiện gửi `tdid=web`, `appvr=15.4.0`; helper/backend giữ nguyên các giá trị thực tế này (tdid chỉ nhận số, rỗng hoặc đúng `web`).
-- Quy trình dưới dùng để kết nối lại khi phiên hết hạn; không gửi cookie/HAR vào chat. Rollback frontend: Pages `a7cbfe29` (secret không tự bị xóa khi rollback).
+- Quy trình dưới dùng để kết nối lại khi phiên hết hạn; không gửi cookie/HAR vào chat. Rollback frontend: Pages `8b4c4073` (secret không tự bị xóa khi rollback).
 
 ### Giới hạn nối lại phiên (xác minh 25/10/2026)
 
@@ -224,3 +230,15 @@ Nếu xảy ra sự cố phát sinh (phiên bị khóa, upstream CapCut thay đ�
   - Phía trình duyệt: Bộ đệm player duy trì tối đa ≤ 3 requests tải trước; khi bấm Stop hủy ngay lập tức các request đang chờ.
 
 Chi tiết về thiết kế kiến trúc và nhật ký kiểm thử an toàn có tại [CAPCUT-TTS-V2-M0.md](CAPCUT-TTS-V2-M0.md).
+
+01/11/2026: đã deploy Pages d312d26e/index-DiJjPKB2.js, mặc định CapCut. Built E2E18/18 desktop/Android mô phỏng; endpoint thật trả200audio trước deploy. Dừng kiểm thử thêm theo yêu cầu người dùng, chưa Android thật. Chi tiết [khôi phục web](WEB-RECOVERY-2026-11-01.md).
+
+### Giảm chờ phục hồi — 01/11/2026, chưa deploy
+
+Theo yêu cầu người dùng: backoff lỗi tạm thời đổi từ ngay/2/4/8/16/30 giây thành ngay/1/2/4/8 giây, giữ tối đa 8 giây. Timeout client từ 30 xuống 25 giây để vẫn bao phủ deadline server 20 giây và chừa vận chuyển; đây là lựa chọn vận hành, chưa có đo đạc độ trễ upstream mới. Phiên hết hạn kiểm tra mỗi 15 giây thay vì 60; polling không tự khôi phục được phiên không hợp lệ. `Retry-After` vẫn ưu tiên nếu dài hơn. Giữ nguyên cancellation, vị trí nghe/audioTime, cache và giới hạn tải trước.
+
+Tham khảo [yt-dlp RetryManager](https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/utils/_utils.py): tách khoảng chờ retry khỏi thao tác mạng và thông báo khoảng chờ; chỉ điều chỉnh thời gian trong player hiện có, không thêm dependency. Không chạy/viết test theo yêu cầu trước đó; build ghi tại `.dsh-tmp/tts-retry-shorter-build.log`. Chưa xác minh nghe thật/hiệu năng upstream; chưa deploy.
+Xác minh thay đổi thời gian chờ: build exit0 (tsc client/server + Vite), diff-check0; không test/deploy.
+
+## Deploy 01/11/2026 — bản tổng hợp đã phát hành
+Pages **1ea43d81**, asset **index-DDP66Cv4.js**; AI Worker **9f48a8f1-a14c-4841-abec-6e2ab871aeb1**. Deploy exit0. GET production /, /phong-toi, /r/10019/1 và JS asset HTTP200, đúng asset mới; /epub-bridge-v2.js HTTP200 và SHA khớp file build. Logs .dsh-tmp/nov01-final-{worker-deploy,pages-deploy}.log và nov01-final-release.json. Không chạy test/E2E, gọi AI/TTS thật hoặc sửa/xóa dữ liệu người dùng. Bằng chứng GET xác nhận phát hành, không thay cho kiểm chứng thao tác thực tế. Các ghi chú chưa deploy phía trên mô tả trạng thái trước lần phát hành này.

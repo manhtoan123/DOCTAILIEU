@@ -1,6 +1,7 @@
 import {createSHA256} from 'hash-wasm';
 import {sanitizeDownloadFilename} from '../../library/services/title-resolver';
 import {parseOriginalDescriptor} from '../../sync-cloud/services/cloud-original-schema';
+import {resolveTextEncoding} from './text-encoding';
 
 export interface AnthologyMarker {offset:number;line:number;title:string;number:string}
 export interface AnthologyOutline {bytes:number;sha256:string;encoding:string;markers:AnthologyMarker[];starts:number[];warnings:string[]}
@@ -24,7 +25,7 @@ function groupTitle(markers:AnthologyMarker[]){
 }
 export async function scanAnthology(file:Blob,fallbackEncoding:string,pattern='',signal?:AbortSignal):Promise<AnthologyOutline>{
   checkSize(file);const regex=pattern?new RegExp(pattern,'iu'):undefined;
-  const encoding=encodingOf(new Uint8Array(await file.slice(0,3).arrayBuffer()),fallbackEncoding);
+  const encoding=await resolveTextEncoding(file,fallbackEncoding,signal);
   if(!['utf-8','utf-16le','utf-16be','gb18030'].includes(encoding))throw Error('Encoding tuyển tập không được hỗ trợ.');
   const unit=encoding.startsWith('utf-16')?2:1;
   if(file.size%unit)throw Error('Dữ liệu UTF-16 bị thiếu byte.');

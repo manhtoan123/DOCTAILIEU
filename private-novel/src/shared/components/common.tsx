@@ -5,11 +5,12 @@ interface ModalProps {
   children: ReactNode;
   onClose: () => void;
   wide?: boolean;
+  className?: string;
   keyboardEnabled?: boolean;
   dismissOnBackdrop?: boolean;
 }
 
-export function Modal({title, children, onClose, wide = false, keyboardEnabled = true, dismissOnBackdrop = false}: ModalProps) {
+export function Modal({title, children, onClose, wide = false, className = '', keyboardEnabled = true, dismissOnBackdrop = false}: ModalProps) {
   const close = useRef(onClose);
   close.current = onClose;
   const keyboard = useRef(keyboardEnabled);
@@ -56,23 +57,13 @@ export function Modal({title, children, onClose, wide = false, keyboardEnabled =
       onPointerUp={event=>{backdropPointer.current=backdropPointer.current&&event.target===event.currentTarget;}}
       onPointerCancel={()=>{backdropPointer.current=false;}}
       onClick={event=>{const outside=backdropPointer.current&&event.target===event.currentTarget;backdropPointer.current=false;if(dismissOnBackdrop&&keyboardEnabled&&outside)onClose();}}>
-      <section className={`dialog ${wide ? 'wide' : ''}`} role="dialog" aria-modal={keyboardEnabled?true:undefined} aria-label={title}>
+      <section className={`dialog ${wide ? 'wide' : ''}${className?' '+className:''}`} role="dialog" aria-modal={keyboardEnabled?true:undefined} aria-label={title}>
         <header>
           <h2>{title}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Đóng">×</button>
         </header>
         {children}
       </section>
-    </div>
-  );
-}
-
-export function Empty({title, children}: {title: string; children: ReactNode}) {
-  return (
-    <div className="empty">
-      <span className="empty-mark">⌑</span>
-      <h2>{title}</h2>
-      <p>{children}</p>
     </div>
   );
 }

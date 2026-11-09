@@ -1,0 +1,22 @@
+.library-management .management-list{list-style:none;padding:0;max-height:40vh;overflow:auto;display:grid;gap:.6rem}
+.library-management .management-list li{border:1px solid var(--border);border-radius:8px;padding:.75rem;display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:.65rem;overflow-wrap:anywhere}
+.library-management .management-list label{display:flex;flex-direction:row;align-items:center;gap:.6rem;flex:1 1 16rem;margin:0}
+.library-management input[type=checkbox]{width:22px;height:22px;flex:0 0 22px;accent-color:var(--green)}
+.library-management .management-list span,.library-management .management-list code{flex:1 1 100%;font-size:.85rem;overflow-wrap:anywhere}
+.library-management button{min-height:44px;white-space:normal}
+.library-management .ai-actions{flex-wrap:wrap}
+.library-management input:not([type=checkbox]){max-width:100%;box-sizing:border-box}
+@media(max-width:600px){.library-management .management-list li{grid-template-columns:auto minmax(0,1fr) auto}.library-management .management-list li small{grid-column:2}.library-management .management-list li button{grid-column:3;grid-row:1/3}}
+
+/* Checkboxes sit beside links: selecting never opens an Album or story. */
+.library-select{display:flex!important;align-items:center;justify-content:center;width:44px;min-height:44px;margin:0!important;flex:0 0 44px;cursor:pointer}
+.library-select input[type=checkbox]{width:21px;height:21px;margin:0;accent-color:var(--green)}
+.selectable-album{display:flex;align-items:stretch;border-radius:8px}
+.album-card-wrap.selectable-album>.album-card-item{flex:1;min-width:0;width:auto}
+.selectable-book{position:relative}
+.book-grid .selectable-book>.library-select{position:static;align-self:flex-start;flex:0 0 auto;border:0;border-radius:0;background:var(--paper)}
+.album-card-grid.album-grid-selecting{grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr))}
+.library-item-selected{outline:2px solid var(--green);outline-offset:1px}
+.library-selection-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px;padding:8px 12px;background:var(--paper);border:1px solid var(--border);border-radius:8px}
+.library-selection-actions button{min-height:44px}
+.library-selection-actions span{margin-right:auto}

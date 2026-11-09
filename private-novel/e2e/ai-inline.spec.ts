@@ -85,9 +85,9 @@ test('saving prompt then closing immediately still updates reader configuration'
 
 
 test('reader settings failure is recoverable without sending an AI request first',async({page})=>{
- let calls=0;await page.route('**/api/ai/translate',r=>{calls++;return r.fulfill({json:response('Đã tải prompt.')});});await seed(page);await page.getByRole('button',{name:'← Tủ sách',exact:true}).click();
+ let calls=0;await page.route('**/api/ai/translate',r=>{calls++;return r.fulfill({json:response('Đã tải prompt.')});});await seed(page);await page.getByRole('link',{name:'← Tủ sách',exact:true}).click();
  await page.evaluate(async()=>{const {db}=await import('/src/core/db.ts');const get=db.settings.get.bind(db.settings);(window as any).__aiSettingsFail=true;db.settings.get=async(key:any)=>{if(key==='ai-book-settings:ai-book'&&(window as any).__aiSettingsFail)throw new Error('synthetic hydration failure');return get(key);};});
- await page.getByRole('button',{name:'Mở sách →',exact:true}).click();await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.getByText(/Không đọc được prompt: synthetic hydration failure/).first()).toBeVisible();expect(calls).toBe(0);await page.evaluate(()=>(window as any).__aiSettingsFail=false);await page.getByRole('button',{name:'Thử lại AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Đã tải prompt.');
+ await page.getByRole('link',{name:'Mở sách →',exact:true}).click();await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.getByText(/Không đọc được prompt: synthetic hydration failure/).first()).toBeVisible();expect(calls).toBe(0);await page.evaluate(()=>(window as any).__aiSettingsFail=false);await page.getByRole('button',{name:'Thử lại AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Đã tải prompt.');
 });
 
 

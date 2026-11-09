@@ -1,3 +1,4 @@
+import {BOOK_METADATA_MAX_CHARS} from '../../../shared/constants/book-metadata';
 import {publishSharedImages} from './shared-images';
 import {validateSharedImage,type SharedImage} from './shared-image-schema';
 import {db} from '../../../core/db';
@@ -42,9 +43,9 @@ async function request(path:string,init:RequestInit|undefined,context:DeviceCont
 }
 function cloudBook(value:unknown):CloudBook{
   const book=value as Partial<CloudBook>|null;
-  if(!book||typeof book.id!=='string'||!UUID.test(book.id)||typeof book.title!=='string'||book.title.length>300||typeof book.sha256!=='string'||!/^[a-f0-9]{64}$/.test(book.sha256)||!Number.isSafeInteger(book.bytes)||book.bytes!<=0||book.bytes!>MAX_CLOUD_BYTES||!Number.isSafeInteger(book.updatedAt))throw new Error('Danh sách cloud không hợp lệ.');
-  if(book.author!==undefined&&(typeof book.author!=='string'||book.author.length>300))throw Error('Tác giả trên kho không hợp lệ.');
-  if(book.displayTitle!==undefined&&(typeof book.displayTitle!=='string'||book.displayTitle.length>300))throw Error('Tiêu đề hiển thị trên kho không hợp lệ.');
+  if(!book||typeof book.id!=='string'||!UUID.test(book.id)||typeof book.title!=='string'||book.title.length>BOOK_METADATA_MAX_CHARS||typeof book.sha256!=='string'||!/^[a-f0-9]{64}$/.test(book.sha256)||!Number.isSafeInteger(book.bytes)||book.bytes!<=0||book.bytes!>MAX_CLOUD_BYTES||!Number.isSafeInteger(book.updatedAt))throw new Error('Danh sách cloud không hợp lệ.');
+  if(book.author!==undefined&&(typeof book.author!=='string'||book.author.length>BOOK_METADATA_MAX_CHARS))throw Error('Tác giả trên kho không hợp lệ.');
+  if(book.displayTitle!==undefined&&(typeof book.displayTitle!=='string'||book.displayTitle.length>BOOK_METADATA_MAX_CHARS))throw Error('Tiêu đề hiển thị trên kho không hợp lệ.');
   const album=normalizeCloudAlbum(book.album);
   return {...book,...(book.displayTitle?{displayTitle:book.displayTitle}:{}),...(book.cover===undefined?{}:{cover:validateSharedImage(book.cover)}),...(album?{album}:{album:undefined})} as CloudBook;
 }
@@ -106,12 +107,16 @@ export async function listDeletedCloudBooks():Promise<string[]>{
   return ids;
 }
 
-export async function deleteCloudBook(id:string):Promise<void>{
+export async function deleteCloudBook(id:string,expected?:CloudBook|null):Promise<void>{
   if(!UUID.test(id))throw new Error('ID truyện không hợp lệ.');
   const context={token:await getCloudDeviceToken()};
-  const result=await (await request(`books/${id}`,{method:'DELETE'},context)).json();
+  // Keep a durable local copy if the reviewed deletion cannot finish locally.
+  // The manager clears this after guarded local deletion; background purge skips it.
+  if(expected!==undefined)await db.settings.put({key:`cloud-delete-review:${location.origin}:${id}`,value:true});
+  const result=await (await request(`books/${id}`,{method:'DELETE',...(expected===undefined?{}:{headers:{'Content-Type':'application/json'},body:JSON.stringify({expected:expected===null?null:{title:expected.title,album:expected.album,sha256:expected.sha256,bytes:expected.bytes,updatedAt:expected.updatedAt}})})},context)).json();
   if(result.id!==id||result.deleted!==true)throw new Error('Chưa xác nhận xóa truyện khỏi kho.');
-  await db.transaction('rw',db.settings,async()=>{await checkDevice(context);await db.settings.put({key:`${DELETED}${location.origin}:${id}`,value:true});await db.settings.delete(`${ACK}${location.origin}:${id}`);});
+  try{await db.transaction('rw',db.settings,async()=>{await checkDevice(context);await db.settings.put({key:`${DELETED}${location.origin}:${id}`,value:true});await db.settings.delete(`${ACK}${location.origin}:${id}`);});}
+  catch(error){throw Object.assign(new Error(`Kho đã xác nhận xóa nhưng chưa lưu được trạng thái thiết bị: ${error instanceof Error?error.message:String(error)}`),{cloudDeleted:true,bookId:id,cause:error});}
 }
 export function downloadCloudBook(book:CloudBook):Promise<'added'|'existing'>{return exclusive(async()=>{
   book=cloudBook(book);

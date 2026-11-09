@@ -5,7 +5,7 @@ export const originalByteLimit=(encoding:string)=>encoding==='epub'?MAX_EPUB_ORI
 export const MAX_ORIGINAL_DESCRIPTOR_BYTES=16*1024;
 export const MAX_ORIGINAL_NAME_CHARS=1024;
 export const MAX_ORIGINAL_PATH_CHARS=4096;
-export const ORIGINAL_ENCODINGS=['utf-8','gb18030','utf-16le','utf-16be','epub'] as const;
+export const ORIGINAL_ENCODINGS=['utf-8','gb18030','utf-16le','utf-16be','epub','pdf','docx'] as const;
 export type OriginalEncoding=typeof ORIGINAL_ENCODINGS[number];
 export interface OriginalDescriptor {
   version:1;sourceId:string;name:string;relativePath:string;encoding:OriginalEncoding;sha256:string;bytes:number;
@@ -37,6 +37,7 @@ export function parseOriginalDescriptor(value:unknown):OriginalDescriptor{
   for(const field of FIELDS){const property=Object.getOwnPropertyDescriptor(value,field);if(!property||!('value'in property))fail();row[field]=property!.value;}
   if(row.version!==1||typeof row.sha256!=='string'||!SHA256.test(row.sha256)||typeof row.bytes!=='number'||!Number.isSafeInteger(row.bytes)||row.bytes<1||row.bytes>originalByteLimit(String(row.encoding))||!ORIGINAL_ENCODINGS.includes(row.encoding as OriginalEncoding)||row.encoding==='epub'&&(typeof row.name!=='string'||!/\.epub$/i.test(row.name)))fail();
   const descriptor:OriginalDescriptor={version:1,sourceId:uuid(row.sourceId),...provenance(row.name,row.relativePath),encoding:row.encoding as OriginalEncoding,sha256:row.sha256 as string,bytes:row.bytes as number};
+  if((descriptor.encoding==='pdf'||descriptor.encoding==='docx')&&!descriptor.name.toLowerCase().endsWith('.'+descriptor.encoding))fail();
   if(new TextEncoder().encode(JSON.stringify(descriptor)).byteLength>MAX_ORIGINAL_DESCRIPTOR_BYTES)fail();
   return descriptor;
 }

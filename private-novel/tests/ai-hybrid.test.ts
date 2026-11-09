@@ -10,7 +10,7 @@ import {handleAiTranslate,resetAiKeyState} from '../server/ai-translate';
 import {db} from '../src/core/db';
 import {EPUB_AI_CHAPTER_LIMITS} from '../src/features/ai/services/ai-job';
 const settings:ReadingAiSettings={...AI_DEFAULTS,model:'gemini-2.5-flash',fallbackModels:[],hybrid:{version:1,liteModel:'gemini-3.1-flash-lite',rules:'Người kể gọi anh; {{text}} là chữ nguyên văn.'}};
-const source={bookId:'hybrid-book',id:'hybrid-chapter',revision:1,text:'林儿'+'甲'.repeat(1798)+'乙'.repeat(1800)};
+const source={bookId:'hybrid-book',id:'hybrid-chapter',revision:1,text:'林儿'+'甲'.repeat(2998)+'乙'.repeat(3000)};
 const names=[{key:'林儿',value:'Lâm Nhi'}];
 const answer=(result:string,model:string)=>({result,model,finishReason:'STOP',inputTokens:1,outputTokens:2});
 const cache={read:readAiReadingCache,write:writeAiReadingCache,readParts:readAiParts,writePart:writeAiPart};

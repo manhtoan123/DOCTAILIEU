@@ -6,6 +6,8 @@ import {publishSharedDictionary,initializeSharedDictionaries} from './shared-dic
 import {initializeSharedChapters,type SharedChapterPatch} from './shared-chapters';
 import {applyPendingCommonNames} from './shared-common-names';
 import {chooseAiReadingProgress} from '../../reader/services/reading-progress';
+import {nameAlbumRoot,parseAlbumNameKey} from '../../names-convert/services/album-name-schema';
+import {validateAlbumNameCapacity} from '../../names-convert/services/scoped-names';
 import type {Progress} from '../../../core/domain';
 import {liveQuery} from 'dexie';
 import {queueAiSettings} from '../../ai/services/ai-reading';
@@ -100,6 +102,13 @@ async function request(url:string,init?:RequestInit){
 }
 function locked<T>(operation:()=>Promise<T>):Promise<T>{return queueAiSettings(SHARED_STATE_KEY,operation);}
 function recordLock<T>(record:SharedRecord,operation:()=>Promise<T>):Promise<T>{const key=record.kind==='reader'?'reader':record.kind==='reader-options'?'reader-options':record.kind==='ai-settings'?(record.bookId?'ai-book-settings:'+record.bookId:'ai-translate-settings'):record.kind==='tts-cursor'?'tts-cursor-shared:'+record.bookId:undefined;return key?queueAiSettings(key,operation):operation();}
+async function collectNameAlbums(record:SharedRecord,before:SharedRecord|undefined,roots:Set<string>){
+ if(record.kind==='album-name')roots.add(parseAlbumNameKey(record.key)[0]);
+ if(record.kind==='name'||record.kind==='book'){
+  const root=nameAlbumRoot((await db.books.get(record.bookId!))?.album);if(root)roots.add(root);
+  if(record.kind==='book'){const oldRoot=nameAlbumRoot((before?.value as {album?:string}|undefined)?.album);if(oldRoot)roots.add(oldRoot);}
+ }
+}
 async function applied(record:SharedRecord){if(record.kind==='chapter-state'){const cursor=(await db.settings.get('tts-cursor-shared:'+record.bookId))?.value as TtsCursor|null;mirrorTtsCursor(record.bookId!,cursor??null);}if(record.kind==='tts-cursor')await recordLock(record,async()=>{const current=(await db.settings.get('tts-cursor-shared:'+record.bookId))?.value as TtsCursor|null;mirrorTtsCursor(record.bookId!,current??null);record={...record,value:current??null};});if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('shared-state-applied',{detail:record}));}
 // Only distinct Names share a transaction. Other kinds retain their own lock,
 // preparation and event ordering; hashes are computed outside IndexedDB.
@@ -113,7 +122,7 @@ async function receiveRows(rows:SharedStateRow[]){
  }
  const appliedRows:SharedRecord[]=[];
  await recordLock(rows[0].record,()=>locked(()=>db.transaction('rw',[db.settings,db.books,db.names,db.progress,db.chapters,db.dictionaries,db.sources],async()=>{
-  const replica=await readSharedReplica();let updated=false;
+  const replica=await readSharedReplica(),affectedAlbums=new Set<string>();let updated=false;
   for(const {row,before,expected,currentHash,remoteHash,prepared,prepareFailed} of snapshots){
   const base=replica.base[row.id];if(base&&row.revision<=base.revision)continue;
   const latest=await readLocalSharedRecord(row.record),changed=sharedJson(latest)!==expected;
@@ -122,10 +131,14 @@ async function receiveRows(rows:SharedStateRow[]){
   const dirty=changed||currentHash!==remoteHash&&(base?currentHash!==base.hash:before!==undefined&&!knownInitial);
   const progressChoice=row.record.kind==='progress'&&latest?.value&&row.record.value?await chooseAiReadingProgress(latest.value as Progress,row.record.value as Progress):undefined;
   let conflict=progressChoice===undefined?dirty||prepareFailed:prepareFailed;
-  if(!conflict&&progressChoice!=='local'&&(currentHash!==remoteHash||changed))try{await applyLocalSharedRecord(row.record,progressChoice===undefined?expected:sharedJson(latest),prepared);appliedRows.push(row.record);}catch(error){if(!(error instanceof LocalSharedConflict))throw error;conflict=true;}
+  if(!conflict&&progressChoice!=='local'&&(currentHash!==remoteHash||changed))try{
+   await applyLocalSharedRecord(row.record,progressChoice===undefined?expected:sharedJson(latest),prepared);appliedRows.push(row.record);
+   await collectNameAlbums(row.record,latest,affectedAlbums);
+  }catch(error){if(!(error instanceof LocalSharedConflict))throw error;conflict=true;}
   if(conflict)replica.conflicts[row.id]=row;else delete replica.conflicts[row.id];
   replica.base[row.id]={descriptor:descriptor(row.record),revision:row.revision,hash:remoteHash};updated=true;
   }
+  await validateAlbumNameCapacity(affectedAlbums);
   if(updated)await db.settings.put({key:SHARED_STATE_KEY,value:replica});
  })));
  for(const record of appliedRows)await applied(record);
@@ -134,7 +147,7 @@ const receive=(row:SharedStateRow)=>receiveRows([row]);
 async function receivePage(rows:SharedStateRow[]){
  for(let index=0;index<rows.length;){
   const first=rows[index],group=[first],ids=new Set([first.id]);index++;
-  if(first.record.kind==='name')while(index<rows.length&&rows[index].record.kind==='name'&&!ids.has(rows[index].id)){
+  if(first.record.kind==='name'||first.record.kind==='album-name')while(index<rows.length&&rows[index].record.kind===first.record.kind&&!ids.has(rows[index].id)){
    ids.add(rows[index].id);group.push(rows[index++]);
   }
   await receiveRows(group);
@@ -163,10 +176,10 @@ async function discoverScopes(scopes:string[]):Promise<{scopes:string[];checkpoi
  }
  return {scopes:scopes.filter(scope=>selected.has(scope)),checkpoint:head};
 }
-async function perform(){
+async function perform(allowDictionaryWork:()=>boolean){
  publish({state:'syncing',message:'Đang đồng bộ chỉnh sửa…',pending:0});
  try{
-  const dictionariesInitialized=await initializeSharedDictionaries();await initializeSharedChapters();
+  const dictionariesInitialized=!allowDictionaryWork()||await initializeSharedDictionaries();await initializeSharedChapters();
   const scopes=['',...(await db.books.where('status').equals('ready').toArray()).map(b=>b.id)];
   const discovery=await discoverScopes(scopes);
   for(const scope of discovery.scopes){let pages=0;for(;;){const replica=await readSharedReplica(),after=replica.cursors[scope]??0;const {response,data}=await request(`/api/state?${scope?`book=${encodeURIComponent(scope)}&`:''}after=${after}`);
@@ -190,6 +203,7 @@ async function perform(){
   let waiting=dictionariesInitialized?0:1;
   for(const [id,record] of local){const base=replica.base[id],hash=await recordHash(record);if(replica.conflicts[id]||hash===base?.hash||immutableAppend(record)&&await ignoredAppend(id,hash,base?.revision))continue;
    if(record.bookId&&(await db.books.get(record.bookId))?.status!=='ready')continue;
+   if(record.kind==='dictionary'&&record.value!==null&&!allowDictionaryWork())continue;
    await publishSharedImages(record);if(record.kind==='dictionary')await publishSharedDictionary(record); // Verify immutable blob before publishing metadata.
    const {response,data}=await request('/api/state',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,baseRevision:base?.revision??0,record})});
    if(response.status===410||response.status===425)continue;
@@ -198,7 +212,7 @@ async function perform(){
    const row=await validateRow(data.row,id);if(row.revision<=(base?.revision??0)||JSON.stringify(row.record)!==JSON.stringify(record))throw new Error('Xác nhận đồng bộ không khớp.');
    await locked(()=>db.transaction('rw',db.settings,async()=>{const latest=await readSharedReplica();latest.base[id]={descriptor:descriptor(record),revision:row.revision,hash};delete latest.conflicts[id];await db.settings.put({key:SHARED_STATE_KEY,value:latest});}));
   }
-  await applyPendingCommonNames();
+  if(allowDictionaryWork())await applyPendingCommonNames();
   const latest=await readSharedReplica(),conflicts=Object.keys(latest.conflicts).length;
   const final=await captureSharedRecords(),finalIds=new Set<string>(),finalBooks=new Set(final.filter(r=>r.kind==='book').map(r=>r.bookId!));
   for(const record of final){const id=await sharedRecordId(record),hash=await recordHash(record);finalIds.add(id);if(!latest.conflicts[id]&&hash!==latest.base[id]?.hash&&!(immutableAppend(record)&&await ignoredAppend(id,hash,latest.base[id]?.revision)))waiting++;}
@@ -207,7 +221,7 @@ async function perform(){
   publish({state:conflicts?'conflict':waiting?'local':'synced',message:conflicts?`${conflicts} chỉnh sửa cần chọn bản giữ.`:waiting?'Còn chỉnh sửa chờ truyện/file được lưu trên kho.':'Các chỉnh sửa đã đồng bộ.',pending:waiting+conflicts});
  }catch(error){publish({state:'local',message:error instanceof Error?error.message:'Chưa đồng bộ được; giữ chỉnh sửa trên máy.',pending:status.pending});}
 }
-export function syncSharedState():Promise<void>{return flight??=(perform().finally(()=>{flight=undefined;}));}
+export function syncSharedState(allowDictionaryWork:()=>boolean=()=>true):Promise<void>{return flight??=(perform(allowDictionaryWork).finally(()=>{flight=undefined;}));}
 export async function resolveSharedState(id:string,choice:'local'|'shared'){
  if(flight)await flight;const replica=await readSharedReplica(),row=replica.conflicts[id];if(!row)return;
  const before=await readLocalSharedRecord(row.record),expected=sharedJson(before);let selected=row.record;
@@ -218,11 +232,16 @@ export async function resolveSharedState(id:string,choice:'local'|'shared'){
   selected=validateSharedRecord({...row.record,value:{...remote,editRevision:(remote.editRevision??remote.chapters[0].revision)+1,chapters:targets}});
  }
  const shouldApply=choice==='shared'||row.record.kind==='chapter',prepared=shouldApply?await prepareSharedChapter(selected,true):undefined,ignore=choice==='local'&&immutableAppend(row.record)?await recordHash(normalized(before,descriptor(row.record))):undefined;
- await recordLock(row.record,()=>locked(()=>db.transaction('rw',[db.settings,db.books,db.names,db.progress,db.chapters,db.dictionaries,db.sources],async()=>{const current=await readSharedReplica();if(current.conflicts[id]?.revision!==row.revision)throw new LocalSharedConflict();if(shouldApply)await applyLocalSharedRecord(selected,expected,prepared,true);if(ignore!==undefined){if(sharedJson(await readLocalSharedRecord(row.record))!==expected)throw new LocalSharedConflict();await db.settings.put({key:ignoredAppendKey(id),value:{hash:ignore,revision:row.revision}});}delete current.conflicts[id];await db.settings.put({key:SHARED_STATE_KEY,value:current});})));if(shouldApply)await applied(selected);await syncSharedState();
+ await recordLock(row.record,()=>locked(()=>db.transaction('rw',[db.settings,db.books,db.names,db.progress,db.chapters,db.dictionaries,db.sources],async()=>{
+  const current=await readSharedReplica();if(current.conflicts[id]?.revision!==row.revision)throw new LocalSharedConflict();
+  if(shouldApply){await applyLocalSharedRecord(selected,expected,prepared,true);const roots=new Set<string>();await collectNameAlbums(selected,before,roots);await validateAlbumNameCapacity(roots);}
+  if(ignore!==undefined){if(sharedJson(await readLocalSharedRecord(row.record))!==expected)throw new LocalSharedConflict();await db.settings.put({key:ignoredAppendKey(id),value:{hash:ignore,revision:row.revision}});}
+  delete current.conflicts[id];await db.settings.put({key:SHARED_STATE_KEY,value:current});
+ })));if(shouldApply)await applied(selected);await syncSharedState();
 }
-export function startSharedStateSync(){
+export function startSharedStateSync(allowDictionaryWork?:()=>boolean){
  let alive=true,timer:ReturnType<typeof setTimeout>|undefined,subscription:{unsubscribe():void}|undefined,observation=0;
- const run=()=>{if(alive&&!document.hidden)void syncSharedState();};
+ const run=()=>{if(alive&&!document.hidden)void syncSharedState(allowDictionaryWork);};
  const changed=()=>{clearTimeout(timer);if(!alive||document.hidden)return;timer=setTimeout(()=>{if(flight)void flight.then(changed);else run();},1200);};
  const suspend=()=>{observation++;subscription?.unsubscribe();subscription=undefined;clearTimeout(timer);};
  const observe=()=>{

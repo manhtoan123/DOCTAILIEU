@@ -1,4 +1,6 @@
 import {afterEach,it,expect,vi} from 'vitest';
+// Keep the legacy sentence/cache compatibility fixtures on their original gateway.
+vi.mock('../src/features/tts/services/tts-gateway',async importOriginal=>({...await importOriginal<typeof import('../src/features/tts/services/tts-gateway')>(),usesCapcutTts:()=>false,ttsGateway:()=>'https://ottsy.weilbyte.dev/api/generation'}));
 import {TikTokPlayer,tiktokVoices,sentences} from '../src/features/tts/services/tts';
 afterEach(()=>{vi.unstubAllGlobals();vi.restoreAllMocks();});
 const options={rate:1,pitch:1,flex:0};

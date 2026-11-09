@@ -29,7 +29,7 @@ async function setup(page:Page,mode:Mode,dataHandler?:(route:Route)=>Promise<voi
   const events={created:0,revoked:0};Reflect.set(window,'originalFileEvents',events);const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL);
   URL.createObjectURL=blob=>{events.created++;return create(blob);};URL.revokeObjectURL=url=>{events.revoked++;revoke(url);};
  },{book,source,chapter,descriptor,bytes:[...bytes],mode});
- await page.getByRole('button',{name:'Thông tin Original fixture',exact:true}).click();await expect(page.getByRole('heading',{name:'Original fixture',exact:true})).toBeVisible();
+ await page.getByRole('link',{name:'Thông tin Original fixture',exact:true}).click();await expect(page.getByRole('heading',{name:'Original fixture',exact:true})).toBeVisible();
  return {metadata:()=>metadata,data:()=>data};
 }
 async function snapshot(page:Page){return page.evaluate(async({book,source,chapter})=>{const {db}=await import('/src/core/db.ts');const original=await db.sources.get(source);return {book:await db.books.get(book),chapter:await db.chapters.get(chapter),name:await db.names.get('original-name'),prompt:(await db.settings.get('ai-book-settings:'+book))?.value,source:original?{id:original.id,sha256:original.sha256,bytes:original.bytes,dataStatus:original.dataStatus,actual:[...new Uint8Array(await original.blob.arrayBuffer())]}:null};},{book,source,chapter});}

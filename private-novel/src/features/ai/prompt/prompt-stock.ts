@@ -21,7 +21,15 @@ async function readStock():Promise<PromptStock> {
 function transaction<T>(operation:(value:PromptStock)=>Promise<T>):Promise<T> {
   return queueAiSettings(PROMPT_STOCK_KEY,()=>db.transaction('rw',db.settings,async()=>operation(await readStock())));
 }
-export function getPromptStock():Promise<PromptStock>{return transaction(async value=>value);}
+/** Explicit 02/11 user request: one-time model-only update, retaining every prompt/cache. */
+export function getPromptStock():Promise<PromptStock>{return transaction(async value=>{
+ const key='ai-fixed-gemma26-request-2026-11-02';if(await db.settings.get(key))return value;
+ const modelSettings=(settings:ReadingAiSettings)=>({...settings,model:'gemma-4-26b-a4b-it',modelMode:'fixed' as const,fallbackModels:[]});
+ const next={...value,profiles:value.profiles.map(p=>({...p,settings:modelSettings(p.settings),updatedAt:Date.now()}))};
+ const rows=await db.settings.where('key').startsWith('ai-book-settings:').toArray(),common=await db.settings.get('ai-translate-settings');if(common)rows.push(common);
+ for(const row of rows){const previous=object(row.value);await db.settings.put({key:row.key,value:{...previous,...modelSettings(validatePromptSettings(previous)),...(previous.chosenProfileSettings?{chosenProfileSettings:modelSettings(validatePromptSettings(previous.chosenProfileSettings))}:{})}});}
+ await db.settings.put({key:PROMPT_STOCK_KEY,value:next});await db.settings.put({key,value:true});return next;
+});}
 /** Read-only subscription path; initialize with getPromptStock outside liveQuery. */
 export async function readStoredPromptStock():Promise<PromptStock>{
   const row=await db.settings.get(PROMPT_STOCK_KEY);if(!row)return fail();return stock(row.value);
@@ -41,8 +49,8 @@ export function copyPromptProfile(id:string,title:string,bookId?:string):Promise
   const source=value.profiles.find(p=>p.id===id);if(!source)throw new Error('Prompt đã bị xóa.');
   return save(value,{title,bookId,settings:{...source.settings}});
 }).then(value=>{promptStockChanged();return value;});}
-function same(a:ReadingAiSettings,b:ReadingAiSettings):boolean{return a.systemPrompt===b.systemPrompt&&a.userPromptTemplate===b.userPromptTemplate&&a.model===b.model&&a.temperature===b.temperature&&a.addressingRules===b.addressingRules&&JSON.stringify(a.fallbackModels)===JSON.stringify(b.fallbackModels)&&(!a.hybrid||!b.hybrid||a.hybrid.rules===b.hybrid.rules&&(a.hybrid.secondHalfPrompt??DEFAULT_SECOND_HALF_PROMPT)===(b.hybrid.secondHalfPrompt??DEFAULT_SECOND_HALF_PROMPT));}
-function selectedValue(p:PromptProfile,previous?:ReadingAiSettings,bookSwitch=true){return {...p.settings,...(previous?{...(bookSwitch?{splitParts:previous.splitParts}:{}),hybrid:bookSwitch?(previous.hybrid?{...previous.hybrid,...p.settings.hybrid}:undefined):p.settings.hybrid??previous.hybrid}:{}),chosenProfileId:p.id,chosenProfileSettings:{...p.settings}};}
+function same(a:ReadingAiSettings,b:ReadingAiSettings):boolean{return a.systemPrompt===b.systemPrompt&&a.userPromptTemplate===b.userPromptTemplate&&a.temperature===b.temperature&&a.addressingRules===b.addressingRules&&JSON.stringify(a.fallbackModels)===JSON.stringify(b.fallbackModels)&&(!a.hybrid||!b.hybrid||a.hybrid.rules===b.hybrid.rules&&(a.hybrid.secondHalfPrompt??DEFAULT_SECOND_HALF_PROMPT)===(b.hybrid.secondHalfPrompt??DEFAULT_SECOND_HALF_PROMPT));}
+function selectedValue(p:PromptProfile,previous?:ReadingAiSettings,bookSwitch=true){return {...p.settings,...(previous?{model:previous.model,modelMode:previous.modelMode,fallbackModels:previous.fallbackModels,...(bookSwitch?{splitParts:previous.splitParts}:{}),hybrid:bookSwitch?(previous.hybrid?{...previous.hybrid,...p.settings.hybrid}:undefined):p.settings.hybrid??previous.hybrid}:{}),chosenProfileId:p.id,chosenProfileSettings:{...p.settings}};}
 /** Caller owns a settings rw transaction. Refresh selected profiles, preserve manual overrides. */
 export async function applySharedPromptStock(next:PromptStock):Promise<void>{
   next=stock(next);const fallback=next.profiles.find(p=>p.id===next.defaultProfileId)!;
@@ -58,7 +66,8 @@ export async function applySharedPromptStock(next:PromptStock):Promise<void>{
 export function selectPromptProfile(bookId:string,id:string):Promise<ReadingAiSettings>{
   text(bookId,200);return queueAiSettings(aiBookSettingsKey(bookId),()=>transaction(async value=>{
     const p=getEligibleProfiles(value,bookId).find(p=>p.id===id);if(!p)throw new Error('Prompt không thuộc truyện này hoặc đã bị xóa.');
-    await db.settings.put({key:aiBookSettingsKey(bookId),value:selectedValue(p)});return {...p.settings};
+    const row=await db.settings.get(aiBookSettingsKey(bookId)),previous=row?validatePromptSettings(row.value):undefined;const selected=selectedValue(p,previous);
+    await db.settings.put({key:aiBookSettingsKey(bookId),value:selected});return validatePromptSettings(selected);
   }));
 }
 export async function getBookPromptSelection(bookId:string):Promise<string|undefined>{

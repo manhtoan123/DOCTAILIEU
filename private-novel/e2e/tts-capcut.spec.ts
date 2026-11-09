@@ -12,12 +12,46 @@ async function seed(page:Page){
   await expect(page.getByRole('button',{name:'Nghe truyện nhanh',exact:true})).toBeEnabled();
 }
 const listen=(page:Page)=>page.getByRole('button',{name:'Nghe truyện nhanh',exact:true});
+async function freezeReadySpeech(page:Page){
+ await seed(page);await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Câu thử số 29.');await expect(page.getByRole('button',{name:'Dừng chương này',exact:true})).toHaveCount(0);
+ await page.clock.install();await page.clock.pauseAt(new Date(Date.now()+10000));
+}
+test('temporary TTS failure retries immediately without the old request and playback waits',async({page})=>{
+ await freezeReadySpeech(page);let first='',attempts=0;
+ await page.route('**/api/tts',route=>{const input=route.request().postDataJSON();first||=input.text;const fail=input.text===first&&++attempts<=2;return fail?route.fulfill({status:503,json:{success:false,error:'temporary_upstream'}}):route.fulfill({json:{success:true,data:mp3}});});
+ const started=await page.evaluate(()=>Date.now());await listen(page).click();await expect.poll(async()=>{await page.clock.runFor(1);return listen(page).getAttribute('data-state');}).toBe('playing');
+ expect(attempts).toBe(3);expect(await page.evaluate(()=>Date.now())-started).toBeLessThan(100);await page.getByRole('button',{name:'Dừng đọc nhanh',exact:true}).click();
+});
+test('Stop cancels a queued immediate TTS retry',async({page})=>{
+ await freezeReadySpeech(page);let calls=0;await page.route('**/api/tts',route=>{calls++;return route.fulfill({status:503,json:{success:false,error:'temporary_upstream'}});});
+ await listen(page).click();await expect.poll(()=>calls).toBe(1);await page.getByRole('button',{name:'Dừng đọc nhanh',exact:true}).click();await page.clock.runFor(60000);
+ expect(calls).toBe(1);await expect(listen(page)).toHaveAttribute('data-state','idle');
+});
+test('an online event wakes interrupted TTS without waiting for the offline poll',async({page})=>{
+ await freezeReadySpeech(page);await page.evaluate(()=>{(window as any).__ttsOnline=false;Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>(window as any).__ttsOnline});});let first='',attempts=0;
+ await page.route('**/api/tts',route=>{const input=route.request().postDataJSON();first||=input.text;const fail=input.text===first&&++attempts<=2;return fail?route.abort('internetdisconnected'):route.fulfill({json:{success:true,data:mp3}});});
+ await listen(page).click();await expect.poll(async()=>{await page.clock.runFor(1);return attempts;}).toBe(2);await expect(page.locator('.reader-convert-status').filter({hasText:'Tự thử lại ngay'})).toBeVisible();await page.clock.runFor(1);
+ const reconnected=await page.evaluate(()=>{(window as any).__ttsOnline=true;window.dispatchEvent(new Event('online'));return Date.now();});await expect(listen(page)).toHaveAttribute('data-state','playing');expect(attempts).toBe(3);expect(await page.evaluate(()=>Date.now())).toBe(reconnected);await page.getByRole('button',{name:'Dừng đọc nhanh',exact:true}).click();
+});
+test('an unpunctuated newline pauses like a full stop only in the speech payload',async({page})=>{
+ const source='Dòng đầu không có dấu\nDòng thứ hai đã có dấu.\nDòng cuối';
+ await seed(page);await page.evaluate(async text=>{
+  const database=await new Promise<IDBDatabase>((resolve,reject)=>{const request=indexedDB.open('thu-phong-v1');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+  try{await new Promise<void>((resolve,reject)=>{const tx=database.transaction(['chapters'],'readwrite'),store=tx.objectStore('chapters'),request=store.get('capcut-one');request.onsuccess=()=>store.put({...request.result,text});tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});}finally{database.close();}
+ },source);await page.reload({waitUntil:'domcontentloaded'});
+ const calls:{text:string;voice:string}[]=[];await page.route('**/api/tts',route=>{calls.push(route.request().postDataJSON());return route.fulfill({json:{success:true,data:mp3}});});
+ await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','playing');
+ expect(calls[0].text).toBe('Dòng đầu không có dấu.\nDòng thứ hai đã có dấu.\nDòng cuối');
+ await expect(page.locator('.prose [data-paragraph="0"]')).toHaveText('Dòng đầu không có dấu');
+ expect(await page.evaluate(async()=>{const database=await new Promise<IDBDatabase>(resolve=>{const r=indexedDB.open('thu-phong-v1');r.onsuccess=()=>resolve(r.result);});try{return await new Promise<string>((resolve,reject)=>{const r=database.transaction('chapters').objectStore('chapters').get('capcut-one');r.onsuccess=()=>resolve(r.result.text);r.onerror=()=>reject(r.error);});}finally{database.close();}})).toBe(source);
+ await page.getByRole('button',{name:'Dừng đọc nhanh',exact:true}).click();
+});
 test('same-origin CapCut contract keeps exact female voice and native audio pause/resume',async({page})=>{
   await seed(page);const calls:any[]=[];let legacy=0;
   await page.route('https://ottsy.weilbyte.dev/**',route=>{legacy++;return route.abort();});
   await page.route('**/api/tts',route=>{calls.push(route.request().postDataJSON());return route.fulfill({json:{success:true,data:mp3}});});
   await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','playing');expect(calls[0]).toMatchObject({voice:'BV074_streaming'});expect(Object.keys(calls[0]).sort()).toEqual(['text','voice']);expect(legacy).toBe(0);
-  await expect.poll(()=>page.evaluate(()=>(window as any).__capcutAudios.some((a:HTMLAudioElement)=>a.currentTime>.05&&a.readyState>=2))).toBe(true);
+  await expect.poll(()=>page.evaluate(()=>(window as any).__capcutAudios.some((a:HTMLAudioElement)=>!a.loop&&a.currentTime>.05&&a.readyState>=2))).toBe(true);
   await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','paused');
   const paused=await page.evaluate(()=>{const a=(window as any).__capcutAudios.find((a:HTMLAudioElement)=>!a.loop);return {src:a.src,time:a.currentTime};});
   await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','playing');expect(await page.evaluate(()=>((window as any).__capcutAudios.find((a:HTMLAudioElement)=>!a.loop) as HTMLAudioElement).src)).toBe(paused.src);
@@ -43,7 +77,7 @@ test('new Vietnamese voice remains selected and keeps its listening cursor after
  const choice=page.getByRole('combobox',{name:'Giọng đọc',exact:true});await expect(choice.locator('option')).toHaveCount(capcutVietnameseVoices.length);
  await choice.selectOption('capcut-BV562_streaming');await page.getByRole('button',{name:'Lưu cài đặt',exact:true}).click();
  await page.getByRole('button',{name:'Ẩn Nghe sách',exact:true}).click();await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','playing');
- await expect.poll(()=>page.evaluate(()=>(window as any).__capcutAudios.some((a:HTMLAudioElement)=>a.currentTime>.05))).toBe(true);
+ await expect.poll(()=>page.evaluate(()=>(window as any).__capcutAudios.some((a:HTMLAudioElement)=>!a.loop&&a.currentTime>.05))).toBe(true);
  await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','paused');
  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('tts-cursor:v1:capcut-fixture')||'{}').voiceId)).toBe('capcut-BV562_streaming');
  expect(voices.length).toBeGreaterThan(0);expect(voices.every(v=>v==='BV562_streaming')).toBe(true);const before=voices.length;
@@ -57,12 +91,12 @@ test('reload resumes the saved media time from device audio cache without retran
  await page.route('**/api/tts',route=>{calls.push(route.request().postDataJSON());return route.fulfill({json:{success:true,data:mp3}});});
  await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Câu thử số 29.');
  await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','playing');
- await expect.poll(()=>page.evaluate(()=>(window as any).__capcutAudios.some((a:HTMLAudioElement)=>a.currentTime>.25))).toBe(true);
+ await expect.poll(()=>page.evaluate(()=>(window as any).__capcutAudios.some((a:HTMLAudioElement)=>!a.loop&&a.currentTime>.25))).toBe(true);
  await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','paused');
  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('tts-cursor:v1:capcut-fixture')||'{}').audioTime)).toBeGreaterThan(.2);
  await expect.poll(()=>page.evaluate(async()=>{const db=await new Promise<IDBDatabase>((resolve,reject)=>{const r=indexedDB.open('thu-phong-audio-v1');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});try{return await new Promise<number>((resolve,reject)=>{const r=db.transaction('audio').objectStore('audio').count();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}finally{db.close();}})).toBeGreaterThan(0);
  const first=calls[0],count=calls.filter(c=>c.text===first.text&&c.voice===first.voice).length;
  await page.reload();await expect(listen(page)).toHaveAttribute('data-resume','true');expect(await page.evaluate(()=>(window as any).__capcutAudios.every((a:HTMLAudioElement)=>a.paused))).toBe(true);
- await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','playing');await expect.poll(()=>page.evaluate(()=>(window as any).__capcutAudios.some((a:HTMLAudioElement)=>a.currentTime>.2))).toBe(true);
+ await listen(page).click();await expect(listen(page)).toHaveAttribute('data-state','playing');await expect.poll(()=>page.evaluate(()=>(window as any).__capcutAudios.some((a:HTMLAudioElement)=>!a.loop&&a.currentTime>.2))).toBe(true);
  expect(calls.filter(c=>c.text===first.text&&c.voice===first.voice).length).toBe(count);await page.getByRole('button',{name:'Dừng đọc nhanh',exact:true}).click();
 });

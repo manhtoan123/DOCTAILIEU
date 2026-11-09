@@ -1,5 +1,12 @@
 import {expect,it} from 'vitest';
 import {parseReaderRoute,readerRoutePath,type ReaderRoute} from '../src/features/reader/services/reader-route';
+it('keeps nested Album paths in durable URLs without confusing reserved query characters',()=>{
+ const route:ReaderRoute={kind:'library',room:'dark',album:'Tác giả/Series ? & #'};
+ const url=new URL(readerRoutePath(route),'https://example.test');
+ expect(parseReaderRoute(url.pathname,url.search)).toEqual(route);
+ expect(parseReaderRoute('/phong-toi','?album=')).toEqual({kind:'library',room:'dark'});
+ expect(parseReaderRoute('/','?album=ignored')).toEqual({kind:'library'});
+});
 it.each<ReaderRoute>([{kind:'library'},{kind:'library',room:'dark'},{kind:'book',bookId:'truyện 1'},{kind:'read',bookId:'book',chapterId:'chương 2'},{kind:'read',bookId:'book'},{kind:'settings',group:'about'},{kind:'settings',group:'names'},{kind:'settings',group:'names',bookId:'truyện 1'},{kind:'settings',group:'ai'}])('round-trips a durable route %j',route=>{
   expect(parseReaderRoute(readerRoutePath(route))).toEqual(route);
 });

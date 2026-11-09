@@ -3,6 +3,7 @@ import {referenceConvert,normalizeKey} from './reference-convert';
 import {nameSourceKey,parseNameValue,NAME_IMAGE_LIMIT,type NameImage} from './name-images';
 export interface Token {sourceStart:number;sourceEnd:number;source:string;targetText:string;type:string;meanings:string[];hanviet:string;nameImage?:NameImage}
 export interface ConvertOptions {mode?:'vietphrase'|'hanviet';multipleMeanings?:boolean;standardizePunctuation?:boolean;capitalize?:boolean;reference?:boolean}
+export type ConvertBudget=(units:number)=>void;
 export const punctuationMap=new Map<string,string>([
   ['。','.'],['、',','],['．','.'],['，',','],['：',':'],['；',';'],['？','?'],['！','!'],['～','~'],
   ['“','“'],['”','”'],['＂','"'],['＇',"'"],['«','«'],['»','»'],['『','“'],['』','”'],['「','“'],['」','”'],
@@ -54,8 +55,8 @@ export class LanguageEngine {
     }else this.indexes[kind].add(kind==='names'||kind==='names2'?nameSourceKey(k):k,v);return true;
   }
   lookup(source:string) {const english=meanings(this.indexes.english.values.get(source)||''),names=[...new Set([...meanings(this.indexes.names.values.get(source)||''),...meanings(this.indexes.names2.values.get(source)||'')])];return {meanings:meanings(this.indexes.vp.values.get(source)||''),hanviet:[...source].map(c=>meanings(this.indexes.hanviet.values.get(c)||c)[0]).join(' '),...(english.length?{english}:{}),...(names.length?{names}: {})};}
-  convert(text:string,names:{key:string;value:string}[],options:ConvertOptions={}):Token[] {
-    if(options.reference&&options.mode!=='hanviet')return referenceConvert(text,names,this.indexes,options.standardizePunctuation===false?this.referenceRules:this.normalizedReferenceRules,options);
+  convert(text:string,names:{key:string;value:string}[],options:ConvertOptions={},budget?:ConvertBudget):Token[] {
+    if(options.reference&&options.mode!=='hanviet')return referenceConvert(text,names,this.indexes,options.standardizePunctuation===false?this.referenceRules:this.normalizedReferenceRules,options,budget);
     const own=new Index();for(const e of names)own.add(nameSourceKey(e.key),e.value);
     const nameLayers:[string,Index][]=[['name',own],['names2',this.indexes.names2],['names',this.indexes.names]];
     const result:Token[]=[];let at=0,imageCount=0;let capitalizeNext=true;
@@ -145,6 +146,7 @@ export class LanguageEngine {
         if(previous && /[\p{L}\p{N}]$/u.test(previous.targetText) && /^[\p{L}\p{N}]/u.test(target) && (found.type!=='original'||previous.type!=='original'))target=' '+target;
       }
       const image=found.type.startsWith('name')?parseNameValue(found.value).image:undefined;
+      budget?.(160+6*(found.key.length+found.value.length+target.length)+choices.length*32);
       result.push({sourceStart:at,sourceEnd:at+found.key.length,source:found.key,targetText:target,type:found.type,meanings:choices,hanviet:'',...(image&&imageCount++<NAME_IMAGE_LIMIT?{nameImage:image}:{})});at+=found.key.length;
     }
     return result;

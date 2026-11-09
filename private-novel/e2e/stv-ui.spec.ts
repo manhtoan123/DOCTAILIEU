@@ -25,8 +25,8 @@ test('late saved settings hydration cannot overwrite a newer theme edit',async({
   await expect(page.locator('.prose')).toHaveCSS('max-width','800px');
   await expect(page.locator('.prose')).toHaveCSS('font-size','27px');
   await expect.poll(()=>page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);return(await db.settings.get('reader'))?.value;})).toMatchObject({theme:'dark',font:'times',width:800,background:'',textColor:''});
-  await page.getByRole('button',{name:'← Tủ sách'}).click();await page.reload();
-  await page.getByRole('button',{name:'Mở sách →'}).click();
+  await page.getByRole('link',{name:'← Tủ sách'}).click();await page.reload();
+  await page.getByRole('link',{name:'Mở sách →'}).click();
   await expect(page.locator('.reader')).toHaveClass(/theme-dark/);
 });
 
@@ -74,10 +74,10 @@ test('settings hydration resolved after leaving the reader is ignored',async({pa
     table.put=(...args:unknown[])=>{(window as any).readerSettingsWrites++;return put(...args);};
     table.get=(key:unknown)=>key==='reader'?new Promise(resolve=>{(window as any).releaseReaderSettings=()=>{table.get=get;resolve(row);};}):get(key);
   });
-  await page.getByRole('button',{name:'Đọc truyện mẫu →'}).click();await page.getByRole('button',{name:'← Tủ sách'}).click();
+  await page.getByRole('button',{name:'Đọc truyện mẫu →'}).click();await page.getByRole('link',{name:'← Tủ sách'}).click();
   await page.evaluate(async()=>{(window as any).releaseReaderSettings();await new Promise(resolve=>requestAnimationFrame(resolve));});
   expect(await page.evaluate(()=>(window as any).readerSettingsWrites)).toBe(0);
-  await page.getByRole('button',{name:'Mở sách →'}).click();await expect(page.locator('.reader')).toHaveClass(/theme-dark/);
+  await page.getByRole('link',{name:'Mở sách →'}).click();await expect(page.locator('.reader')).toHaveClass(/theme-dark/);
   expect(errors).toEqual([]);
 });
 
@@ -98,14 +98,14 @@ test('pending settings writes from an old reader cannot overwrite newer edits af
   await page.getByLabel('Nền',{exact:true}).selectOption('dark');
   await expect.poll(()=>page.evaluate(()=>(window as any).readerWriteStarted)).toBe(true);
   await page.getByLabel('Font',{exact:true}).selectOption('times');
-  await page.getByRole('button',{name:'← Tủ sách'}).click();await page.getByRole('button',{name:'Mở sách →'}).click();
-  await page.getByRole('button',{name:'Cài đặt đọc truyện'}).click();await page.getByLabel('Nền',{exact:true}).selectOption('gray');
+  await page.getByRole('link',{name:'← Tủ sách'}).click();await page.getByRole('link',{name:'Mở sách →'}).click();
+  await page.getByRole('button',{name:'Cài đặt đọc truyện'}).click();await page.getByLabel('Nền',{exact:true}).selectOption('light');
   await page.evaluate(()=>{(window as any).releaseReaderWrite();});
   await expect(page.getByLabel('Font',{exact:true})).toHaveValue('times');
-  await expect(page.locator('.reader')).toHaveClass(/theme-gray/);
-  await expect.poll(()=>page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);return(await db.settings.get('reader'))?.value;})).toMatchObject({theme:'gray',font:'times',width:800});
-  await page.getByRole('button',{name:'← Tủ sách'}).click();await page.reload();await page.getByRole('button',{name:'Mở sách →'}).click();
-  await expect(page.locator('.reader')).toHaveClass(/theme-gray/);
+  await expect(page.locator('.reader')).toHaveClass(/theme-light/);
+  await expect.poll(()=>page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);return(await db.settings.get('reader'))?.value;})).toMatchObject({theme:'light',font:'times',width:800});
+  await page.getByRole('link',{name:'← Tủ sách'}).click();await page.reload();await page.getByRole('link',{name:'Mở sách →'}).click();
+  await expect(page.locator('.reader')).toHaveClass(/theme-light/);
 });
 
 test('STV controls hide, retain settings and recover from reading-only mode',async({page})=>{
@@ -117,14 +117,14 @@ test('STV controls hide, retain settings and recover from reading-only mode',asy
   await page.getByRole('button',{name:'Ẩn Cài đặt hiển thị'}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Chỉ đọc',exact:true})).toHaveCount(0);await expect(page.locator('.reader-actions')).toBeVisible();
   await expect(page.getByRole('button',{name:'Hiện thanh công cụ'})).toHaveCount(0);
-  await page.getByRole('button',{name:'← Tủ sách'}).click();await page.reload();await page.getByRole('button',{name:'Mở sách →'}).click();
+  await page.getByRole('link',{name:'← Tủ sách'}).click();await page.reload();await page.getByRole('link',{name:'Mở sách →'}).click();
   await expect(page.locator('.reader')).toHaveClass(/theme-dark/);await expect(page.locator('.prose')).toHaveCSS('font-family',/Times New Roman/);
   await page.getByRole('button',{name:'Cài đặt đọc truyện'}).click();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Cài đặt đọc truyện'})).toBeFocused();
 });
 
 test('Name panel keeps hidden draft; Convert and word editing are enabled by default',async({page})=>{
-  await page.goto('/');await page.getByRole('button',{name:'＋ Thêm truyện TXT'}).click();await page.getByLabel('Tên truyện').fill('Tên riêng');await page.getByLabel('Hoặc dán nội dung').fill('Chương 1: Thử Name\n张三来了。\nChương 2: Tiếp\n张三回家。');await page.getByRole('button',{name:'Nhập truyện'}).click();
+  await page.goto('/');await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();await page.getByLabel('Tên truyện').fill('Tên riêng');await page.getByText('Dán nội dung truyện',{exact:true}).click();await page.getByLabel('Hoặc dán nội dung').fill('Chương 1: Thử Name\n张三来了。\nChương 2: Tiếp\n张三回家。');await page.getByRole('button',{name:'Nhập truyện'}).click();
   await page.getByRole('button',{name:'Cài đặt đọc truyện'}).click();await page.getByRole('button',{name:'✎ Name',exact:true}).click();await page.locator('.name-manager-advanced summary').click();await page.getByLabel('Nội dung Name List').fill('张三=Trương Tam');await page.getByRole('button',{name:'Ẩn Name riêng của truyện'}).click();
   await page.getByRole('button',{name:'Cài đặt đọc truyện'}).click();await page.getByRole('button',{name:'✎ Name',exact:true}).click();await page.locator('.name-manager-advanced summary').click();await expect(page.getByLabel('Nội dung Name List')).toHaveValue('张三=Trương Tam');await page.getByRole('button',{name:'Lưu nhiều tên',exact:true}).click();await page.getByRole('button',{name:'Ẩn Name riêng của truyện'}).click();
   await expect(page.locator('.prose')).toContainText('Trương Tam');await expect(page.locator('.word-token').filter({hasText:'Trương Tam'})).toHaveCount(1);

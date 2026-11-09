@@ -9,7 +9,7 @@ test('two main destinations; all settings groups remain accessible',async({page}
   await expect(group).toHaveValue('dictionary');
   await expect(page.getByRole('heading',{name:'Từ điển & Convert',exact:true})).toBeVisible();await group.selectOption('ai');await expect(page.getByRole('heading',{name:'Dịch AI & Prompt',exact:true})).toBeVisible();
   await group.selectOption('about');
-  await expect(page.getByRole('heading',{name:'Một thư phòng của riêng bạn'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Thông tin',exact:true})).toBeVisible();
   await nav.getByRole('button',{name:/Tủ sách/}).click();
   await expect(group).toHaveCount(0);
   await nav.getByRole('button',{name:'⚙ Cài đặt',exact:true}).click();
@@ -20,11 +20,11 @@ test('two main destinations; all settings groups remain accessible',async({page}
 
 test('one import entry; card options preserve editing and cancellation',async({page})=>{
   await page.route('**/api/**',r=>r.fulfill({status:503}));await page.goto('/');
-  await expect(page.getByRole('button',{name:'＋ Thêm truyện TXT / EPUB',exact:true})).toHaveCount(1);
+  await expect(page.getByRole('button',{name:'Thêm truyện',exact:true})).toHaveCount(1);
   await expect(page.getByRole('button',{name:'Chọn file TXT',exact:true})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Sao lưu →',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'Đọc truyện mẫu →',exact:true}).click();
-  await page.getByRole('button',{name:'← Tủ sách',exact:true}).click();
+  await page.getByRole('link',{name:'← Tủ sách',exact:true}).click();
   const card=page.locator('.book-card');
   await expect(card.getByRole('button',{name:'Sửa',exact:true})).toBeHidden();
   const options=page.getByLabel('Tùy chọn Một khoảng bình yên', {exact:true});
@@ -40,6 +40,6 @@ test('one import entry; card options preserve editing and cancellation',async({p
   await expect(page.locator('.book-card')).toHaveCount(1);
   await expect(page.locator('.book-card').getByRole('heading')).toHaveText('Truyện đã đổi tên');
   await expect(page.getByRole('button',{name:'Xóa',exact:true})).toBeHidden();
-  await page.getByRole('button',{name:'Mở sách →',exact:true}).click();
+  await page.getByRole('link',{name:'Mở sách →',exact:true}).click();
   await expect(page.locator('.prose')).toContainText('Một chỗ ngồi bên cửa sổ');
 });

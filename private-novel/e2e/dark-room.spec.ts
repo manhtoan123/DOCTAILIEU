@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 
-test('Albums live in Phòng tối, room navigation survives reload and delete is only inside the Album',async({page})=>{
+test('Albums live in Phòng tối, navigation survives reload and selection stays in its Album',async({page})=>{
   await page.route('**/api/**',route=>route.fulfill({status:503,json:{error:'isolated room fixture'}}));
   await page.goto('/');
   await page.evaluate(async()=>{
@@ -34,27 +34,29 @@ test('Albums live in Phòng tối, room navigation survives reload and delete is
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   }
   await page.setViewportSize({width:869,height:835});
-  await expect(page.getByRole('link',{name:'Mở Phòng tối',exact:true})).toHaveText('THU PHONG là trang web cung cấp dịch vụ dịch tự động truyện chữ Trung.');
+  await expect(page.getByRole('link',{name:'Mở Phòng tối',exact:true})).toHaveText('Phòng tối');
   await page.getByRole('link',{name:'Mở Phòng tối',exact:true}).click();
   await expect(page).toHaveURL(/\/phong-toi$/);
-  await expect(page.getByRole('heading',{name:'PHÒNG TỐI',exact:true})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Phòng tối',exact:true})).toBeVisible();
   await expect(page.locator('.book-card')).toHaveCount(0);
   await expect(page.locator('.album-delete')).toHaveCount(0);
   await page.reload();
-  await page.getByRole('textbox',{name:'Tìm truyện',exact:true}).fill('chuong hai');
-  await expect(page.locator('.book-card')).toHaveCount(1);
-  await expect(page.locator('.book-card')).toContainText('Truyện ở Phòng tối');
-  await page.getByRole('textbox',{name:'Tìm truyện',exact:true}).fill('');
-  await page.getByRole('button',{name:'Mở Album Tác giả',exact:true}).click();
-  await page.getByRole('button',{name:'Mở Album Tác giả/Series',exact:true}).click();
-  const remove=page.getByRole('button',{name:'Xóa Album và truyện',exact:true});
-  await expect(remove).toBeVisible();await expect(remove).toHaveClass(/btn-danger/);
-  const color=await remove.evaluate(element=>getComputedStyle(element).backgroundColor.match(/\d+/g)!.map(Number));
-  expect(color[0]).toBeGreaterThan(color[1]+50);
+  const search=page.getByRole('searchbox',{name:'Tìm trong Album',exact:true});
+  await search.fill('Truyện ở Phòng tối');
+  await expect(page.getByRole('region',{name:'Danh sách Album'}).getByRole('link',{name:/Truyện ở Phòng tối/})).toBeVisible();
+  await search.clear();
+  await page.getByRole('link',{name:'Tác giả',exact:true}).click();
+  await page.getByRole('link',{name:'Series',exact:true}).click();
+  await expect(page.getByRole('checkbox',{name:'Chọn truyện Truyện ở Phòng tối',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Quản lý',exact:true}).click();
+  await page.getByRole('checkbox',{name:'Chọn truyện Truyện ở Phòng tối',exact:true}).check();
+  await expect(page.getByRole('group',{name:'Thao tác đã chọn'}).getByRole('button',{name:'Xóa',exact:true})).toBeVisible();
+  await expect(page.getByRole('checkbox',{name:'Chọn truyện Truyện ở Thư phòng',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Xong',exact:true}).click();
   await expect(page.locator('.book-card')).toContainText('Truyện ở Phòng tối');
   await page.getByRole('button',{name:/Tủ sách/}).click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('.book-card')).toContainText('Truyện ở Thư phòng');
-  await page.goBack();await expect(page.getByRole('heading',{name:'PHÒNG TỐI',exact:true})).toBeVisible();
+  await page.goBack();await expect(page.getByRole('heading',{name:'Series',exact:true})).toBeVisible();
   expect(await snapshot()).toEqual(before);
 });

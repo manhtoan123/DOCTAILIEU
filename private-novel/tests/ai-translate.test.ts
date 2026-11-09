@@ -81,7 +81,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); resetAiKeyState(); }
 });
 
 describe('AI bounded upstream contract', () => {
-  it.each(AI_MODELS)('routes selected text model $id exactly once with server-only credentials', async ({ id }) => {
+  it.each(AI_MODELS.filter(m=>!m.id.includes('/')))('routes selected Google model $id exactly once with server-only credentials', async ({ id }) => {
     const spy = mockFetch();
     const res = await handleAiTranslate(makeRequest({ text: '你好', model: id }), VALID_ENV);
     expect(res.status).toBe(200);
@@ -100,7 +100,7 @@ describe('AI bounded upstream contract', () => {
     const spy=mockFetch();const response=await handleAiTranslate(makeRequest({text:'你好',benchmarkModel}),VALID_ENV);
     expect(response.status).toBe(200);expect(await response.json()).toMatchObject({model:benchmarkModel});
     expect(spy.mock.calls[0][0]).toBe(`https://generativelanguage.googleapis.com/v1beta/models/${benchmarkModel}:generateContent`);
-    expect(AI_MODELS.map(row=>row.id)).not.toContain(benchmarkModel);
+    if(benchmarkModel==='gemini-3.5-flash-lite')expect(AI_MODELS.map(row=>row.id)).toContain(benchmarkModel);else expect(AI_MODELS.map(row=>row.id)).not.toContain(benchmarkModel);
   });
   it.each([null,3,{},[], '', '../gemini-2.5-pro','gemini-2.5-pro?key=x','gemini-unknown'])('rejects benchmark ID %j before upstream',async benchmarkModel=>{
     const spy=mockFetch();const response=await handleAiTranslate(makeRequest({text:'你好',benchmarkModel}),VALID_ENV);
@@ -119,7 +119,7 @@ describe('AI bounded upstream contract', () => {
     expect(await res.json()).toEqual({ error: 'ai_invalid_model' });
     expect(spy).not.toHaveBeenCalled();
   });
-  it.each(AI_MODELS)('does not change model or retry quota failure for $id', async ({ id }) => {
+  it.each(AI_MODELS.filter(m=>!m.id.includes('/')))('does not change Google model or retry quota failure for $id', async ({ id }) => {
     const spy = mockFetch(429, { error: { message: 'private provider diagnostic' } });
     const res = await handleAiTranslate(makeRequest({ text: '你好', model: id }), VALID_ENV);
     expect(res.status).toBe(429);
@@ -268,9 +268,9 @@ describe('AI model allowlist change and operator key pool',()=>{
  function poolFetch() { return vi.spyOn(globalThis, 'fetch'); }
  it('reads a removed model by calling the current default and echoing the requested alias',async()=>{
    const spy = mockFetch();
-   const res = await handleAiTranslate(makeRequest({ text: '你好', model: 'gemini-3.5-flash-lite' }), VALID_ENV);
+   const res = await handleAiTranslate(makeRequest({ text: '你好', model: 'gemini-3.6-flash' }), VALID_ENV);
    expect(res.status).toBe(200);
-   expect(await res.json()).toMatchObject({ model: 'gemini-3.5-flash-lite' });
+   expect(await res.json()).toMatchObject({ model: 'gemini-3.6-flash' });
    expect(spy.mock.calls[0][0]).toContain(`/models/${DEFAULT_AI_MODEL}:generateContent`);
    expect(res.headers.get('X-AI-Model-Alias')).toBe(DEFAULT_AI_MODEL);
  });
@@ -299,15 +299,15 @@ describe('AI model allowlist change and operator key pool',()=>{
    expect(res.status).toBe(200);
    expect(spy.mock.calls[1][1]?.headers).toMatchObject({ 'x-goog-api-key': 'synthetic-key-cccc' });
  });
- it('re-probes a retired key after the retirement window instead of failing forever',async()=>{
+ it('does not re-probe a key-model pair after a non-recoverable 403',async()=>{
    vi.useFakeTimers();
    try {
      const spy = poolFetch().mockResolvedValueOnce(new Response('nope', { status: 403 }));
      expect((await handleAiTranslate(makeRequest({ text: '你好' }), VALID_ENV)).status).toBe(503);
      spy.mockImplementation(async () => new Response(JSON.stringify(validResult), { status: 200 }));
      vi.setSystemTime(Date.now() + 11 * 60 * 1000);
-     expect((await handleAiTranslate(makeRequest({ text: '你好' }), VALID_ENV)).status).toBe(200);
-     expect(spy).toHaveBeenCalledTimes(2);
+    expect((await handleAiTranslate(makeRequest({ text: '你好' }), VALID_ENV)).status).toBe(404);
+    expect(spy).toHaveBeenCalledOnce();
    } finally { vi.useRealTimers(); }
  });
  it('prefers an actionable auth error when a credential is dead and no key can serve',async()=>{

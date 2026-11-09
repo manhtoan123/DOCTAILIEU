@@ -51,8 +51,8 @@ for(const fontSize of [22,40]){
     await expect(page.locator('.prose')).toHaveCSS('font-size','19px');await expect(page.locator('.prose')).toHaveCSS('max-width','760px');
     await expect(page.getByLabel('Giãn dòng',{exact:true})).toHaveValue('1.65');await expect(page.getByLabel('Font',{exact:true})).toHaveValue('arial');
     await expect.poll(()=>savedSettings(page)).toMatchObject({...speech,theme:'sepia',font:'arial',fontSize:19,lineHeight:1.65,width:760,background:'',textColor:'',align:'left',textShadow:false});
-    await expectNoOverflow(page);await page.keyboard.press('Escape');await page.getByRole('button',{name:'← Tủ sách'}).click();await page.reload();
-    await page.getByRole('button',{name:'Mở sách →'}).click();await expect(page.locator('.prose')).toHaveCSS('font-size','19px');
+    await expectNoOverflow(page);await page.keyboard.press('Escape');await page.getByRole('link',{name:'← Tủ sách'}).click();await page.reload();
+    await page.getByRole('link',{name:'Mở sách →'}).click();await expect(page.locator('.prose')).toHaveCSS('font-size','19px');
     await expect.poll(()=>savedSettings(page)).toMatchObject({...speech,fontSize:19,lineHeight:1.65,width:760});
   });
 }

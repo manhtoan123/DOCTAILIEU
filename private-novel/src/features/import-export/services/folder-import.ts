@@ -1,3 +1,4 @@
+import {cleanImportedTitle,cleanImportedText} from './import-advertising';
 import Dexie from 'dexie';
 import {db} from '../../../core/db';
 import {cleanTitle,uid,type Chapter,type SourceFile} from '../../../core/domain';
@@ -5,6 +6,8 @@ import type {ImportStatus} from './importer';
 import {throwIfImportAborted} from './importer';
 import {assertStorageBudget} from '../../../core/storage';
 import {StreamingSplitter,type Part} from './splitter';
+import {resolveTextEncoding} from './text-encoding';
+import {scanGluedChapterNumbers} from './glued-headings';
 
 export interface FolderImportGroup {path:string;title:string;files:File[]}
 export interface FolderImportPlan {groups:FolderImportGroup[];ignored:string[]}
@@ -38,16 +41,6 @@ export function planFolderImport(files:File[],includeEpub=false):FolderImportPla
   for(const group of groups)group.files.sort((a,b)=>compareNames(a.name,b.name));
   return {groups,ignored:ignored.sort(compareNames)};
 }
-function decode(bytes:Uint8Array,encoding:string){
-  const allowed=['utf-8','gb18030','utf-16le','utf-16be'];
-  if(!allowed.includes(encoding.toLowerCase()))throw new Error('Encoding folder không được hỗ trợ.');
-  let actual=encoding.toLowerCase();
-  if(bytes[0]===0xef&&bytes[1]===0xbb&&bytes[2]===0xbf)actual='utf-8';
-  else if(bytes[0]===0xff&&bytes[1]===0xfe)actual='utf-16le';
-  else if(bytes[0]===0xfe&&bytes[1]===0xff)actual='utf-16be';
-  return {encoding:actual,text:new TextDecoder(actual,{fatal:true}).decode(bytes).replace(/\r\n?/g,'\n')};
-}
-
 /** Each TXT contributes ordered chapters; headings/long text split losslessly. */
 export async function importFolderGroup(group:FolderImportGroup,encoding:string,onProgress:(p:ImportStatus)=>void,signal:AbortSignal,maxChars?:number):Promise<{id:string}>{
   throwIfImportAborted(signal);
@@ -69,21 +62,23 @@ export async function importFolderGroup(group:FolderImportGroup,encoding:string,
     throwIfImportAborted(signal);
     const bytes=new Uint8Array(await file.arrayBuffer());
     throwIfImportAborted(signal);
-    let result:ReturnType<typeof decode>;
-    try{result=decode(bytes,encoding);}catch{throw new Error(`${file.name}: không giải mã được; hãy kiểm tra encoding.`);}
+    let result:{encoding:string;text:string};
+    try{const actual=await resolveTextEncoding(file,encoding,signal);result={encoding:actual,text:new TextDecoder(actual,{fatal:true}).decode(bytes).replace(/\r\n?/g,'\n')};}catch{throwIfImportAborted(signal);throw new Error(`${file.name}: không giải mã được; hãy kiểm tra encoding.`);}
     if(!result.text.trim())throw new Error(`${file.name}: chương rỗng; folder chưa được nhập.`);
     const hash=await crypto.subtle.digest('SHA-256',bytes);
     throwIfImportAborted(signal);
     const sourceId=uid();
     sources.push({id:sourceId,bookId:id,name:file.name,relativePath:file.webkitRelativePath,encoding:result.encoding,sha256:[...new Uint8Array(hash)].map(n=>n.toString(16).padStart(2,'0')).join(''),bytes:file.size,blob:file});
     const parts:Part[]=[];
-    const splitter=new StreamingSplitter(cleanTitle(file.name),part=>parts.push(part),undefined,maxChars??MAX_FOLDER_CHAPTER_CHARS);
-    splitter.feed(result.text,true);
+    const glued=await scanGluedChapterNumbers(file,result.encoding,signal);
+    const splitter=new StreamingSplitter(cleanTitle(file.name),part=>{if(part.text.trim())parts.push({...part,title:cleanImportedTitle(part.title)});},undefined,maxChars??MAX_FOLDER_CHAPTER_CHARS,true,glued);
+    splitter.feed(cleanImportedText(result.text),true);
     for(const part of parts) chapters.push({id:uid(),bookId:id,sourceId,order:chapters.length,title:part.title,text:part.text,revision:1});
     chars+=parts.reduce((sum,part)=>sum+part.text.length,0);
     onProgress({message:`${order+1}/${files.length} · ${file.name}`,percent:Math.round((order+1)/files.length*90)});
   }
   throwIfImportAborted(signal);
+  if(!chapters.length)throw new Error('Không còn nội dung truyện sau khi lọc quảng cáo.');
   const now=Date.now();
   await db.transaction('rw',[db.books,db.chapters,db.sources,db.importJobs],async()=>{
     const transaction=Dexie.currentTransaction!;
@@ -93,7 +88,7 @@ export async function importFolderGroup(group:FolderImportGroup,encoding:string,
     transaction.on('complete',()=>signal.removeEventListener('abort',abort));
     transaction.on('abort',()=>signal.removeEventListener('abort',abort));
     throwIfImportAborted(signal);
-    await db.books.add({id,title:group.title.trim()||plan.groups[0].title,author:'',createdAt:now,updatedAt:now,status:'staging',chapterCount:chapters.length,charCount:chars});
+    await db.books.add({id,title:cleanImportedTitle(group.title.trim()||plan.groups[0].title),author:'',createdAt:now,updatedAt:now,status:'staging',chapterCount:chapters.length,charCount:chars});
     throwIfImportAborted(signal);await db.chapters.bulkAdd(chapters);
     throwIfImportAborted(signal);await db.sources.bulkAdd(sources);
     throwIfImportAborted(signal);await db.importJobs.add({jobId:uid(),bookId:id,phase:'preview',totalFiles:files.length,processedFiles:files.length,processedBytes:totalBytes,checkpoint:files.length,duplicateFiles:[],updatedAt:now});

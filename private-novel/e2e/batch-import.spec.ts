@@ -1,7 +1,7 @@
 import {test,expect,type Page} from '@playwright/test';
 async function choose(page:Page,texts=['第1章 开始\n你好山门。\n第2章 后来\n正文结束。','第1章 开始\n你好山门。\n第2章 后来\n正文结束。']){
-  await page.goto('/');await page.getByRole('button',{name:'＋ Thêm truyện TXT / EPUB',exact:true}).click();
-  await page.getByLabel('Chọn file TXT hoặc EPUB',{exact:true}).setInputFiles(texts.map((text,index)=>({name:`Truyện ${index+1}.txt`,mimeType:'text/plain',buffer:Buffer.from(text)})));
+  await page.goto('/');await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();
+  await page.getByLabel(/^(Chọn|Đổi) file$/).setInputFiles(texts.map((text,index)=>({name:`Truyện ${index+1}.txt`,mimeType:'text/plain',buffer:Buffer.from(text)})));
 }
 test('batch native Worker creates independent books with identical content and atomic publication',async({page})=>{
   await choose(page);await expect(page.getByRole('dialog',{name:'Nhập nhiều truyện'})).toBeVisible({timeout:20000});
@@ -23,7 +23,8 @@ await page.getByRole('button',{name:'Nhập nhiều truyện',exact:true}).click
   await page.getByRole('button',{name:'Hủy xử lý',exact:true}).click();await expect(page.getByRole('alert')).toContainText('Đã hủy nhập');await page.getByRole('button',{name:'Đóng',exact:true}).last().click();await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);return [await db.books.count(),await db.chapters.count(),await db.sources.count(),await db.importJobs.count()];})).toEqual([0,0,0,0]);
 });
-test('later empty file rolls back earlier successfully staged file',async({page})=>{
-  await choose(page,['第1章 开始\n第一本。','']);await page.getByRole('button',{name:'Nhập nhiều truyện',exact:true}).click();await expect(page.getByRole('dialog',{name:'Nhập nhiều truyện'}).locator(':scope > p[role="alert"]')).toContainText(/rỗng|nội dung/i);
+test('an empty file in a batch is rejected by preview before any staging',async({page})=>{
+  await choose(page,['第1章 开始\n第一本。','']);await expect(page.getByRole('region',{name:'Xem trước chia chương'}).getByRole('alert')).toContainText(/rỗng|nội dung/i);
+  await expect(page.getByRole('button',{name:'Nhập nhiều truyện',exact:true})).toBeDisabled();
   expect(await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);return [await db.books.count(),await db.chapters.count(),await db.sources.count(),await db.importJobs.count()];})).toEqual([0,0,0,0]);
 });

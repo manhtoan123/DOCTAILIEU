@@ -1,7 +1,7 @@
 import {test,expect} from '@playwright/test';
 for(const mode of ['single','batch','folder'])for(const action of ['cancel','unmount'])test(`${mode} ${action} during atomic publication preserves existing data and suppresses late completion`,async({page})=>{
  await page.goto(`/e2e/import-lifecycle.html?mode=${mode}`);
- if(mode==='single')await page.getByLabel('Hoặc dán nội dung',{exact:true}).fill('第1章 起点\n你好。\n第2章 后来\n正文。');
+ if(mode==='single'){await page.getByText('Dán nội dung truyện',{exact:true}).click();await page.getByLabel('Hoặc dán nội dung',{exact:true}).fill('第1章 起点\n你好。\n第2章 后来\n正文。');}
  if(mode==='folder')await page.getByLabel('Chọn folder truyện',{exact:true}).evaluate((element:HTMLInputElement)=>{const selection=new DataTransfer();const file=new File(['第1章 起点\n你好。\n第2章 后来\n正文。'],'A.txt');Object.defineProperty(file,'webkitRelativePath',{value:'Kho/A.txt'});selection.items.add(file);element.files=selection.files;element.dispatchEvent(new Event('change',{bubbles:true}));});
  await page.getByRole('button',{name:mode==='single'?'Nhập truyện':mode==='batch'?'Nhập nhiều truyện':'Nhập folder',exact:true}).click();
  await expect.poll(()=>page.evaluate(()=>(window as any).commitHeld)).toBe(true);

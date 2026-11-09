@@ -31,7 +31,7 @@ test('reports recovery parts and reason after reload, separates next chapter, an
 });
 test('table of contents opens at the current chapter and chapter navigation has larger tap areas',async({page},testInfo)=>{
  await seed(page);
- const next=page.getByRole('navigation',{name:'Điều hướng chương đầu trang'}).getByRole('button',{name:'Chương sau →'});const bounds=await next.boundingBox();expect(bounds!.height).toBeGreaterThanOrEqual(48);expect(bounds!.width).toBeGreaterThan(page.viewportSize()!.width/4);
+ const next=page.getByRole('navigation',{name:'Điều hướng chương đầu trang'}).getByRole('link',{name:'Chương sau →'});const bounds=await next.boundingBox();expect(bounds!.height).toBeGreaterThanOrEqual(48);expect(bounds!.width).toBeGreaterThan(page.viewportSize()!.width/4);
  await page.getByRole('button',{name:'☷ Mục lục',exact:true}).first().click();const toc=page.getByRole('dialog',{name:'Mục lục',exact:true});
  await expect(toc.locator('.toc-reading')).toContainText('Chương 123');const current=toc.locator('[aria-current="page"]');await expect(current).toContainText('Chương 123');await expect(current).toContainText('Đang đọc');await expect(current).toBeInViewport();
  await expect(toc.locator('.toc button').first()).toContainText('Chương 121');

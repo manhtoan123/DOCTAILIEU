@@ -50,6 +50,12 @@ async function upload(value:OriginalDescriptor,actual=value.bytes,fixture=''){
 }
 const key=(v:OriginalDescriptor)=>`originals/v1/${book}/${v.sourceId}/${v.sha256}.bin`;
 describe('candidate originals actual workerd R2 and D1',()=>{
+  it.each(['pdf','docx'] as const)('roundtrips a synthetic %s original through actual HTTP/workerd/R2',async(encoding)=>{
+    const descriptor:OriginalDescriptor={version:1,sourceId:source(encoding==='pdf'?910:911),name:`synthetic.${encoding}`,relativePath:`Root/synthetic.${encoding}`,encoding,sha256:hash(256),bytes:256};
+    const reserved=await runtime.dispatchFetch(`https://synthetic.test/api/cloud/books/${book}/originals/${descriptor.sourceId}`,{method:'POST',headers:{Origin:'https://synthetic.test','Content-Type':'application/json'},body:JSON.stringify(descriptor)});expect(reserved.status,await reserved.text()).toBe(201);
+    const sent=await upload(descriptor);expect(sent.status,await sent.text()).toBe(201);
+    const received=await runtime.dispatchFetch(`https://synthetic.test/api/cloud/books/${book}/originals/${descriptor.sourceId}/data`);expect(received.status).toBe(200);const bytes=new Uint8Array(await received.arrayBuffer());expect(bytes).toEqual(new Uint8Array(256).fill(97));expect(createHash('sha256').update(bytes).digest('hex')).toBe(descriptor.sha256);
+  },30000);
   it('roundtrips full40MiB source with native whole checksum and exact retry',async()=>{
     const v=await reserve(1,40*1024*1024);const first=await upload(v);expect(first.status,await first.text()).toBe(201);const bucket=await runtime.getR2Bucket('LIBRARY_BUCKET'),head=await bucket.head(key(v));expect(head?.size).toBe(v.bytes);expect(Buffer.from(head!.checksums.sha256!).toString('hex')).toBe(v.sha256);
     const retry=await upload(v);expect(retry.status,await retry.text()).toBe(200);

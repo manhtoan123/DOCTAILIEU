@@ -4,10 +4,10 @@ import {db} from '../src/core/db';
 import {AI_DEFAULTS,AiReadingSession,aiReadingKey,aiBookSettingsKey,type AiReadingCache} from '../src/features/ai/services/ai-reading';
 import {readAiReadingCache,writeAiReadingCache} from '../src/features/ai/services/ai-reading-cache';
 import {AiTranslateClientError,type AiTranslateClientResponse} from '../src/features/ai/services/ai-translate';
-import {splitAiText} from '../src/features/ai/services/ai-parts';
+import {planAiText} from '../src/features/ai/services/ai-output-plan';
 import {applySharedPromptStock,deletePromptProfile,getBookPromptSelection,getPromptStock,savePromptProfile,selectPromptProfile} from '../src/features/ai/prompt/prompt-stock';
 
-const source={bookId:'fallback-review',id:'fallback-chapter',revision:1,text:'林儿来到这里。'};
+const source={bookId:'fallback-review',id:'fallback-chapter',revision:1,text:'林儿来到这里。'+'a'.repeat(5993)};
 const names=[{key:'林儿',value:'Lâm Nhi'}];
 const settings={...AI_DEFAULTS,model:'gemini-3.8-flash',fallbackModels:['gemini-3.7-flash','gemini-2.5-flash']};
 const output=(model:string,result='Lâm Nhi đến đây.'):AiTranslateClientResponse=>({model,result,finishReason:'STOP',inputTokens:1,outputTokens:2});
@@ -31,7 +31,7 @@ it('review: an overloaded long plan stops after the first part model chain witho
  const long={...source,text:'中'.repeat(64000)},send=vi.fn().mockRejectedValue(busy());
  const session=new AiReadingSession(send),chosen={...settings,fallbackModels:['gemini-3.7-flash','gemini-3.5-flash','gemini-2.5-flash']};
  await expect(session.request(long,chosen,[])).rejects.toMatchObject({status:503,retryAfterMs:expect.any(Number)});
- const first=splitAiText(long.text,[],32000)[0];expect(first.text.length).toBeLessThanOrEqual(32000);expect(first.text).toBe(long.text.slice(0,first.end));
+ const first=planAiText(long.text,[],false).parts[0];expect(first.text.length).toBeLessThanOrEqual(32000);expect(first.text).toBe(long.text.slice(0,first.end));
  expect(send.mock.calls.map(c=>[c[0].model,c[0].text.length])).toEqual([['gemini-3.8-flash',first.text.length],['gemini-3.7-flash',first.text.length],['gemini-3.5-flash',first.text.length],['gemini-2.5-flash',first.text.length]]);
  expect(send.mock.calls.every(c=>c[0].text===first.text&&c[0].context===undefined)).toBe(true);
  expect(session.get(aiReadingKey(long,chosen,[]))).toBeUndefined();

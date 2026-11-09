@@ -21,7 +21,7 @@ export const SHARED_DICTIONARY_PREFIX='shared-dictionary:';
 export const sharedSettingsKey=(r:SharedRecord)=>r.kind==='chapter-state'?CHAPTER_STATE_PREFIX+r.bookId:r.kind==='chapter-append'?APPEND_PREFIX+r.bookId+':'+r.key:r.kind==='chapter-append-packet'?APPEND_PACKET_PREFIX+r.bookId+':'+r.key:r.kind==='reader'?'reader':r.kind==='reader-options'?'reader-options':r.kind==='albums'?ALBUM_REGISTRY_KEY:r.kind==='ai-settings'?(r.bookId?aiBookSettingsKey(r.bookId):'ai-translate-settings'):r.kind==='chapter'?`${SHARED_CHAPTER_PREFIX}${r.bookId}:${r.key}`:r.kind==='album-name'?albumNameSetting(r.key):r.kind==='common-name'?SHARED_COMMON_PREFIX+encodeURIComponent(r.key):r.kind==='dictionary'?SHARED_DICTIONARY_PREFIX+r.key:'';
 async function localCursor(bookId:string){const row=await db.settings.get('tts-cursor-shared:'+bookId),mirror=readTtsCursor(bookId);if(row?.value===null)return null;const saved=row?.value as TtsCursor|undefined;const chosen=mirror&&(!saved||mirror.updatedAt>saved.updatedAt)?mirror:saved;return chosen&&isHiddenChapter(await db.books.get(bookId),chosen.chapterId)?null:chosen;}
 /** Book metadata replicated to other devices; the persisted Vietnamese title travels with it. */
-function bookMetadata(b:Book){return {title:b.title,author:b.author,...(b.displayTitle?{displayTitle:b.displayTitle}:{}),...(b.cover?{cover:b.cover}:{}),...(b.album?{album:b.album}:{})};}
+function bookMetadata(b:Book){return {title:b.title,author:b.author??'',...(b.displayTitle?{displayTitle:b.displayTitle}:{}),...(b.cover?{cover:b.cover}:{}),...(b.album?{album:b.album}:{})};}
 export async function captureSharedRecords():Promise<SharedRecord[]>{
  const records:SharedRecord[]=[];
  await db.transaction('r',[db.books,db.names,db.settings,db.progress],async()=>{

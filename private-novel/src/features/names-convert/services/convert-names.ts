@@ -1,5 +1,6 @@
 import {convertTombKey} from '../../sync-cloud/services/shared-name-intents';
 import {db} from '../../../core/db';
+import {canonicalNameKey,formatNameList,nameKeyResolver} from './name-format';
 
 export type ConvertName={key:string;value:string};
 export const CONVERT_NAMES_KEY='convert-name-list';
@@ -10,9 +11,11 @@ function validEntry(key:string,value:string,line:number) {
   if(!key||!value||/[\r\n=]/.test(key)||/[\r\n]/.test(value))throw new Error(`Name List: dòng ${line} cần dạng chữ Trung=tên Việt trên một dòng.`);
   if(key.length>256||value.length>2048)throw new Error(`Name List: dòng ${line} vượt giới hạn khóa 256 hoặc nghĩa 2.048 ký tự.`);
 }
-export function formatConvertNames(names:ConvertName[]) {return names.map(n=>`${n.key}=${n.value}`).join('\n');}
+export function formatConvertNames(names:ConvertName[]) {return formatNameList(names);}
 function checkSize(names:ConvertName[]) {
-  if(names.length>ENTRY_LIMIT||formatConvertNames(names).length>CONVERT_NAMES_LIMIT)throw new Error('Name List vượt 4.096 mục hoặc 64.000 ký tự UTF-16; không lưu một phần.');
+  // Read existing stores against their original limit, without migrating keys or
+  // rejecting old data solely because display now includes a marker per row.
+  if(names.length>ENTRY_LIMIT||names.map(n=>`${n.key}=${n.value}`).join('\n').length>CONVERT_NAMES_LIMIT)throw new Error('Name List vượt 4.096 mục hoặc 64.000 ký tự UTF-16; không lưu một phần.');
 }
 export function parseConvertNames(text:string):ConvertName[] {
   if(text.length>CONVERT_NAMES_LIMIT)throw new Error('Name List vượt 64.000 ký tự UTF-16; không lưu một phần.');
@@ -21,7 +24,7 @@ export function parseConvertNames(text:string):ConvertName[] {
     const trimmed=line.trim();if(!trimmed||trimmed.startsWith('#'))continue;
     const at=trimmed.indexOf('=');
     if(at<1)throw new Error(`Name List: dòng ${index+1} cần dạng chữ Trung=tên Việt.`);
-    const key=trimmed.slice(0,at).trim(),value=trimmed.slice(at+1).trim();validEntry(key,value,index+1);names.set(key,value);
+    const key=canonicalNameKey(trimmed.slice(0,at)),value=trimmed.slice(at+1).trim();validEntry(key,value,index+1);names.set(key,value);
   }
   const result=[...names].map(([key,value])=>({key,value}));checkSize(result);return result;
 }
@@ -44,8 +47,8 @@ export async function readConvertNames():Promise<ConvertName[]> {
 export async function saveConvertNames(text:string):Promise<number> {
   const edits=parseConvertNames(text);
   return db.transaction('rw',db.settings,async()=>{
-    const names=new Map((await readConvertNames()).map(n=>[n.key,n.value]));
-    for(const entry of edits){names.set(entry.key,entry.value);await db.settings.delete(convertTombKey(entry.key));}
+    const rows=await readConvertNames(),resolveKey=nameKeyResolver(rows),names=new Map(rows.map(n=>[n.key,n.value]));
+    for(const entry of edits){const key=resolveKey(entry.key);names.set(key,entry.value);await db.settings.delete(convertTombKey(key));}
     const merged=[...names].map(([key,value])=>({key,value}));checkSize(merged);
     await db.settings.put({key:CONVERT_NAMES_KEY,value:merged});return merged.length;
   });

@@ -1,0 +1,59 @@
+.dialog.import-dialog{display:flex;flex-direction:column;width:820px;max-height:calc(100dvh - 40px);overflow:hidden;padding:0;background:#fff;color:#2b4333;border:1px solid #dce5dd;border-radius:14px}
+.dialog.import-dialog>header{flex:none;gap:14px;padding:18px 22px;margin:0;border-bottom:1px solid #e4eae2;background:#fff}
+.dialog.import-dialog>header h2{font-family:inherit;font-size:20px;font-weight:600;letter-spacing:-.3px;line-height:1.4}
+.import-dialog>header>.icon-btn{width:44px;height:44px;flex:none;border-color:transparent;border-radius:7px;background:transparent;color:#657569;font-size:20px}
+.import-dialog-body{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:18px 22px 20px}
+.import-dialog button{min-height:44px;font-family:inherit;font-size:12px;border-color:#d8e2d8;border-radius:6px;background:#fff;color:#41664c}
+.import-source-card{display:flex;flex-direction:column;align-items:center;gap:9px;border:1px dashed var(--ui-border);border-radius:9px;background:var(--ui-inset);padding:20px 18px;text-align:center;min-width:0}
+.import-source-card>strong{max-width:100%;font-size:15px;line-height:1.5;font-weight:600;overflow-wrap:anywhere;color:#36543d}
+.import-source-card>p{margin:0;font-size:12px;line-height:1.65;color:#6a7d66;overflow-wrap:anywhere}
+.import-source-actions{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px}
+.import-dialog label.import-file-picker{position:relative;display:inline-flex;align-items:center;justify-content:center;min-height:44px;margin:0;padding:10px 16px;border:1px solid #3f6b50;border-radius:6px;background:#3f6b50;color:#fff;font-size:13px;font-weight:500;cursor:pointer;line-height:1.5}
+.import-file-picker input{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;padding:0;border:0}
+.import-file-picker:has(input:focus-visible){outline:2px solid #4d805c;outline-offset:3px}
+.import-file-picker:has(input:disabled){opacity:.5;cursor:default}
+.import-book-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin:18px 0}
+.import-dialog-body label{display:flex;flex-direction:column;min-width:0;gap:7px;margin:0;font-size:12px;font-weight:500;line-height:1.6;color:#4e6654}
+.import-dialog-body :is(input:not([type=file]),select,textarea){box-sizing:border-box;width:100%;min-width:0;min-height:44px;padding:10px 12px;font-family:inherit;font-size:13px;color:#2d4535;border:1px solid #d6e0d6;border-radius:6px;background:#fafcf8}
+.import-dialog-body :is(input,textarea)::placeholder{color:#8b978b}
+.import-dialog textarea{resize:vertical;line-height:1.7}
+.import-disclosure{border:1px solid #dfe6dc;border-radius:7px;margin-top:10px;min-width:0;background:#fff}
+.import-disclosure>summary{min-height:46px;box-sizing:border-box;padding:12px;cursor:pointer;list-style:none;font-size:12px;line-height:1.7;color:#4a6551}
+.import-disclosure>summary::-webkit-details-marker{display:none}
+.import-disclosure>summary:before{content:'▸';margin-right:8px;color:#7a8c78}
+.import-disclosure[open]>summary:before{content:'▾'}
+.import-disclosure>summary:hover{background:#f7faf4;border-radius:7px}
+.import-paste>label{padding:0 13px 14px}
+.import-options-body{display:grid;gap:14px;padding:13px;border-top:1px solid #edf1e9}
+.import-options-body>.muted{font-size:11px;line-height:1.7;margin:0}
+.import-regex-options{border-top:1px solid #e5eadf;padding-top:5px;min-width:0}
+.import-regex-options>summary{min-height:44px;padding-block:10px;cursor:pointer;font-size:12px;line-height:1.7;color:#61765c}
+.import-dialog .chapter-preview-section{padding:13px;margin:16px 0 0;border:1px solid #dce6d8;border-radius:8px;background:#f6faf2}
+.import-dialog .chapter-preview-section:empty{display:none}
+.import-dialog .chapter-count-badge{font-size:13px;line-height:1.7;margin-bottom:7px;color:#3a5f40}
+.import-dialog .chapter-preview-section>details>summary{font-size:12px;line-height:1.7;min-height:44px;padding-block:10px;overflow-wrap:anywhere;cursor:pointer}
+.import-dialog .chapter-preview-section>p.notice{font-size:12px;line-height:1.7}
+.import-dialog .chapter-preview-table-container{max-height:220px}
+.import-dialog .chapter-preview-table{font-size:12px}
+.import-dialog .import-anthology{min-height:44px;padding:8px 0;margin-top:5px;border:0;background:transparent;color:#61775c;font-size:11px;text-align:left}
+.import-storage-note{margin:0;font-size:12px;line-height:1.5;color:var(--ui-muted)}
+.dialog.import-dialog>footer{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:0;padding:12px 22px;border-top:1px solid var(--ui-border);background:var(--ui-surface)}
+.dialog.import-dialog>footer>.progress{flex-basis:100%;min-width:0}
+.batch-import-dialog>footer{position:sticky;bottom:0;z-index:1;flex-wrap:wrap;padding-block:8px;background:var(--ui-surface)}
+.batch-import-dialog>footer>.progress{width:100%;min-width:0;overflow-wrap:anywhere}
+.import-submit-actions{display:flex;flex:none;gap:8px;margin-left:auto}
+.import-dialog .import-submit-actions .primary{background:#3f6b50;border-color:#3f6b50;color:#fff;font-size:13px;font-weight:500}
+.import-dialog .import-submit-actions .primary:hover:not(:disabled){background:#31563f;border-color:#31563f}
+.import-dialog :is(button,input,select,textarea,summary):focus-visible{outline:2px solid #4d805c;outline-offset:3px}
+@media(max-width:600px){
+ .dialog.import-dialog{max-height:calc(100dvh - 20px);border-radius:11px}
+ .dialog.import-dialog>header{padding:12px 14px;gap:8px}.dialog.import-dialog>header h2{font-size:18px}
+ .import-dialog-body{padding:13px 14px 16px}
+ .import-source-card{padding:17px 12px}.import-source-card>strong{font-size:14px}.import-source-card>p{font-size:11px}
+ .import-book-fields{grid-template-columns:minmax(0,1fr);gap:13px;margin:15px 0}
+ .import-disclosure>summary{padding:11px 10px}
+ .import-options-body{padding:11px}.import-options-body label{font-size:11px}
+ .dialog.import-dialog>footer{flex-direction:column;align-items:stretch;gap:9px;padding:11px 14px max(11px,env(safe-area-inset-bottom))}
+ .import-submit-actions{margin-left:0}.import-submit-actions>button{flex:1}
+ .import-dialog .chapter-preview-section{padding:11px}.import-dialog .chapter-preview-section>details>summary{font-size:11px}
+}

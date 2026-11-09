@@ -9,7 +9,7 @@ import {hybridSampleHash} from '../src/features/ai/services/ai-hybrid';
 import {db} from '../src/core/db';
 const template='{{name}}\n{{bản dịch nửa đầu}}\n[SOURCE TEXT]:\n{{text nửa sau}}',sample='Mẫu {{text}} {{text nửa sau}} {name}',target='ONLY_TARGET_TEXT';
 const settings:ReadingAiSettings={...AI_DEFAULTS,model:'gemini-2.5-flash',fallbackModels:[],hybrid:{version:1,liteModel:'gemini-3.1-flash-lite',rules:'anh',secondHalfPrompt:template}};
-const source={bookId:'prompt-half-book',id:'prompt-half-chapter',revision:1,text:'甲'.repeat(1800)+'乙'.repeat(1800)};
+const source={bookId:'prompt-half-book',id:'prompt-half-chapter',revision:1,text:'甲'.repeat(3000)+'乙'.repeat(3000)};
 const cache={read:readAiReadingCache,write:writeAiReadingCache,readParts:readAiParts,writePart:writeAiPart};
 const answer=(result:string,model:string)=>({result,model,finishReason:'STOP',inputTokens:1,outputTokens:2});
 beforeEach(async()=>{await db.delete();await db.open();await db.books.put({id:source.bookId,title:'Synthetic',author:'',status:'ready',createdAt:1,updatedAt:1,charCount:source.text.length,chapterCount:1});await db.chapters.put({...source,order:0,title:'Chapter',sourceId:''});});
@@ -46,12 +46,13 @@ it('editing only second prompt or Lite retains the durable first half and regene
 });
 it.each(['complete','child'])('upgrading a real v1 %s cache retains first-half work with exact source guard',async kind=>{
  const oldSettings={...settings,hybrid:{version:1,liteModel:'gemini-3.1-flash-lite',rules:'anh'}};
- const oldKey=JSON.stringify([source.bookId,source.id,source.revision,source.text,oldSettings,[]]),stage=JSON.stringify([JSON.stringify(['txt',1800]),0]);
- const plan=JSON.stringify(['hybrid-halves-1',stage,kind==='complete'?'complete':JSON.stringify(['txt-parts-2',[[0,1800]]])]);
+ const oldKey=JSON.stringify([source.bookId,source.id,source.revision,source.text,oldSettings,[]]),stage=JSON.stringify([JSON.stringify(['txt',3000]),0]);
+ const plan=JSON.stringify(['hybrid-halves-1',stage,kind==='complete'?'complete':JSON.stringify(['txt-parts-2',[[0,1500],[1500,3000]]])]);
  const digest=await hybridSampleHash(JSON.stringify([oldKey,plan])),partId=kind==='complete'?'9999':'0/0';
  await db.settings.put({key:AI_PART_CACHE_PREFIX+digest+':'+partId,value:{version:'parts-1',bookId:source.bookId,chapterId:source.id,digest,partId,accessedAt:1,response:answer('Old first work','gemini-2.5-flash')}});
+ if(kind==='child')await db.settings.put({key:AI_PART_CACHE_PREFIX+digest+':1',value:{version:'parts-1',bookId:source.bookId,chapterId:source.id,digest,partId:'1',accessedAt:1,response:answer('Old first tail','gemini-2.5-flash')}});
  const calls:AiTranslateClientRequest[]=[];const session=new AiReadingSession(async req=>{calls.push(req);return answer(req.continuation?'Second':'Missing first child',req.model!);},cache);
  const upgraded={...settings,hybrid:{...settings.hybrid!,liteModel:'gemini-3.5-flash-lite' as const}};
- const result=await session.request(source,upgraded,[]);expect(result.result).toContain('Old first work');expect(calls.filter(r=>!r.continuation)).toHaveLength(kind==='complete'?0:1);if(kind==='child')expect(calls[0].text).toBe('甲'.repeat(900));session.clear();
+ const result=await session.request(source,upgraded,[]);expect(result.result).toContain('Old first work');expect(calls.filter(r=>!r.continuation)).toHaveLength(kind==='complete'?0:1);if(kind==='child')expect(calls[0].text).toBe('甲'.repeat(750));session.clear();
  await db.chapters.update(source.id,{revision:2,text:'Edited'});expect(await readAiParts(source,oldSettings as ReadingAiSettings,[],plan,undefined,true)).toEqual([]);
 });

@@ -51,7 +51,7 @@ it('session review: snapshots source, settings and individual Names before async
   const input={...source},settings={...AI_DEFAULTS},mutableNames=names.map(n=>({...n}));
   const pending=session.request(input,settings,mutableNames);
   input.text='changed';settings.model='gemini-3.8-flash';mutableNames[0].value='changed';read.resolve(undefined);await pending;
-  expect(translate).toHaveBeenCalledWith({text:source.text,...AI_DEFAULTS,names:{林儿:'Lâm Nhi'}},expect.any(AbortSignal),expect.any(Function));
+  expect(translate).toHaveBeenCalledWith({text:source.text,...AI_DEFAULTS,names:{林儿:'Lâm Nhi'}},expect.any(AbortSignal),expect.any(Function),expect.any(Function),false,undefined,expect.objectContaining({schemaVersion:2,trace:expect.objectContaining({partPath:'0',purpose:'foreground'})}));
   expect(cache.write).toHaveBeenCalledWith(source,AI_DEFAULTS,names,{...result,division:{version:1,parts:1,reasons:[]}},expect.any(AbortSignal));
 });
 

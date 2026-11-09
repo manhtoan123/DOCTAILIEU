@@ -1,3 +1,4 @@
+import {BOOK_METADATA_MAX_CHARS} from '../../../shared/constants/book-metadata';
 import {ttsVoiceIds} from '../../../shared/constants/capcut-voices';
 import {validateSharedImage} from './shared-image-schema';
 import {validateEpubLayout} from '../../import-export/services/epub-layout-schema';
@@ -40,7 +41,7 @@ function validateRecord(value:unknown,descriptorOnly:boolean):SharedRecord{
  if(kind==='chapter-state')record.value=validateChapterState(input.value);
  else if(kind==='chapter-append'||kind==='chapter-append-packet')record.value=validateAppendValue(kind,bookId!,key,input.value);
  else if(['name','album-name','convert-name','common-name'].includes(kind))record.value=nameValue(input.value);
- else if(kind==='book'){const v=object(input.value);record.value={title:string(v.title,300),author:string(v.author,300,true),...(v.displayTitle===undefined?{}:{displayTitle:string(v.displayTitle,300)}),...(v.cover===undefined?{}:{cover:validateSharedImage(v.cover)}),...(v.album===undefined?{}:{album:album(v.album)})};}
+ else if(kind==='book'){const v=object(input.value);record.value={title:string(v.title,BOOK_METADATA_MAX_CHARS),author:string(v.author,BOOK_METADATA_MAX_CHARS,true),...(v.displayTitle===undefined?{}:{displayTitle:string(v.displayTitle,BOOK_METADATA_MAX_CHARS)}),...(v.cover===undefined?{}:{cover:validateSharedImage(v.cover)}),...(v.album===undefined?{}:{album:album(v.album)})};}
  else if(kind==='ai-settings'){
   const v=object(input.value),settings=validatePromptSettings(v);
   record.value={...settings,...(v.chosenProfileId===undefined?{}:{chosenProfileId:string(v.chosenProfileId,300),chosenProfileSettings:validatePromptSettings(v.chosenProfileSettings)})};

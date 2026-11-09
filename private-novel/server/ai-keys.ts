@@ -1,5 +1,5 @@
 /** `/keys` API for the editable Gemini key pool. Secrets are never echoed; callers only see masked values. */
-import {keyHealthId,readKeyHealth,keyHealthView,updateKeyHealth} from './ai-key-health';
+import {keyHealthId,readKeyHealth,readKeyModelBlocks,keyHealthView,updateKeyHealth} from './ai-key-health';
 import { secure } from './auth';
 import { AI_KEYS_MAX, d1KeyStore, type KeyStore, type StoredKey } from './ai-key-store';
 import { readAiKeyPool, type AiTranslateEnv } from './ai-translate';
@@ -40,8 +40,9 @@ async function handleAiKeysInternal(request: Request, env: AiTranslateEnv, overr
   };
   const snapshot=async()=>{
     const stored=await keys!.list(),configured=readAiKeyPool(env),health=await readKeyHealth(env.DB);
+    const entries=[...stored.map(row=>row.secret),...configured.map(row=>row.key)],hashes=await Promise.all(entries.map(keyHealthId)),blocks=await readKeyModelBlocks(env.DB,hashes);
     const rows=await Promise.all([...stored.map(row=>({id:row.id,label:row.label,secret:row.secret,createdAt:row.createdAt,source:'stored',selected:true})),...configured.map(row=>({id:`secret-${row.id}`,label:row.label,secret:row.key,createdAt:0,source:'secret',selected:!stored.length}))].map(async row=>{
-      const state=health.get(await keyHealthId(row.secret));return {id:row.id,label:row.label&&/^[\x20-\x7e]{1,40}$/.test(row.label)&&!row.label.includes(row.secret)&&!row.secret.includes(row.label)?row.label:'',masked:maskKey(row.secret),createdAt:row.createdAt,source:row.source,selected:row.selected,...keyHealthView(state)};
+      const healthId=await keyHealthId(row.secret),state=health.get(healthId);return {blockedModels:blocks.filter(block=>block.id===healthId).map(block=>block.model),id:row.id,label:row.label&&/^[\x20-\x7e]{1,40}$/.test(row.label)&&!row.label.includes(row.secret)&&!row.secret.includes(row.label)?row.label:'',masked:maskKey(row.secret),createdAt:row.createdAt,source:row.source,selected:row.selected,...keyHealthView(state)};
     }));
     return {keys:rows.filter(row=>row.status!=='disabled'),stored:stored.length,secretPool:configured.length,active:rows.filter(row=>row.selected&&row.status!=='disabled'&&row.status!=='cooling').length,excluded:rows.filter(row=>row.status==='disabled').length};
   };

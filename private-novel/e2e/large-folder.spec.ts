@@ -1,7 +1,7 @@
 import {test,expect,type Page} from '@playwright/test';
 
 async function choose(page:Page,onlyLarge=false){
-  await page.goto('/');await page.getByRole('button',{name:'＋ Thêm truyện TXT',exact:true}).click();
+  await page.goto('/');await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();
   await page.getByRole('button',{name:'Nhập folder truyện',exact:true}).click();
   await page.getByLabel('Chọn folder truyện',{exact:true}).evaluate((element:HTMLInputElement,largeOnly:boolean)=>{
     const data=new DataTransfer();

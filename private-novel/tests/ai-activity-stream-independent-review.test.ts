@@ -18,11 +18,11 @@ const sse=(records:unknown[])=>new Response(records.map(row=>'data: '+JSON.strin
 const candidate=(text:string,finish=false)=>({candidates:[{index:0,content:{parts:[{text}]},...(finish?{finishReason:'STOP'}:{})}]});
 afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();vi.unstubAllGlobals();resetAiKeyState();});
 
-it('review: negotiated first wait includes headers delayed beyond the old forty-second deadline',async()=>{
+it('review: negotiated first wait accepts delayed headers inside the first-text budget',async()=>{
  vi.useFakeTimers();let headers!:(value:Response)=>void,signal:AbortSignal|undefined;
  vi.stubGlobal('fetch',vi.fn((_url,init)=>{signal=init.signal;return new Promise<Response>(resolve=>headers=resolve);}));
  const pending=aiTranslate({text:'Synthetic input',model}).catch(e=>e);
- await vi.advanceTimersByTimeAsync(45000);expect(signal?.aborted).toBe(false);headers(ndjson([terminal]));expect(await pending).toEqual(complete);
+ await vi.advanceTimersByTimeAsync(22000);expect(signal?.aborted).toBe(false);headers(ndjson([terminal]));expect(await pending).toEqual(complete);
 });
 
 it('review: discovering a legacy JSON response after forty seconds does not reopen its expired deadline',async()=>{
@@ -52,7 +52,7 @@ it('review: SSE decodes every UTF-8 byte boundary without exposing thought text 
  const bytes=encoder.encode(frames.map(row=>'data: '+JSON.stringify(row)+'\r\n\r\n').join('')),activity=vi.fn();
  const response=new Response(new ReadableStream<Uint8Array>({start(sink){for(const byte of bytes)sink.enqueue(Uint8Array.of(byte));sink.close();}}),{headers:{'Content-Type':'text/event-stream'}});
  const result=await readAiUpstreamStream(response,new AbortController().signal,activity,1024*1024,128000);
- expect(result).toMatchObject({candidates:[{content:{parts:[{text:'Tiếng Việt đầy đủ.'}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:7,candidatesTokenCount:9}});expect(JSON.stringify(result)).not.toContain(privateText);expect(activity).toHaveBeenCalledTimes(2);
+ expect(result).toMatchObject({candidates:[{content:{parts:[{text:'Tiếng Việt đầy đủ.'}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:7,candidatesTokenCount:9}});expect(JSON.stringify(result)).not.toContain(privateText);expect(activity).toHaveBeenCalledOnce();
 });
 
 it('review: a terminal usage-only SSE event may omit its empty candidates array and adds no activity',async()=>{
@@ -88,7 +88,7 @@ it('review: actual D1 CAS compares claim time as well as equal long/short expiry
  const runtime=new Miniflare(convertV4MiniflareOptions({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-01-01',d1Databases:['DB']}));
  try{
   const database=await runtime.getD1Database('DB') as unknown as D1Database;
-  for(const file of ['0006_ai_keys.sql','0008_ai_key_health.sql']){const sql=(await readFile('migrations/'+file,'utf8')).replace(/--[^\n]*/g,'');for(const statement of sql.split(';').filter(s=>s.trim()))await database.prepare(statement).run();}
+    for(const file of ['0006_ai_keys.sql','0008_ai_key_health.sql','0017_ai_key_model_blocks.sql']){const sql=(await readFile('migrations/'+file,'utf8')).replace(/--[^\n]*/g,'');for(const statement of sql.split(';').filter(s=>s.trim()))await database.prepare(statement).run();}
   const now=vi.spyOn(Date,'now').mockReturnValue(1_900_000_000_000),id='d1-mixed-stream-owner';
   const old=(await reserveKey(id,model,database,185000))!;await releaseKey(id,old,database,185000);now.mockReturnValue(1_900_000_150_000);
   const next=(await reserveKey(id,model,database))!;expect(next).toBe(old);await releaseKey(id,old,database,185000);

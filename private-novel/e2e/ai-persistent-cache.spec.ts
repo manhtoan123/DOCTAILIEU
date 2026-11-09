@@ -16,7 +16,7 @@ test('completed AI survives shelf remount and reload without another network tra
   let calls=0;await page.route('**/api/ai/translate',r=>{calls++;return r.fulfill({json:result('Lâm Nhi đến sơn môn.',r.request().postDataJSON().model)});});
   await seed(page);const before=await page.evaluate(async()=>{const{db}=await import('/src/core/db.ts');return {chapter:await db.chapters.get('persistent-chapter'),progress:await db.progress.get('persistent-book')};});
   await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Lâm Nhi đến sơn môn.');await expect.poll(()=>cacheCount(page)).toBe(1);
-  await page.getByRole('button',{name:'← Tủ sách',exact:true}).click();await page.getByRole('button',{name:'Mở sách →',exact:true}).click();await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Lâm Nhi đến sơn môn.');expect(calls).toBe(1);
+  await page.getByRole('link',{name:'← Tủ sách',exact:true}).click();await page.getByRole('link',{name:'Mở sách →',exact:true}).click();await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Lâm Nhi đến sơn môn.');expect(calls).toBe(1);
   await page.reload();await page.getByRole('button',{name:'Dịch AI',exact:true}).click();await expect(page.locator('.prose')).toContainText('Lâm Nhi đến sơn môn.');expect(calls).toBe(1);
   const after=await page.evaluate(async()=>{const{db}=await import('/src/core/db.ts');return {chapter:await db.chapters.get('persistent-chapter'),progress:await db.progress.get('persistent-book')};});
   expect(after.chapter).toEqual(before.chapter);expect(after.progress?.paragraph).toBe(before.progress?.paragraph);

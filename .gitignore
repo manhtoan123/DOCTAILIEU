@@ -18,6 +18,7 @@ STV-NOVEL-INVENTORY.json
 /*.log
 
 # Personal content, exports, local evidence and credentials
+/.codex-attachments/
 **/.dsh-tmp/
 **/.vite/
 **/playwright/.auth/

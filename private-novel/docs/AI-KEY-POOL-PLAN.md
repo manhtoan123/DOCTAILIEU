@@ -398,3 +398,20 @@ Người dùng yêu cầu "thêm cả gemma". Id model **không** lấy từ tr�
 Bằng chứng: `npm.cmd test` **1040/1040 pass, 70 file, exit 0**; build **exit 0**; E2E `reader-controls` + `ai-keys` repeat3 **24/24 pass, exit 0**; deploy Worker **c3475c16-85ab-4b13-959f-007320b18ec4** + Pages **dc516643**; production thật: Gemini `200` (3.7s, key `k1`), `gemma-4-26b-a4b-it` **200, STOP, bản dịch tiếng Việt** (12.2s), `gemma-4-31b-it` 502 `upstream_http` (lỗi Google).
 
 Giới hạn: Gemma chậm hơn Gemini (~12s vs ~3.7s cho cùng đoạn); chưa đo chất lượng trên chương dài; chưa biết quota/billing riêng của Gemma theo project; nếu Google trả 5xx cho Gemma thì **không** xoay key (đúng thiết kế: lỗi model không phải lỗi key) nên người dùng phải tự đổi model.
+
+## 19. Blacklist lỗi không thể sửa theo key-model — 01/11/2026
+
+403 dạng quyền truy cập model và 404 model không tồn tại nay được ghi vào
+`ai_key_model_blocks` theo cặp fingerprint key + model. Cặp đó bị bỏ qua bền vững
+qua isolate/restart, nhưng key vẫn có thể dùng cho model khác. 401 hoặc phản hồi
+`API_KEY_INVALID` tiếp tục vô hiệu hóa toàn key. Khi mọi key đều bị block cho model,
+API trả `ai_invalid_model`; không chạy lại cùng lỗi ở các request sau.
+
+Đã thêm migration `0017_ai_key_model_blocks.sql`, kiểm tra reservation D1 và cập
+nhật regression runtime. Bằng chứng kiểm tra sau đó được ghi ở dưới; chưa deploy
+thay đổi.
+
+01/11/2026: sau smoke một chương tổng hợp 2.053 ký tự trả `504 ai_timeout` ở
+31 giây; bản timeout mở rộng đã được hoàn tác theo yêu cầu, giữ first-token/stream
+và non-stream theo giới hạn cũ. Targeted AI/log 166/166, stream review 12/12 và
+build đã đạt trước khi hoàn tác; chưa deploy lượt hoàn tác này.

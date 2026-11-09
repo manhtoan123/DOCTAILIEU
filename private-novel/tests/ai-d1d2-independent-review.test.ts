@@ -51,11 +51,11 @@ describe('review: durable result facts are isolated from response and request id
   session.clear();expect(session.facts(key)).toBeUndefined();
  });
  it('late cancelled publication cannot replace a same-key response or its facts',async()=>{
-  const entered=gate<void>(),hold=gate<boolean>(),oldRaw=response('Cũ.'),newRaw={...response('Mới.'),division:{version:1 as const,parts:2,reasons:['output_limit' as const]}},translate=vi.fn().mockResolvedValueOnce(oldRaw).mockResolvedValueOnce(newRaw);
+  const entered=gate<void>(),hold=gate<boolean>(),oldRaw=response('Cũ.'),newRaw={...response('Mới.'),division:{version:1 as const,parts:1,reasons:[]}},translate=vi.fn().mockResolvedValueOnce(oldRaw).mockResolvedValueOnce(newRaw);
   let writes=0;const session=new AiReadingSession(translate,{read:async()=>undefined,write:async()=>{if(++writes===1){entered.resolve();return hold.promise;}return true;}},undefined,false),key=aiReadingKey(source,settings,[]);
   const old=session.request(source,settings,[]),rejected=expect(old).rejects.toMatchObject({name:'AbortError'});await entered.promise;session.clear();
   expect(await session.request(source,settings,[])).toBe(newRaw);hold.resolve(true);await rejected;
-  expect(session.get(key)).toBe(newRaw);expect(session.facts(key)?.division?.parts).toBe(2);session.clear();
+  expect(session.get(key)).toBe(newRaw);expect(session.facts(key)?.division?.parts).toBe(1);session.clear();
  });
 });
 
@@ -77,9 +77,9 @@ describe('review: source-tree leaves count independently of scheduler groups',()
   expect(aiLeafProgress([{id:'0'}],completed,splits,true)).toBeUndefined();expect(aiTreeFacts([{id:'0'}],completed,splits,'parallel',true)).toEqual({division:undefined,leafProgress:undefined});
  });
  it('publishes a finished nested leaf while its sibling request remains unresolved',async()=>{
-  const entered=gate<void>(),hold=gate<AiTranslateClientResponse>(),states:AiPartsProgress[]=[];let calls=0;
+  const entered=gate<void>(),hold=gate<AiTranslateClientResponse>(),states:AiPartsProgress[]=[],chapter={...source,text:'a'.repeat(6000)};let calls=0;
   const translate=vi.fn(async()=>{calls++;if(calls===1)throw new AiTranslateClientError('ai_incomplete_result','cut',502,'output_limit');if(calls===3){entered.resolve();return hold.promise;}return response('Đầu.');});
-  const session=new AiReadingSession(translate,undefined,undefined,false,immediateRecovery()),pending=session.request(source,settings,[],undefined,undefined,p=>states.push(p));
+  const session=new AiReadingSession(translate,undefined,undefined,false,immediateRecovery()),pending=session.request(chapter,settings,[],undefined,undefined,p=>states.push(p));
   try{await entered.promise;expect(states.at(-1)?.leafProgress).toEqual({done:1,total:2});}finally{hold.resolve(response('Sau.'));await pending;session.clear();}
   expect(states.at(-1)?.leafProgress).toEqual({done:2,total:2});expect(translate).toHaveBeenCalledTimes(3);
  });

@@ -12,7 +12,7 @@ import {Modal,errorText} from '../../../shared/components/common';
 export default function FolderImportDialog({onClose,onDone}:{initialAlbum:string;onClose:()=>void;onDone:(id:string)=>void}){
   const [groups,setGroups]=useState<FolderImportGroup[]>([]),[ignored,setIgnored]=useState<string[]>([]);
   const [files,setFiles]=useState<File[]>([]);
-  const [encoding,setEncoding]=useState('utf-8'),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
+  const [encoding,setEncoding]=useState('auto'),[busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
   const [maxChars,setMaxChars]=useState(0),[pattern,setPattern]=useState('');
   const previewFiles=useMemo(()=>groups.flatMap(group=>group.files).filter(file=>/\.txt$/i.test(file.name)),[groups]);
   const abort=useRef<AbortController|undefined>(undefined);const mounted=useRef(true);
@@ -53,7 +53,7 @@ export default function FolderImportDialog({onClose,onDone}:{initialAlbum:string
     <p className="muted">Giới hạn: TXT 40 MiB / EPUB 256 MiB, lượt có EPUB tối đa 4 GiB; chỉ TXT tối đa 256 MiB. Bố cục sau xử lý tối đa 128 MiB mỗi EPUB. Nội dung rỗng sẽ báo lỗi.</p>
     {error&&<p role="alert" className="notice error">{error}</p>}
     <><label>Chọn folder truyện<input aria-label="Chọn folder truyện" type="file" multiple disabled={busy} ref={element=>{element?.setAttribute('webkitdirectory','');}} onChange={event=>{try{const selection=Array.from(event.target.files||[]);const plan=planFolderSelection(selection);setFiles(selection);setGroups(plan.groups);setIgnored(plan.ignored);setError('');setMessage('');}catch(e){setFiles([]);setGroups([]);setIgnored([]);setMessage('');setError(errorText(e));}}}/></label>
-    <label>Encoding chương<select value={encoding} disabled={busy} onChange={event=>setEncoding(event.target.value)}><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option><option value="utf-16le">UTF-16 LE</option></select></label></>
+    <label>Encoding chương<select value={encoding} disabled={busy} onChange={event=>setEncoding(event.target.value)}><option value="auto">Tự nhận diện từng file</option><option value="utf-8">UTF-8</option><option value="gb18030">GB18030 / GBK</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option></select></label></>
     <ChapterLimit value={maxChars} onChange={setMaxChars} disabled={busy}/>
     <label>Regex nhận diện tùy chỉnh<input value={pattern} disabled={busy} onChange={e=>setPattern(e.target.value)}/></label>
     {!!groups.length&&groups.some(group=>group.files.some(file=>/\.epub$/i.test(file.name)))&&<p className="notice">EPUB giữ mục lục, định dạng và ảnh gốc; phần xem trước chia chương bên dưới chỉ dành cho TXT.</p>}

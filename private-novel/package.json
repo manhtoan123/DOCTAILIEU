@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
+    "build:convert-server": "tsc -p convert-server/tsconfig.json && vite build --config convert-server/vite.config.ts",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test": "node scripts/run-tests.mjs vitest run",
+    "test:watch": "node scripts/run-tests.mjs vitest",
+    "test:e2e": "node scripts/run-tests.mjs playwright test",
     "pages:dev": "wrangler pages dev dist",
     "auth:hash": "node scripts/hash-password.mjs"
   },
@@ -19,7 +20,9 @@
     "dexie": "^4.2.0",
     "dexie-react-hooks": "^4.2.0",
     "hash-wasm": "^4.12.0",
-    "fflate": "^0.8.2"
+    "fflate": "^0.8.2",
+    "mammoth": "^1.13.0",
+    "pdfjs-dist": "^6.4.299"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",

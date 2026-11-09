@@ -45,3 +45,11 @@ npm.cmd run build *> .dsh-tmp/my-task/build.log
 Kiểm exit code và phần lỗi liên quan; giữ log thất bại để truy nguyên. Fixture smoke dùng dữ liệu tổng hợp cô lập. Kết quả Android layout phải ghi rõ là giả lập, không gọi là đã kiểm khóa màn hình Android thật.
 
 [Bản đồ code](../src/README.md) · [Chỉ mục tài liệu](../docs/README.md) · [Quy tắc dự án](../../AGENTS.md)
+
+## Thư mục tạm của kiểm thử
+
+`npm test`, `npm run test:watch` và `npm run test:e2e` chạy qua [run-tests.mjs](run-tests.mjs). Mỗi lượt có một thư mục riêng cho `TEMP`, `TMP` và `TMPDIR`. Trên Windows, thư mục mặc định nằm dưới `.dsh-tmp/t` để giữ đường dẫn ngắn cho workerd. Có thể đặt `PRIVATE_NOVEL_TEST_TEMP_ROOT` thành một đường dẫn tuyệt đối khi cần.
+
+Trình chạy đợi Vitest hoặc Playwright thoát rồi xóa thư mục của lượt đó, kể cả khi lệnh test trả lỗi. Nếu lượt trước bị tắt cưỡng bức và để lại thư mục, lệnh test tiếp theo sẽ báo đúng đường dẫn và dừng. Kiểm tra các tiến trình test đã thoát rồi dọn đúng thư mục được báo trước khi thử lại. Với `test:watch`, việc dọn diễn ra khi thoát chế độ theo dõi.
+
+Kiểm tra trên Windows ngày 09/11/2026 gồm 36 ca với Miniflare, hai ca tải dữ liệu thử khoảng 40 và 65 MiB, một lệnh trả lỗi, một thư mục mồ côi mô phỏng và lệnh liệt kê Playwright. Các lượt đã chạy để lại 0 thư mục tạm. Build thành công với TEMP/TMP cô lập. Thay đổi áp dụng cho quy trình kiểm thử cục bộ. Cơ chế dựa trên [sự kiện `close` của Node.js](https://nodejs.org/api/child_process.html#event-close) và [xóa có thử lại bằng `fs.promises.rm`](https://nodejs.org/api/fs.html#fspromisesrm-path-options).

@@ -118,10 +118,10 @@ it('rejects Reader Name mutations after moving a book away from the captured aut
 async function backupFile(){const part=await(await prepareBackup('a')).part(0);return new File([part.blob],part.name);}
 async function restore(file:File){const [id]=await stageBackup([file],()=>{});return restoreBackup(id);}
 
-it('backup restores author values and tombstones as shared pool, while current edits and deletions win',async()=>{
+it('backup adds author values while current legacy meanings, edits and deletions win over imported values and tombstones',async()=>{
  await saveScopedBookNames('a','新=Backup\n删=Delete later');await deleteScopedBookName('a','同');const file=await backupFile();
  await db.settings.clear();const restored=await restore(file);
- expect(await values(restored)).toHaveProperty('新','Backup');expect(await values('b')).toHaveProperty('新','Backup');expect(await values('b')).not.toHaveProperty('同');
+ expect(await values(restored)).toHaveProperty('新','Backup');expect(await values('b')).toHaveProperty('新','Backup');expect(await values('b')).toHaveProperty('同','Cùng');
  await saveScopedBookNames('b','新=Current');await deleteScopedBookName('b','删');await restore(file);
  expect(await values('a')).toHaveProperty('新','Current');expect(await values('a')).not.toHaveProperty('删');
 });

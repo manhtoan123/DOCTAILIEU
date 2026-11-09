@@ -3,6 +3,7 @@ import {AI_DEFAULTS,AiReadingSession,aiReadingKey,type AiReadingCache} from '../
 import {AiTranslateClientError,type AiTranslateClientRequest} from '../src/features/ai/services/ai-translate';
 import {EpubAiSession} from '../src/features/import-export/services/epub-ai';
 import {splitAiText} from '../src/features/ai/services/ai-parts';
+import {estimatedAiOutputTokens} from '../src/features/ai/services/ai-output-plan';
 
 const settings={...AI_DEFAULTS,model:'gemini-2.5-flash',fallbackModels:[]};
 const source={bookId:'whole-review',id:'whole-review-chapter',revision:1,text:'甲'.repeat(1800)+'乙'.repeat(1800)};
@@ -11,9 +12,9 @@ const baseCache=():AiReadingCache=>({read:async()=>undefined,write:async()=>true
 const layout={path:'whole.xhtml',nodes:['甲'.repeat(1800),'乙'.repeat(1800)],body:'<p>synthetic</p>',styles:[]};
 afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();});
 
-it.each([3600,32000,32001])('review: fresh TXT %i characters uses only the API size boundary and retains every source span',async size=>{
+it.each([6000,32000,32001])('review: fresh TXT %i characters fits output budget and retains every source span',async size=>{
  const input={...source,text:'甲'.repeat(size)},send=vi.fn(async(req:AiTranslateClientRequest)=>answer('Bản dịch đủ.',req.model)),session=new AiReadingSession(send);
- try{await session.request(input,settings,[]);expect(send).toHaveBeenCalledTimes(size<=32000?1:2);const sent=send.mock.calls.map(([req])=>req.text);expect(sent.join('')).toBe(input.text);expect(sent.every(text=>text.length<=32000)).toBe(true);}finally{session.clear();}
+ try{await session.request(input,settings,[]);expect(send.mock.calls.length).toBeGreaterThan(1);const sent=send.mock.calls.map(([req])=>req.text);expect(sent.join('')).toBe(input.text);expect(sent.every(text=>text.length<=32000&&estimatedAiOutputTokens(text)<=6144)).toBe(true);}finally{session.clear();}
 });
 
 it('review: hybrid still uses two stages, each half is sent whole when within the API limit',async()=>{
@@ -22,22 +23,22 @@ it('review: hybrid still uses two stages, each half is sent whole when within th
 });
 
 it('review: a legacy split that is impossible under overlapping Names cannot block a valid fresh whole request',async()=>{
- const input={...source,text:'甲'.repeat(4000)},names=[{key:'甲甲甲',value:'Tên hợp lệ'}],send=vi.fn(async(req:AiTranslateClientRequest)=>answer('Dịch nguyên chương.',req.model)),session=new AiReadingSession(send,{...baseCache(),readParts:async()=>[]});
+ const input={...source,text:'甲'.repeat(6000)},names=[{key:'甲甲甲',value:'Tên hợp lệ'}],send=vi.fn(async(req:AiTranslateClientRequest)=>answer('Dịch nguyên chương.',req.model)),session=new AiReadingSession(send,{...baseCache(),readParts:async()=>[]});
  try{expect((await session.request(input,settings,names)).result).toBe('Dịch nguyên chương.');expect(send).toHaveBeenCalledOnce();expect(send.mock.calls[0][0].text).toBe(input.text);}finally{session.clear();}
 });
 
 it('review: child-only legacy TXT checkpoints retain their spans and pinned model instead of being reinterpreted as whole',async()=>{
- const input={...source,text:'甲'.repeat(900)+'乙'.repeat(900)+'丙'.repeat(1800)},parts=splitAiText(input.text),plan=JSON.stringify(['txt-parts-2',parts.map(part=>[part.start,part.end])]),writes:string[]=[],selected={...settings,model:'gemini-3.8-flash',fallbackModels:[settings.model]};
+ const input={...source,text:'甲'.repeat(900)+'乙'.repeat(900)+'丙'.repeat(1800)+'丁'.repeat(1800)+'戊'.repeat(1800)},parts=splitAiText(input.text),plan=JSON.stringify(['txt-parts-2',parts.map(part=>[part.start,part.end])]),writes:string[]=[],selected={...settings,model:'gemini-3.8-flash',fallbackModels:[settings.model]};
  const cache:AiReadingCache={...baseCache(),readParts:async(_source,_settings,_names,target)=>target===plan?[{id:'0/0',response:answer('Đầu cũ.')}]:[],writePart:async(_source,_settings,_names,target)=>{writes.push(target);return true;}};
  const send=vi.fn(async(req:AiTranslateClientRequest)=>answer(req.text.startsWith('乙')?'Giữa mới.':'Cuối mới.',req.model)),session=new AiReadingSession(send,cache);
- try{expect((await session.request(input,selected,[])).result).toBe('Đầu cũ.\nGiữa mới.\nCuối mới.');expect(send.mock.calls.map(([req])=>req.text)).toEqual(['乙'.repeat(900),'丙'.repeat(1800)]);expect(send.mock.calls.every(([req])=>req.model===settings.model)).toBe(true);expect(writes.every(target=>target===plan)).toBe(true);}finally{session.clear();}
+ try{expect((await session.request(input,selected,[])).result).toBe('Đầu cũ.\nGiữa mới.\nCuối mới.\nCuối mới.\nCuối mới.');expect(send.mock.calls.map(([req])=>req.text)).toEqual(['乙'.repeat(900),'丙'.repeat(1800),'丁'.repeat(1800),'戊'.repeat(1800)]);expect(send.mock.calls.every(([req])=>req.model===settings.model)).toBe(true);expect(writes.every(target=>target===plan)).toBe(true);}finally{session.clear();}
 });
 
 it.each(['txt','epub'] as const)('review: a stalled new-plan cache probe cannot discard a fast valid legacy %s checkpoint',async kind=>{
- vi.useFakeTimers();const cache:AiReadingCache={...baseCache(),readParts:async(_source,_settings,_names,plan)=>{if(JSON.parse(plan)[0].includes('whole'))return new Promise(()=>{});return[{id:'0',response:answer(kind==='txt'?'Đầu cũ.':'{"0":"Đầu cũ."}')}];}};
+ vi.useFakeTimers();const chapter=kind==='txt'?{...source,text:'a'.repeat(4500)+'b'.repeat(1500)}:source;const cache:AiReadingCache={...baseCache(),readParts:async(_source,_settings,_names,plan)=>{if(JSON.parse(plan)[0].includes('whole'))return new Promise(()=>{});return kind==='txt'?[{id:'0',response:answer('Đầu cũ.')},{id:'1',response:answer('Giữa cũ.')},{id:'2',response:answer('Kề cuối cũ.')}]:[{id:'0',response:answer('{"0":"Đầu cũ."}')}];}};
  const calls:AiTranslateClientRequest[]=[],send=async(req:AiTranslateClientRequest)=>{calls.push(req);return answer(kind==='txt'?'Sau mới.':JSON.stringify(Object.fromEntries(Object.keys(JSON.parse(req.text)).map(id=>[id,'Sau mới.']))),req.model);};
  const session=kind==='txt'?new AiReadingSession(send,cache):new EpubAiSession(cache,send);
- try{const pending=session instanceof AiReadingSession?session.request(source,settings,[]):session.request(source,settings,[],layout);await vi.advanceTimersByTimeAsync(2000);const result=await pending;expect(calls).toHaveLength(1);if(kind==='txt'){expect(calls[0].text).toBe('乙'.repeat(1800));expect(result.result).toBe('Đầu cũ.\nSau mới.');}else{expect(Object.keys(JSON.parse(calls[0].text))).toEqual(['1']);expect(result.result).toBe('Đầu cũ.\nSau mới.');}}finally{session.clear();}
+ try{const pending=session instanceof AiReadingSession?session.request(chapter,settings,[]):session.request(source,settings,[],layout);await vi.advanceTimersByTimeAsync(2000);const result=await pending;expect(calls).toHaveLength(1);if(kind==='txt'){expect(calls[0].text).toBe('b'.repeat(1500));expect(result.result).toBe('Đầu cũ.\nGiữa cũ.\nKề cuối cũ.\nSau mới.');}else{expect(Object.keys(JSON.parse(calls[0].text))).toEqual(['1']);expect(result.result).toBe('Đầu cũ.\nSau mới.');}}finally{session.clear();}
 });
 
 it('review: fresh EPUB within serialized JSON limit makes one call while preserving ID order and original node mapping',async()=>{
@@ -62,11 +63,13 @@ it('review: existing completed cache survives the new partial plan and is reused
 });
 
 it('review: cancelled whole output cannot replace a newer same-key completion',async()=>{
+ const source={bookId:'whole-review',id:'cancel-short',revision:1,text:'甲'.repeat(1600)};
  let release!:(value:ReturnType<typeof answer>)=>void;const send=vi.fn().mockImplementationOnce(()=>new Promise(resolve=>release=resolve)).mockResolvedValue(answer('Bản dịch mới.')),write=vi.fn(async()=>true),session=new AiReadingSession(send,{read:async()=>undefined,write});
  try{const key=aiReadingKey(source,settings,[]),old=session.request(source,settings,[]).catch(e=>e);await vi.waitFor(()=>expect(send).toHaveBeenCalledOnce());session.cancel(key);expect(await old).toMatchObject({name:'AbortError'});expect((await session.request(source,settings,[])).result).toBe('Bản dịch mới.');release(answer('Phản hồi cũ.'));await Promise.resolve();expect(write).toHaveBeenCalledOnce();expect(session.get(key)?.result).toBe('Bản dịch mới.');}finally{session.clear();}
 });
 
 it('review: failure recovery still splits only after a whole request fails and never changes its pinned model',async()=>{
- const calls:AiTranslateClientRequest[]=[],session=new AiReadingSession(async req=>{calls.push(req);if(req.text.length===3600)throw new AiTranslateClientError('ai_incomplete_result','Synthetic output limit',502,'output_limit');return answer(req.text.startsWith('甲')?'Nửa đầu.':'Nửa sau.',req.model);});
- try{expect((await session.request(source,settings,[])).result).toBe('Nửa đầu.\nNửa sau.');expect(calls.map(req=>req.text.length)).toEqual([3600,1800,1800]);expect(calls.every(req=>req.model===settings.model)).toBe(true);}finally{session.clear();}
+ const source={bookId:'whole-review',id:'recover-short',revision:1,text:'甲'+'a'.repeat(2999)+'乙'+'b'.repeat(2999)};
+ const calls:AiTranslateClientRequest[]=[],session=new AiReadingSession(async req=>{calls.push(req);if(req.text.length===6000)throw new AiTranslateClientError('ai_incomplete_result','Synthetic output limit',502,'output_limit');return answer(req.text.startsWith('甲')?'Nửa đầu.':'Nửa sau.',req.model);});
+ try{expect((await session.request(source,settings,[])).result).toBe('Nửa đầu.\nNửa sau.');expect(calls.map(req=>req.text.length)).toEqual([6000,3000,3000]);expect(calls.every(req=>req.model===settings.model)).toBe(true);}finally{session.clear();}
 });

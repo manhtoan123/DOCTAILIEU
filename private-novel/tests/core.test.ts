@@ -3,6 +3,7 @@ import {StreamingSplitter,type Part} from '../src/features/import-export/service
 import {LanguageEngine,boundedSuggestions} from '../src/features/names-convert/services/language';
 import {parseEntry} from '../src/core/domain';
 import {sentences,tiktokVoices} from '../src/features/tts/services/tts';
+import {capcutVietnameseVoices} from '../src/shared/constants/capcut-voices';
 function split(text:string,chunk=7,max=64000){const parts:Part[]=[];const s=new StreamingSplitter('Nguồn',p=>parts.push(p),undefined,max);for(let i=0;i<text.length;i+=chunk)s.feed(text.slice(i,i+chunk));s.feed('',true);return parts;}
 describe('TXT integrity',()=>{
   it('preserves preface, short chapters, headings, trailing whitespace and CRLF across chunk boundaries',()=>{const raw='\uFEFFLời mở đầu\r\n\r\nChương 1: Một\r\nA\r\nChương 2: Hai\r\nB  \r';const p=split(raw,1);expect(p.map(p=>p.text).join('')).toBe(raw.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n'));expect(p).toHaveLength(3);expect(p[2].title).toBe('Chương 2: Hai');});
@@ -74,4 +75,4 @@ describe('Convert and names',()=>{
     expect(out2).toBe('Hắn nói: “Ngươi tới rồi.”\nHạ một hàng.');
   });
 });
-describe('TTS segmentation',()=>{it('returns bounded sentences with original text offsets',()=>{const text='Một câu.\n'+ 'abc '.repeat(200)+'!';const list=sentences(text);expect(list.every(s=>Array.from(s.text).length<=200)).toBe(true);for(const s of list)expect(text.slice(s.start,s.end)).toBe(s.text);});it('exposes only Vietnamese TikTok voices',()=>{expect(tiktokVoices).toHaveLength(3);expect(tiktokVoices.filter(v=>v.available).map(v=>v.serverId)).toEqual(['BV074_streaming','BV075_streaming']);expect(tiktokVoices[2].available).toBe(false);});});
+describe('TTS segmentation',()=>{it('returns bounded sentences with original text offsets',()=>{const text='Một câu.\n'+ 'abc '.repeat(200)+'!';const list=sentences(text);expect(list.every(s=>Array.from(s.text).length<=200)).toBe(true);for(const s of list)expect(text.slice(s.start,s.end)).toBe(s.text);});it('exposes the Vietnamese CapCut catalog by default',()=>{expect(tiktokVoices).toHaveLength(capcutVietnameseVoices.length);expect(tiktokVoices.every(v=>v.available)).toBe(true);expect(tiktokVoices.map(v=>[v.id,v.serverId])).toEqual(capcutVietnameseVoices.map(v=>[v.id,v.serverId]));});});

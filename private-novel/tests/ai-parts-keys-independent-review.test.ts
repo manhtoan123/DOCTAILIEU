@@ -16,7 +16,7 @@ describe('independent review: actual D1 lease ownership',()=>{
  beforeAll(async()=>{
   runtime=new Miniflare(convertV4MiniflareOptions({modules:true,script:'export default {fetch(){return new Response("ok")}}',compatibilityDate:'2026-01-01',d1Databases:['DB']}));
   database=await runtime.getD1Database('DB') as unknown as D1Database;
-  for(const file of ['0006_ai_keys.sql','0008_ai_key_health.sql']){
+    for(const file of ['0006_ai_keys.sql','0008_ai_key_health.sql','0017_ai_key_model_blocks.sql']){
    const sql=(await readFile('migrations/'+file,'utf8')).replace(/--[^\n]*/g,'');
    for(const statement of sql.split(';').filter(s=>s.trim()))await database.prepare(statement).run();
   }

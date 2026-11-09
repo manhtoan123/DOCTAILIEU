@@ -10,6 +10,7 @@ import {AiRunMetrics,getAiRunMetrics} from '../src/features/ai/services/ai-metri
 import {AiChapterJob,createAiChapterBudget,AI_CHAPTER_LIMITS,EPUB_AI_CHAPTER_LIMITS} from '../src/features/ai/services/ai-job';
 const model='gemini-2.5-flash',settings={...AI_DEFAULTS,model,fallbackModels:[]};
 const raw='甲'.repeat(900)+'乙'.repeat(900),source={bookId:'speed-book',id:'speed-chapter',revision:1,text:raw};
+const txtRaw='甲'.repeat(24)+'a'.repeat(2976)+'乙'.repeat(24)+'b'.repeat(2976),txtSource={...source,text:txtRaw};
 const persisted={read:readAiReadingCache,write:writeAiReadingCache,readParts:readAiParts,writePart:writeAiPart};
 const result=(text:string,parallel?:2):AiTranslateClientResponse=>({result:text,model,finishReason:'STOP',inputTokens:1,outputTokens:2,...(parallel?{parallel}:{})});
 const cut=()=>new AiTranslateClientError('ai_incomplete_result','synthetic truncation',502,'output_limit');
@@ -23,19 +24,22 @@ describe('AI success and speed',()=>{
   const special='甲'.repeat(1299)+'乌波伙伴😀'+'乙'.repeat(2700),mapped=splitAiText(special,['乌波伙伴😀']);expect(mapped.map(p=>p.text).join('')).toBe(special);expect(mapped.filter(p=>p.text.includes('乌波伙伴😀'))).toHaveLength(1);expect(mapped.every(p=>p.text.length<=1800&&!/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/.test(p.text))).toBe(true);
  });
  it('reload resumes a saved TXT child, skips its failed parent and sibling, and preserves the raw chapter',async()=>{
-  let fail=true;const send=vi.fn(async input=>{if(input.text.length===1800)throw cut();if(input.text[0]==='乙'&&fail)throw new AiTranslateClientError('ai_auth_error','synthetic credentials',403);return result(input.text[0]==='甲'?'TRÁI':'PHẢI');});
-  await expect(new AiReadingSession(send,persisted).request(source,settings,[])).rejects.toThrow('synthetic');expect(await readAiReadingCache(source,settings,[])).toBeUndefined();
+  await db.chapters.update(source.id,{text:txtRaw});
+  let fail=true;const send=vi.fn(async input=>{if(input.text.length===6000)throw cut();if(input.text[0]==='乙'&&fail)throw new AiTranslateClientError('ai_auth_error','synthetic credentials',403);return result(input.text[0]==='甲'?'TRÁI':'PHẢI');});
+  await expect(new AiReadingSession(send,persisted).request(txtSource,settings,[])).rejects.toThrow('synthetic');expect(await readAiReadingCache(txtSource,settings,[])).toBeUndefined();
   const rows=await db.settings.where('key').startsWith('ai-reading-cache:parts:').toArray();expect(rows.some(r=>(r.value as {partId:string}).partId==='0/0')).toBe(true);
   db.close();await db.open();fail=false;const before=send.mock.calls.length,session=new AiReadingSession(send,persisted);
-  expect((await session.request(source,settings,[])).result).toBe('TRÁI\nPHẢI');expect(send.mock.calls.slice(before).map(([i])=>i.text)).toEqual(['乙'.repeat(900)]);expect((await db.chapters.get(source.id))?.text).toBe(raw);expect(session.get(aiReadingKey(source,settings,[]))?.finishReason).toBe('STOP');
+  expect((await session.request(txtSource,settings,[])).result).toBe('TRÁI\nPHẢI');expect(send.mock.calls.slice(before).map(([i])=>i.text)).toEqual([txtRaw.slice(3000)]);expect((await db.chapters.get(source.id))?.text).toBe(txtRaw);expect(session.get(aiReadingKey(txtSource,settings,[]))?.finishReason).toBe('STOP');
  });
  it('a matching Name edit invalidates child checkpoints rather than mixing translation settings',async()=>{
-  const a=[{key:'甲',value:'A'}],b=[{key:'甲',value:'B'}];const old=vi.fn(async input=>{if(input.text.length===1800)throw cut();if(input.text[0]==='乙')throw new AiTranslateClientError('ai_auth_error','stop',403);return result('OLD');});
-  await new AiReadingSession(old,persisted).request(source,settings,a).catch(()=>{});const fresh=vi.fn(async(_input:AiTranslateClientRequest)=>result('NEW'));expect((await new AiReadingSession(fresh,persisted).request(source,settings,b)).result).toBe('NEW');expect(fresh).toHaveBeenCalledOnce();expect(fresh.mock.calls[0][0].text).toBe(raw);
+  await db.chapters.update(source.id,{text:txtRaw});
+  const a=[{key:'甲',value:'A'}],b=[{key:'甲',value:'B'}];const old=vi.fn(async input=>{if(input.text.length===6000)throw cut();if(input.text[0]==='乙')throw new AiTranslateClientError('ai_auth_error','stop',403);return result('OLD');});
+  await new AiReadingSession(old,persisted).request(txtSource,settings,a).catch(()=>{});const fresh=vi.fn(async(_input:AiTranslateClientRequest)=>result('NEW'));expect((await new AiReadingSession(fresh,persisted).request(txtSource,settings,b)).result).toBe('NEW');expect(fresh).toHaveBeenCalledOnce();expect(fresh.mock.calls[0][0].text).toBe(txtRaw);
  });
  it('pins the first validated split child and never falls back into a mixed-model chapter',async()=>{
-  const first='gemini-3.5-flash',send=vi.fn(async input=>{if(input.text.length===1800)throw cut();if(input.text[0]==='乙')throw new AiTranslateClientError('ai_rate_limited','quota',429,'cooldown',undefined,undefined,40000);return {...result('SAVED'),model:input.model};});
-  await expect(new AiReadingSession(send,persisted).request(source,{...settings,model:first,fallbackModels:[model]},[])).rejects.toThrow('quota');expect(send.mock.calls.every(([i])=>i.model===first)).toBe(true);expect(await readAiReadingCache(source,{...settings,model:first,fallbackModels:[model]},[])).toBeUndefined();
+  await db.chapters.update(source.id,{text:txtRaw});
+  const first='gemini-3.5-flash',send=vi.fn(async input=>{if(input.text.length===6000)throw cut();if(input.text[0]==='乙')throw new AiTranslateClientError('ai_rate_limited','quota',429,'cooldown',undefined,undefined,40000);return {...result('SAVED'),model:input.model};});
+  await expect(new AiReadingSession(send,persisted).request(txtSource,{...settings,model:first,fallbackModels:[model]},[])).rejects.toThrow('quota');expect(send.mock.calls.every(([i])=>i.model===first)).toBe(true);expect(await readAiReadingCache(txtSource,{...settings,model:first,fallbackModels:[model]},[])).toBeUndefined();
  });
  it('continues independent unstarted parts and then recovers only the transient gap',async()=>{
   const calls:string[]=[],attempts=new Map<string,number>(),states:AiPartsProgress[]=[];
@@ -53,7 +57,7 @@ describe('AI success and speed',()=>{
  });
  it('a validated recent capacity hint enables two initial requests on the same model',async()=>{
   const held=gate<AiTranslateClientResponse>(),send=vi.fn(async input=>input.text==='warm'?result('warm',2):held.promise),session=new AiReadingSession(send);
-  await session.request({...source,id:'warm',text:'warm'},settings,[]);const work=session.request({...source,id:'next',text:'甲'.repeat(96000)},settings,[]);await vi.waitFor(()=>expect(send).toHaveBeenCalledTimes(3));expect(send.mock.calls.slice(1).every(([i])=>i.model===model)).toBe(true);held.resolve(result('OK',2));await work;
+  await session.request({...source,id:'warm',text:'warm'},{...settings,splitParts:true},[]);const work=session.request({...source,id:'next',text:'甲'.repeat(96000)},{...settings,splitParts:true},[]);await vi.waitFor(()=>expect(send).toHaveBeenCalledTimes(3));expect(send.mock.calls.slice(1).every(([i])=>i.model===model)).toBe(true);held.resolve(result('OK',2));await work;
  });
  it('EPUB subdivides one failing piece and reload reuses its validated child with original node mapping',async()=>{
   const layout={path:'one.xhtml',body:'<body><p><em>甲</em></p><img src="x.png"/></body>',styles:[],nodes:[raw]},original=JSON.stringify(layout);let fail=true;
@@ -66,8 +70,9 @@ describe('AI success and speed',()=>{
   await expect(new EpubAiSession(undefined,send).request({...source,text:'甲\n乙'},settings,[],{path:'one.xhtml',body:'<body/>',styles:[],nodes:['甲','乙']})).rejects.toThrow('quota');expect(send).toHaveBeenCalledOnce();
  });
  it('abort cannot finish or cache a chapter after a child was retained',async()=>{
-  const held=gate<AiTranslateClientResponse>();const send=vi.fn(async input=>{if(input.text.length===1800)throw cut();return input.text[0]==='甲'?result('KEPT'):held.promise;}),session=new AiReadingSession(send,persisted),key=aiReadingKey(source,settings,[]);
-  const work=session.request(source,settings,[]),rejected=expect(work).rejects.toMatchObject({name:'AbortError'});await vi.waitFor(()=>expect(send).toHaveBeenCalledTimes(3));session.cancel(key);held.resolve(result('LATE'));await rejected;expect(session.get(key)).toBeUndefined();expect(await readAiReadingCache(source,settings,[])).toBeUndefined();
+  await db.chapters.update(source.id,{text:txtRaw});
+  const held=gate<AiTranslateClientResponse>();const send=vi.fn(async input=>{if(input.text.length===6000)throw cut();return input.text[0]==='甲'?result('KEPT'):held.promise;}),session=new AiReadingSession(send,persisted),key=aiReadingKey(txtSource,settings,[]);
+  const work=session.request(txtSource,settings,[]),rejected=expect(work).rejects.toMatchObject({name:'AbortError'});await vi.waitFor(()=>expect(send).toHaveBeenCalledTimes(3));session.cancel(key);held.resolve(result('LATE'));await rejected;expect(session.get(key)).toBeUndefined();expect(await readAiReadingCache(txtSource,settings,[])).toBeUndefined();
  });
  it('local metrics report one chapter and actual requests without retaining source or credentials',async()=>{
   const text='RAW_SECRET_SOURCE_SENTINEL',send=vi.fn(async()=>result('Dịch'));await new AiReadingSession(send).request({...source,text},settings,[]);const metric=getAiRunMetrics().at(-1)!;expect(metric).toMatchObject({kind:'txt',status:'complete',sourceChars:text.length,requests:1,totalParts:1,completeParts:1});expect(JSON.stringify(metric)).not.toContain(text);

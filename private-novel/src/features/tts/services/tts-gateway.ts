@@ -1,5 +1,6 @@
 /** A build-time selector only. Session credentials always belong to the server. */
-export function ttsGateway(mode:unknown){return mode==='capcut-v2'?'/api/tts':'https://ottsy.weilbyte.dev/api/generation';}
+export function usesCapcutTts(mode:unknown){return mode!=='legacy-tiktok';}
+export function ttsGateway(mode:unknown){return usesCapcutTts(mode)?'/api/tts':'https://ottsy.weilbyte.dev/api/generation';}
 export function capcutSessionFailure(code:unknown):string|undefined{
   if(code==='capcut_access_denied')return 'CapCut đang từ chối truy cập; cần kiểm tra quyền hoặc kết nối, chưa xác định là phiên hết hạn.';
   if(code==='capcut_session_expired')return 'Phiên CapCut hết hạn hoặc không được chấp nhận. Cần kết nối lại phiên CapCut trên server.';

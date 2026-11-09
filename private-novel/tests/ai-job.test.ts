@@ -54,16 +54,16 @@ it('shows a permanent chapter deadline, releases the pending key and rejects lat
 });
 
 it('counts actual sends including child retries, bounds them and never publishes partial children',async()=>{
- vi.useFakeTimers();let children=0,active=0,maxActive=0;
+ vi.useFakeTimers();const oldLimit=EPUB_AI_CHAPTER_LIMITS.sends;EPUB_AI_CHAPTER_LIMITS.sends=AI_CHAPTER_LIMITS.sends;let children=0,active=0,maxActive=0;
  const translate=vi.fn(async input=>{active++;maxActive=Math.max(maxActive,active);await Promise.resolve();active--;
   if(input.text.length>=400)throw new AiTranslateClientError('ai_incomplete_result','cut',502,'output_limit');
   if(++children%3)throw new AiTranslateClientError('ai_gateway_error','retry',503);
   return result;
  });
- const long={...source,text:'中'.repeat(1600)},cache={read:async()=>undefined,write:vi.fn(async()=>true)},session=new AiReadingSession(translate,cache);
- const failure=session.request(long,settings,[]).catch(e=>e);await vi.runAllTimersAsync();
+ const long={...source,text:'中'.repeat(6000)},cache={read:async()=>undefined,write:vi.fn(async()=>true)},session=new AiReadingSession(translate,cache);
+ try{const failure=session.request(long,settings,[]).catch(e=>e);await vi.runAllTimersAsync();
  expect(await failure).toMatchObject({code:'ai_recovery_exhausted',reason:'send_limit'});
- expect(translate).toHaveBeenCalledTimes(AI_CHAPTER_LIMITS.sends);expect(maxActive).toBe(1);expect(cache.write).not.toHaveBeenCalled();expect(session.get(aiReadingKey(long,settings,[]))).toBeUndefined();
+ expect(translate).toHaveBeenCalledTimes(AI_CHAPTER_LIMITS.sends);expect(maxActive).toBe(1);expect(cache.write).not.toHaveBeenCalled();expect(session.get(aiReadingKey(long,settings,[]))).toBeUndefined();}finally{session.clear();EPUB_AI_CHAPTER_LIMITS.sends=oldLimit;}
 });
 
 it.each(['read','write'] as const)('EPUB bounds the optional whole-chapter cache %s',async kind=>{

@@ -136,3 +136,138 @@ Người dùng cho phép đổi gateway, chọn rõ CapCutv2 dùng phiên và ch
 
 ## 25/10/2026 15:54 ICT — TTS ít thao tác, cookie-only
 Người dùng muốn ít can thiệp, chỉ đề nghị cookie. Cho phép giữ cookie mới của endpoint CapCut hiện có trong D1 runtime AES-GCM/CAS, khóa dẫn xuất từ bootstrap secret, namespace đổi khi bootstrap đổi; không mật khẩu/tự login. Quyết định này thay giới hạn session-only không lưu DB trong docs CapCut cũ bằng lưu encrypted runtime tách library/backup. Audio cache thiết bị riêng32MiB/256đoạn/24h, không sửa cursor; tối đa3active và no autoplay reload. Thu hồi phiên hoàn toàn vẫn cần chủ tài khoản login/cookie mới; không cam kết vĩnh viễn. docs/TTS-AUTONOMY-M0.md.
+
+## 25/10/2026 21:03 (UTC+7) — Cấu hình thực dùng và thử prompt
+- Theo yêu cầu mục1/mục5: cấu hình request được server ghi bằng metadata tùy chọn (model sau alias, nhiệt độ thực gửi hoặc null, thinking theo provider, maxOutputTokens, SHA256 cấu hình prompt); không lưu nguồn/Name/prompt/secret trong metadata, không thay mặc định thinking/model. JSON cũ và cache thiếu metadata vẫn dùng, UI ghi chưa biết. Chỉ gộp metadata khi mọi phần giống nhau.
+- Cache chỉ bỏ ảnh hưởng nhiệt độ khi TẤT CẢ model reachable (kể cả fallback/hybrid) không dùng tham số này. Giữ identity cũ làm nhánh đọc, không di trú hàng legacy khác hash; giữ LRU hiện có cho canonical. Không đổi schema/progress/source.
+- A/B chỉ ở cài đặt prompt, hai request thủ công lần lượt với nguồn/Name/model/nhiệt độ chung, snapshot DTO trước khi gửi; không fallback/cache/ghi settings hoặc progress. Dừng/input đổi/unmount chặn kết quả muộn. Mục3 văn phong/hiệu năng và mục4 nhất quán ngữ cảnh chỉ giải thích, chưa triển khai.
+
+### 26/10/2026 — Restore Name bảo toàn nghĩa đang dùng
+- Add-only tính cả legacy consensus hiện hành: backup không được ghi đè nghĩa/xóa bằng tombstone hoặc tự giải quyết legacy conflict của Album đang dùng. Kho trống vẫn phục hồi tombstone. Không sửa legacy nguồn.
+- Capacity kho Album kiểm shared base cộng conflict-key riêng của mọi thành viên trong cùng transaction, trước commit restore/sync/chọn conflict/chuyển Album; kiểm cả root cũ/mới. Vượt20k rollback, không ACK/drop record. Review và bằng chứng: private-novel/docs/RELEASE-REVIEW-2026-10-26.md.
+
+### 26/10/2026 — TTS phục hồi đầu không chờ
+- Theo yêu cầu người dùng, request mạng/5xx thử lại đầu không có600ms, audio/current-chunk phục hồi đầu không có2s. Sự kiện online đánh thức ngay tại cursor hiện hành, bỏ giãn lượt cục bộ nhưng không bỏ Retry-After máy chủ.
+- Giữ burst hữu hạn, backoff2–30s khi lỗi lặp; phiên hết hạn vẫn chờ phiên hợp lệ, không tính lần chờ phiên vào backoff lỗi audio. Stop/pause/unmount gỡ cả timer+online callback, giữ ≤3active và no-autoplay reload. Không thêm provider/key/schema. Bằng chứng: .dsh-tmp/tts-immediate/, docs/TTS-AUTONOMY-M0.md.
+
+## 26/10/2026 22:05 +07 — Hai cải tiến latency AI đã chốt
+TXT mới dùng plan txt-output-budget-1 khi ước lượng vượt ngân sách output8192/headroom2048; ước lượng không phải tokenizer. Giữ nguồn/biên Name/Unicode; Name chặn chia sớm thì dùng bố cục an toàn cũ. Checkpoint cùng identity chọn một plan tương thích, không ghép namespace; legacy hybrid giữ hợp đồng hai nửa.
+Bật song song chỉ mở sớm slot2 khi lease báo đủkey và model đã ghim hoặc chỉ cấu hình một model; shared admission/cooldown vẫn cap2. Phục hồi chỉ fork một cấp, drain sibling trước lỗi. Prefix chỉ gồm STOP liên tục từ đầu, parent thắng con cũ, dừng ở gap; cache toàn chương chỉ ghi khi đủ. Điểm nối TTS qua newline giữ indentation ở đầu câu kế tiếp để không đọc lặp. Không đổi prompt/temperature/thinking/provider/keys/UI. Chi tiết: private-novel/docs/AI-LATENCY-RESEARCH-2026-10-26.md.
+
+## 27/10/2026 — TXT tự nhận diện từng file, suy luận tiêu đề vẫn qua preview
+- Theo lựa chọn tự động của người dùng: mọi bộ chọn encoding của nhập/cập nhật TXT truyện mặc định auto, mỗi file nhận diện riêng. Auto chỉ là sentinel UI, không lưu vào nguồn. BOM ưu tiên; kiểm tra fatal toàn bộ và decoder tail, lỗi BOM/manual không fallback. BOMless dùng dấu hiệu UTF16 đủ mạnh hoặc UTF8→GB18030; giữ manual vì byte có thể mơ hồ.
+- Có thể đề xuất ranh giới 第N章 dính giữa dòng khi có tiêu đề rõ, chuỗi số liên tiếp/duy nhất và khoảng cách theo marker thô gần nhất đủ lớn. Giữ trần tiêu đề80, guard tham chiếu và bỏ inference khi có regex tùy chỉnh. Số mốc chỉ là metadata preview tạm; không thay schema hay source bytes.
+- Không tự chia lại dữ liệu cũ hoặc thêm chương khi chưa xác nhận. Append vẫn dựa mốc nội dung/title/manual và CAS; số chương suy luận không quyết định ghi đè. Cảnh báo hiển thị ngoài phần thu gọn. Phạm vi không đổi JSON/API/Name/dictionary/EPUB.
+
+## 27/10/2026 — Cải tiến UI theo từng lần nhắn
+- Người dùng yêu cầu tiếp tục cải tiến UI/UX, giữ tích hợp tính năng và tự hoàn thiện từng phần mỗi khi gửi lại prompt này. Mỗi lượt chọn một khu rõ ràng, làm xong kiểm tra và deploy trong phạm vi đã được phép; không cần hỏi lại lựa chọn UI thông thường.
+- Lượt này hoàn thiện cập nhật TXT và bản xem trước trên trang truyện; lượt tiếp theo ưu tiên mục lục. Tính năng dữ liệu, đọc/nghe, đối chiếu, chọn chương và xác nhận giữ nguyên; dùng progressive disclosure cho tùy chọn đọc file.
+
+## 27/10/2026 — Ba màu giao diện dùng chung
+- Trắng/Giấy/Tối dùng reader.theme hiện có cho shell, hộp thoại và Reader; không thêm schema hoặc nguồn cài đặt thứ hai. Bộ chọn ở Cài đặt→Giao diện và mục Nền trong Reader. LocalStorage chỉ cache màu khởi động; IndexedDB/sync vẫn là nguồn chính. Mặc định Giấy, legacy gray chỉ hiển thị tương đương Tối trên shell, không tự ghi lại dữ liệu.
+- Chỉ thao tác chọn bộ màu mới xóa background/textColor tùy chọn, giữ các thiết lập khác và ảnh nền; writer đọc bản mới dưới queue/transaction reader. Màu tùy chọn nâng cao của Reader tiếp tục hoạt động.
+
+## 27/10/2026 12:12 ICT — Quy tắc model/agent đã chốt
+- Người dùng yêu cầu đưa bộ quy tắc mới vào AGENTS.md, thay các quyết định cũ về model/effort/số agent/reviewer. Astra chính mặc định Medium→High theo rủi ro; Sol triển khai logic; Terra UI/ảnh/thao tác/viết; Luna thu thập/kiểm tra cơ học. Trần3 gồm chính+2phụ; Ultra/tăng trần cần lựa chọn riêng.
+- Review rủi ro cao: Astra High độc lập, bao phủ diff cuối; logic nhiều trạng thái/module có Sol High review theo nhu cầu. Sau2phương án không tiến triển phải xét lại giả định/trả điều phối; giữ bằng chứng runtime về model thực tế.
+- AGENTS.md là hướng dẫn thực thi; private-novel/docs/MODEL-USAGE-RULES-DRAFT.md được đánh dấu đã chốt, giữ diễn giải. Cập nhật này không chỉnh config.toml/model phiên đang chạy/quyền công cụ; ràng buộc dữ liệu/secrets tiếp tục có hiệu lực.
+
+## 27/10/2026 17:02 ICT — TXT dưới6.000 ký tự dịch nguyên chương
+- Người dùng chốt: nội dung gốc TXT source.text.length<6000 (UTF-16, gồm khoảng trắng/xuống dòng) không chia, kể cả splitParts=true; lỗi phục hồi thử lại nguyên văn trong retry/cooldown/send/deadline hiện có. Đúng6000+ giữ planner và phục hồi cũ; EPUB validate và các stage nội bộ của hybrid chương dài giữ contract riêng.
+- Plan txt-short-whole-1 tách namespace checkpoint khỏi bố cục cũ, không nhận child/partial root từ plan cũ; completed full cache giữ nguyên. None-mode không nối descendants cũ. New-plan root cache/progress/facts là1/1; fresh response/RAM giữ đúng object identity, metadata chỉ chuẩn hóa khi serialize checkpoint/facts. Chặn late publication/Stop như cũ.
+- Không đổi provider/keys/output8192/thinking/prompt/temperature/schema hoặc nguồn/progress. Retry không bảo đảm vượt được output cap cố định; upstream thật chưa benchmark. Đã cập nhật mô tả lựa chọn trong Reader/Prompt và USER-GUIDE.
+
+## 2026-10-28 — Giảm chờ foreground AI, giữ nguyên chương ngắn
+TXT <6000 UTF-16 vẫn nguyên chương. Lỗi tạm thời ở model còn dự phòng chuyển sớm; model cuối/single/pinned giữ tối đa2 retry. Output-limit/copied-source có tối đa2 retry nguyên chương độc lập; ghi quota trước quyết định retry, giữ cooldown/Retry-After, budget, Stop và trần2key. Pending TXT/EPUB khi thành chương hiện tại giữ promise/controller/cache key và progress, cập nhật priority hàng đợi và replay/theo dõi model; không preempt request đang chạy. Không đổi protocol/provider/schema/nguồn/cursor/cache hoàn chỉnh. Nested hybrid cũ chưa được mở rộng kế thừa priority.
+
+## 2026-10-28 — Streaming xem trước TXT nguyên chương
+TXT <6000 UTF16 tiếp tục một request nguyên chương. Client có callback preview mới opt-in X-AI-Preview:1; Worker chuyển text không phải thought, client cũ chỉ nhận progress/final. Preview hiển thị tới newline hoàn tất, tách previewText khỏi completed text/cache/checkpoint/TTS/bookmark; STOP hợp lệ mới lưu/nghe. Mỗi retry/model mới xóa draft; Stop/retain/deadline xóa đúng controller, callback muộn không hồi sinh. Giữ protocol NDJSON hiện có với event text opt-in, tối đa3000 preview events/512000 encoded bytes; client opt-in tăng đúng ngân sách preview. EPUB/chương dài giữ complete-prefix. Không provider/key/migration/dependency mới. Streaming giảm thời gian bắt đầu đọc, không hứa giảm tổng thời gian sinh.
+
+## 2026-10-28 — Tham khảo mã mở trước, ghi tài liệu sau mỗi tính năng
+Theo yêu cầu người dùng: trước khi triển khai tính năng/cải tiến, tham khảo GitHub hoặc nguồn mã mở liên quan để lấy ý tưởng và đối chiếu code hiện tại. Khi hoàn thành tự cập nhật .md tương ứng, gồm hành vi, link nguồn/ý tưởng áp dụng, kiểm chứng, giới hạn và deploy nếu có. Không tìm được nguồn thì ghi rõ; không tự thêm dependency/provider/hạ tầng. AGENTS.md là quy tắc thực thi.
+
+## 2026-10-28 — Gemini 2.5 trước Gemma
+Người dùng yêu cầu ưu tiên Gemini 2.5 Flash trước Gemma: chuỗi chuẩn3.8→3.7→3.5→2.5→Gemma26B→3Preview. Menu AI_MODELS đồng bộ thứ tự; model được chọn vẫn là điểm bắt đầu. Không đổi model IDs/allowlist, provider, giới hạn key, retry/cooldown hay bản ghi dữ liệu. Tham khảo cơ chế ordered fallback LiteLLM Router https://github.com/BerriAI/litellm-docs/blob/main/docs/routing.md đã đọc trong phiên; vị trí model cụ thể theo người dùng, không là đánh giá chất lượng từ nguồn này.
+
+## 2026-10-28 — Lite theo vai trò hiện tại/prewarm
+Theo chốt người dùng: foreground thêm Gemini3.5Flash-Lite sau2.5Flash, trướcGemma; prewarm không gửi3.5Lite. Mở chương đang prewarm giữ request/promise/model hiện tại; thành công dùng luôn, lỗi mới chọn model tiếp theo theo vai trò sống, kể cả Lite đã bỏ qua trước đó. Khi có phần hoàn tất ghim model, giữ pin để không trộn model. Vai trò runtime chia sẻ xuống TXT/EPUB/nested stage, không đưa vào cache key, không restart/double send. Model cuối xét theo danh sách còn hợp lệ, tránh mất retry khi Lite bị chặn. Khôi phục3.5Lite thành ID thật trong allowlist/normalizer, không alias sang3.5Flash;3.6 vẫn tương thích legacy. Không đổi key/provider/fan-out/budget/Stop/cache ownership/nguồn. Ý tưởng request-scoped fallback controls tham khảo https://github.com/BerriAI/litellm/blob/main/litellm/router_utils/fallback_event_handlers.py ; không cài thêm thư viện.
+
+## 29/10/2026 — Chốt nâng cấp quy trình đo đạc dịch AI L1–L4
+Người dùng yêu cầu chốt kế hoạch sau đề xuất log phục vụ cải tiến. Chốt thứ tự L1 liên kết work/part/request/upstream + cấu hình thực dùng; L2 thời gian foreground/preview/accepted/complete theo clock đúng runtime; L3 cây phục hồi và trạng thái/model cuối đúng chứng cứ; L4 thống kê cùng cohort và metadata trial chủ động ở trang prompt hiện có. Chi tiết/tiêu chí: private-novel/docs/AI-LOG-M0.md, mục kế hoạch29/10. Giữ hai key, model/Lite policy, budget/Stop/pin, TXT<6000 nguyên chương và thuật toán chia hiện có; không thêm providercall/wait/auto-A-B, không đổi cache identity/nguồn/tiến độ/TTS. Giữ cap5000/30d/outbox100/payload8KiB, v1/v2 tương thích/failopen/allowlist. Dữ liệu thiếu unknown, không xếp hạng model dự phòng bằng tỉ lệ thô. Tổng hợp dài hạn/dataset chất lượng/auto-routing để sau, cần phạm vi/M0 riêng. Đây là quyết định kế hoạch, chưa triển khai hay deploy nâng cấp.
+## 29/10/2026 — Điều chỉnh mức model
+Theo yêu cầu người dùng: vai trò Astra High chuyển sang GPT-6.1 Sol High; vai trò Sol High chuyển sang GPT-6.1 Sol Medium, ánh xạ một lần theo vai trò cũ. Giữ reviewer độc lập, yêu cầu bằng chứng và trần ba agent. Không đổi model chat chính khi runtime chưa xác nhận. Quy tắc thực thi ở AGENTS.md.
+
+## 29/10/2026 — Liên kết thật cho điều hướng
+Album/Series/truyện/chương dùng anchor có href; chỉ click trái không modifier giữ callback SPA, không chặn contextmenu/Ctrl/Meta/Shift/Alt/chuột giữa. URL Album dùng query album đã encode để reload/tab mới/Back phục hồi nhánh; không đổi định danh hoặc dữ liệu. Liên kết disabled bỏ href; thao tác mở hộp thoại/phân trang/sửa/xóa vẫn là button. Chi tiết: private-novel/docs/NATIVE-NAVIGATION-LINKS.md.
+
+## 29/10/2026 — Capacity không phải model đã được chấp nhận
+Thông tin2key của chương trước chỉ cho phép prepin khi thực sự khởi chạy đa phần song song cùngmodel. Một phần/admission đầu1request còn được fallback cấu hình trước khi có kết quả; checkpoint/savepin giữ nguyên. Không suy ra L1–L4 gây upstream timeout từ trùng thời điểm deploy. Chi tiết private-novel/docs/PREWARM-CAPACITY-FALLBACK-2026-10-29.md.
+
+
+29/10/2026 — Người dùng chốt AI first-answer23s, idle7s kể từ answer delta cuối; thought/heartbeat/usage/lease không gia hạn. Lỗi rõ ràng rotation ngay như cũ; giữ hard180s và transport grace client10s. Timeout không chứng minh upstream ngừng tính. Chi tiết private-novel/docs/AI-ACTIVITY-STREAM-1.md.
+
+
+29/10/2026 — Chốt mới thay first23 bằng60giây theo yêu cầu người dùng; idle7giây answer-only giữ nguyên. Theo dõi nhật ký để đề xuất tối ưu dựa N/model/purpose/policy, không tự thay ngưỡng từ mẫu nhỏ. Chi tiết private-novel/docs/AI-ACTIVITY-STREAM-1.md.
+
+
+29/10/2026 — Người dùng chốt model đã có answer rồi lỗi giữa chừng được replay cùng model1lần trước fallback. Áp mỗi request/phần, không thêm vòng retry thường sau replay thất bại, không nới Stop/budget/pin. Giữ first60/idle7s; safe lease không được tính answer. Chi tiết private-novel/docs/AI-ACTIVITY-STREAM-1.md.
+
+
+29/10/2026 — Người dùng xác nhận chỉ exact gemini-3.5-flash và gemini-2.5-flash được retry cùng request; không Lite. Allowlist giữ ở recovery và identity theo vị trí mỗi job/round; phần nguồn khác không phải retry. Dựa success firstChunk quan sát<=39,628ms, chọn first45s + idle7s, tiếp tục theo dõi mẫu còn ít. Chi tiết private-novel/docs/AI-ACTIVITY-STREAM-1.md.
+
+## 30/10/2026 — Đổi giới hạn chương ngắn sang 3.000 chữ và không giới hạn số lần chia chương
+- Người dùng chốt: nội dung gốc TXT source.text.length < 3000 (UTF-16 code units) dịch nguyên chương (whole short), thử lại nguyên chương có giới hạn (tối đa 2 lần ở model cuối/single) khi gặp lỗi phục hồi. Từ 3000 ký tự trở lên tiếp tục chia chương theo song song và ngân sách đầu ra.
+- Không giới hạn số lần chia chương: loại bỏ giới hạn độ sâu cứng (depth < 3, depth >= 3) trong phục hồi chia nhị phân (translateComplete) và EPUB, mở rộng regex part ID sang /^\d{1,4}(?:\/[01])*$/; quá trình chia tiếp tục đệ quy cho đến khi hoàn thành hoặc đạt ngưỡng tối thiểu an toàn của đoạn văn (text.length < 400 hoặc không thể chia an toàn). Giữ trần an toàn chống lặp vô hạn (requests > 1000).
+- Tham khảo ý tưởng phân chia đệ quy thích ứng: LangChain RecursiveCharacterTextSplitter (https://github.com/langchain-ai/langchain) và LiteLLM fallback retry policies. Không cài thêm thư viện hay hạ tầng mới.
+
+
+01/11/2026 — Người dùng yêu cầu chọn model cố định: Reader/current/prewarm/retry chỉ dùng model đã chọn, không tự fallback; cho phép Groq qwen/qwen3.8-27b với pool key người dùng cấp luân phiên server-side, giữ tối đa hai request đồng thời/Stop/checkpoint. Thay quy tắc whitelist retry29/10 bằng retry có giới hạn cho model chọn, giữ Retry-After và lỗi quyền/cấu hình không lặp nóng. Hai web nếu tách phải có dữ liệu riêng; mới xác nhận phương án, chưa tạo/chuyển dữ liệu. Cuối lượt người dùng yêu cầu không chạy test thêm và hoàn thành nhanh; dừng kiểm thử, ghi rõ2706/2709 full +22/22 builtE2E +build/review, không gán full xanh. Chi tiết private-novel/docs/WEB-RECOVERY-2026-11-01.md.
+
+
+01/11/2026 — Người dùng xác nhận cần UI/UX hai tính năng: Tự động hạ model và Cố định model. Thay chính sách chỉ-fixed toàn Reader vừa triển khai bằng modelMode auto/fixed rõ ràng; mặc định cũ giữfixed, chọn prompt không đổi mode/model; auto dùng chuỗi dự phòng hiện có, pin sau phần đầu hoàn tất để không trộn model. Không thêm provider/key/schema. Theo yêu cầu tiết kiệmusage, không thêm/chạy test; chỉ build và review đọc. Chi tiết private-novel/docs/AI-DUAL-MODE-2026-11-01.md.
+
+
+01/11/2026 — Key/model không thể phục hồi403/404 phải loại theo cặp, giữkey cho modelkhác; chỉ structuredprovidererror mới lưu vĩnh viễn, không backfill từ HTTPstatus cũ. Invalidkey rõ ràng vẫn toànkey. GroqQwen đặt ngay sauGemini2.5 trongAuto. URLreader404 GET/HEAD được phục vụSPA sau auth/secure, khôngđổi API/auth. Không testtheochỉđạouser; build/review/GET thật. docs/AI-KEY-MODEL-EXCLUSION-2026-11-01.md.
+
+
+01/11/2026 — SửaAuto theo ranhgiới: chưa có phần hợp lệ thì không pin từ capacitywarm; sauaccept mới song song cùngmodel. Providerkhôngkey là lỗi safe riêng cho Auto đi tiếp, Fixed khôngretryvôhạn. Quota có thểphục hồi ưu tiên429 trước404model. Gemma26/31 tốiưudịch: thinkingminimal, firstanswerstream90s đồngbộ client/server, modelkhác45s; idle/hard/Stopkhôngđổi. User yêu cầu xemthời gian/lỗi từngmodel: bounded requesttimelineRAM theo workID, khôngdựnggiờ/cache vàkhônglưu nguồn/key. Không thêm/chạytesttheochỉđạouser; chỉbuild/review/GETrelease. Chi tiết private-novel/docs/AI-REPAIR-AND-TIMELINE-2026-11-01.md.
+
+## 01/11/2026 — Sửa riêng chữ Hán trước khi chấp nhận bản dịch
+Client mới opt-in sửa Han có ngữ cảnh, cùng model/key/lease, một lượt bổ sung có giới hạn; không sửa hồi tố cache/bản đang nghe hoặc đổi định danh cursor. Metadata audit tách khỏi prose/TTS. Chi tiết private-novel/docs/AI-HAN-REPAIR-2026-11-01.md. Chưa deploy theo chỉ đạo mới.
+
+01/11/2026 — Người dùng đổi quản lý Phòng tối: checkbox trực tiếp ngoài danh sách chọn Album để sửa tên/xóa; trong Album chọn truyện và Album con tương tự. Chỉ Sửa tên (một mục) và Xóa (nhiều mục) khi có chọn, bỏ nút Quản lý. Xóa Album gồm cây con sau preview/xác nhận, tái dùng cloud ACK-before-local. Không đổi service/schema. Chưa deploy. Chi tiết private-novel/docs/LIBRARY-MANAGEMENT.md.
+
+01/11/2026 — Thống nhất metadata sách cloud/snapshot/catalog/shared/rename/server/backup ở1000 ký tự theo backup hiện có; headerencoded9x, DELETEreview32KiB. Migration0018 chỉnớiCHECKtitle, giữcácguard/ledger/rows. Không cắt/đổi nội dung/chia lại chương hoặc nới128000/codec/Name. Lỗi rõfield/type/length; author thiếu mặc địnhrỗng trongpayload. docs/CLOUD-METADATA-COMPATIBILITY-2026-11-01.md.
+
+01/11/2026 — Điều chỉnh theo phản hồi UI: mặc định ẩn checkbox. Nút Quản lý đầu Phòng tối/Album bật chọn; Xong xóa chọn và ẩn. Giữ thao tác Sửa tên/Xóa trực tiếp và xác nhận hiện có. Ô tích truyện ở phần riêng trước bìa; albumgrid chọn min260px. Thay quyết định luôn hiện checkbox trước đó, không đổi service dữ liệu.
+
+02/11/2026 — Đổi Auto/Fixed hoặc model: ưu tiên giữ chương AI đã hoàn tất, gồm prewarm; cấu hình mới dùng cho chương chưa có bản hoàn tất tương thích. Identity nguồn/prompt/Names và tùy chọn ngoài model vẫn bắt buộc khớp; partial/hybrid/continuation không nới. Giữ model/execution thực của bản cũ, không viết lại dưới tên model mới. Chi tiết private-novel/docs/AI-COMPLETED-CHAPTER-REUSE-2026-11-02.md.
+
+02/11/2026 — Người dùng chọn nghe ngay trước khi AI dịch full, chấp nhận khác biệt bản nháp/accepted. TXT cho TTS đọc preview chỉ gồm đoạn đã đóng; chờ/nối offset khi có thêm chữ. Dừng và báo khi draft bị thay/lỗi, không ghi cursor/cache draft; chỉ nhận identity khi full khớp prefix. EPUB/PDF/DOCX giữ prefix node đã kiểm tra. Không bật MSE/provider mới hay đổi concurrency/retry. Thay quy tắc không phát draft trước đây trong phạm vi người dùng đã chọn. docs/AI-STREAMING-LISTEN-2026-11-02.md.
+
+02/11/2026 — Người dùng yêu cầu nghe tự động, không dừng/chờ bấm lại khi AI thay bản dịch. Thay quyết định dừng prefix mismatch trước đó: nghe hết audio đã xếp, rồi nối theo thứ tự đoạn ở bản mới; bản mới chưa tới thì tự chờ, không thêm nút. Giữ offset chính xác khi prefix chưa đổi, final-only cursor/no reload autoplay/Stop vẫn hủy. Ánh xạ thứ tự gần đúng nếu AI gộp/tách/đảo đoạn; không gọi AI/công cụ mới để căn chỉnh. docs/AI-STREAMING-LISTEN-2026-11-02.md.
+
+## 02/11/2026 — Trau chuốt thay Convert
+Người dùng đổi lựa chọn lưu riêng sang bản hoàn tất thay Convert để đọc/nghe và có prompt trau chuốt riêng chỉnh được. Áp dụng override local theo chapter/revision/hash bản Convert, không ghi đè source/chapter; bảo vệ EPUB text-node/ảnh bằng kiểm tra số dòng. Audio đang nghe giữ bản hiện tại; lần nghe sau dùng Convert mới. Chi tiết docs/CONVERT-POLISH.md.
+
+02/11/2026 — Người dùng đổi UX trau chuốt: bỏ modal, chạy inline, phần STOP hoàn tất thay dần Convert; Name từ đoạn nguồn và song song hiện có. Giữ suffix nguồn chưa xử lý; không ghép output theo tỷ lệ độ dài. Chi tiết docs/CONVERT-POLISH.md.
+
+02/11/2026 — Người dùng chốt Convert/tra Name dùng 100% từ điển trên máy. Reader và khung chọn cụm từ bỏ nhánh gọi máy chủ; AI dịch/trau chuốt là tính năng riêng. Không xóa hạ tầng/dữ liệu Cloudflare. docs/LOCAL-CONVERT-ONLY.md.
+
+02/11/2026 — Prompt/tùy chọn trau chuốt đặt ở Cài đặt AI ngoài Reader. Reader chỉ còn vận hành/tiến độ. Prompt key cũ giữ, options key mới local; cập nhật từ lượt sau. Thống nhất toàn lifecycle AI vẫn còn việc; không bỏ validation hoặc vượt chặn để che lỗi nhà cung cấp.
+
+02/11/2026 — Theo yêu cầu bỏ giới hạn128k đầu vào toàn chương Dịch AI/trau chuốt; dùng planner chia request hiện có. Không bỏ giới hạn import/nguồn/response/output/budget/STOP hoặc tăng concurrency. docs/AI-LARGE-SOURCE-M0.md.
+
+02/11/2026 — Trau chuốt tự tiếp tục trong cùng phiên khi transient/hếtbudget theo recoveryplan AI hiện có; giữ checkpoint, Stop hủy cả wait và write transaction. Không retry semantic/nonSTOP/refusal; không nới acceptance/provider limits. Chưa durablecheckpoint sau reload/prewarm.
+
+02/11/2026 — Người dùng chốt bấm Convert lần2 khi đã chọn để hủy cache trau chuốt chương đang mở và đọc Convert thuần. Không xác nhận phụ; chỉ derivedcache của chương, giữ source/Names/dictionary/AIcachekhác.
+
+
+## 2026-11-02 21:10 +07 — Trau chuốt giữ kết quả qua Edit Name
+Theo yêu cầu: kết quả paired-polish gắn với nguyên văn/revision; giữ prefix đã xác nhận và rebase đuôi bằng originalEnd chính xác, không bỏ cache vì Name. Chọn cụm từ double-click/double-tap; token Convert oneclick/Enter EditName. Chi tiết private-novel/docs/CONVERT-POLISH.md.
+
+## 2026-11-08 · Convert từ điển riêng trên OCI
+
+- Dùng chung LanguageEngine và bộ đọc với worker local. OCI giữ một bộ TXT có thứ tự trong một profile SHA-256. Ghi ứng viên trên cùng volume, kiểm byte/UTF-8 và dựng chỉ mục trước khi đổi profile; khôi phục từ đĩa khi service khởi động.
+- Máy chủ được bật bằng origin HTTPS tường minh. Dùng mTLS với CA thiết bị riêng và Origin/CSP chính xác. App có máy chủ yêu cầu chọn đích; lỗi server giữ nguyên đích. Reader Bản gốc giữ nội dung nguồn và tiêu đề có sẵn, không khởi chạy Convert.
+- Chưa cấp hoặc phát hành OCI/Pages. Hạn mức, file triển khai, bằng chứng và giới hạn ở private-novel/docs/OCI-CONVERT.md.

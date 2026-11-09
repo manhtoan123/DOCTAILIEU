@@ -9,10 +9,9 @@ import { errorText } from '../../../shared/components/common';
 import {AiJobStatus,type AiJobView} from './AiJobStatus';
 
 
-import {recommendedFallbackModels} from '../services/ai-fallback';
-import {aiResultModelLabel} from '../services/ai-hybrid-prompt';
+import {aiResultModelLabel,aiModelLabel} from '../services/ai-hybrid-prompt';
 import {useLiveQuery} from 'dexie-react-hooks';
-import {getPromptStock,readStoredPromptStock,selectPromptProfile,getBookPromptSelection} from '../prompt/prompt-stock';
+import {getPromptStock,readStoredPromptStock,getBookPromptSelection} from '../prompt/prompt-stock';
 import {AiReadingSession,aiBookSettingsKey,queueAiSettings,readReadingAiSettings,type ReadingAiSettings} from '../services/ai-reading';
 import {promptGroups} from '../prompt/prompt-list';
 import {addAiKeys,deleteAiKey,listAiKeys,type AiKeyList} from '../services/ai-key-admin';
@@ -104,11 +103,11 @@ export function AiSettingsEditor({ chapterText, sourceIdentity, names, globalNam
     const text = test ? TEST_FIXTURE : chapterText;
     if (controller.current || !loaded || !settings.userPromptTemplate.includes('{{text}}') || !text.trim() || text.length > 128000) return;
     const ctrl = new AbortController(); const job = ++generation.current; controller.current = ctrl;
-    const session=new AiReadingSession();ctrl.signal.addEventListener('abort',()=>session.clear(),{once:true});
+    const session=new AiReadingSession(undefined,undefined,undefined,false);ctrl.signal.addEventListener('abort',()=>session.clear(),{once:true});
     const current = () => alive.current && generation.current === job && controller.current === ctrl && !ctrl.signal.aborted;
     setJobState('running'); setResult(''); setMeta(''); setErrorMsg(''); setIsTest(test);
     try {
-      const response = await session.request({bookId:bookId??'prompt-trial',id:sourceIdentity,revision:0,text},{...settings,fallbackModels:recommendedFallbackModels(settings.model)},test?Object.entries(TEST_NAMES).map(([key,value])=>({key,value})):names);
+      const response = await session.request({bookId:bookId??'prompt-trial',id:sourceIdentity,revision:0,text},automaticAiSettings(settings),test?Object.entries(TEST_NAMES).map(([key,value])=>({key,value})):names,undefined,undefined,undefined,{immediate:true});
       if (!current()) return;
       setResult(response.result); setMeta(`${aiResultModelLabel(response)} · ${response.inputTokens}→${response.outputTokens} tokens · ${response.finishReason}`); setJobState('done');
       if(!test)onTranslated?.(response.result,settings);
@@ -148,7 +147,7 @@ export function AiSettingsEditor({ chapterText, sourceIdentity, names, globalNam
         {keyError && <p role="alert">{keyError}</p>}
         {keyList && keyList.keys.length > 0 && <div className="ai-key-list" aria-label="Danh sách key đã lưu">
           {keyList.keys.map(row => <div className="ai-key-row" key={row.id}>
-            <span className="ai-key-label">{row.label || 'key'}</span><span className="ai-key-mask">{row.masked}</span><small>{row.selected===false?'Dự phòng':row.status==='working'?'Đang dịch':row.status==='cooling'?'Đang chờ':'Sẵn sàng'}{row.httpStatus?` · HTTP ${row.httpStatus}`:''}{row.lastUsedAt?` · dùng ${new Date(row.lastUsedAt).toLocaleTimeString('vi')}`:''}</small>
+            <span className="ai-key-label">{row.label || 'key'}</span><span className="ai-key-mask">{row.masked}</span><small>{row.selected===false?'Dự phòng':row.status==='working'?'Đang dịch':row.status==='cooling'?'Đang chờ':'Sẵn sàng'}{row.blockedModels?.length?` · Đã loại khỏi: ${row.blockedModels.map(aiModelLabel).join(', ')}`:''}{row.httpStatus?` · HTTP ${row.httpStatus}`:''}{row.lastUsedAt?` · dùng ${new Date(row.lastUsedAt).toLocaleTimeString('vi')}`:''}</small>
             <button disabled={keyBusy} aria-label={`Xoá key ${row.label || row.masked}`} onClick={() => void removeKey(row.id, row.label || row.masked)}>×</button>
           </div>)}
         </div>}

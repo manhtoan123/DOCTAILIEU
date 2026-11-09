@@ -3,7 +3,8 @@ import {sharedCommonNames,SHARED_COMMON_PREFIX} from '../../sync-cloud/services/
 import {markSharedDictionary,SHARED_DICTIONARY_PREFIX} from '../../sync-cloud/services/shared-dictionaries';
 import {dictionaryEntry,readDictionary} from './dictionary-reader';
 import {hashBlob} from '../../import-export/services/backup';
-import {readConvertNames,deleteConvertName,type ConvertName} from './convert-names';
+import {readConvertNames,deleteConvertName,CONVERT_NAMES_KEY,type ConvertName} from './convert-names';
+import {canonicalNameKey,resolveNameKey} from './name-format';
 
 export async function readCommonNames():Promise<ConvertName[]>{
   const entries=new Map<string,string>();const row=await db.dictionaries.get('names');
@@ -14,8 +15,11 @@ export async function readCommonNames():Promise<ConvertName[]>{
 }
 /** Hash outside the transaction, then compare-and-swap. Keep comments/unrelated lines. */
 export async function editCommonName(key:string,value:string|null):Promise<void>{
-  if(!key.trim()||key!==key.trim()||key.length>256||/[\r\n=]/.test(key)||key.startsWith('#')||value!==null&&(!value.trim()||value.length>4096||/[\r\n]/.test(value)))throw new Error('Name cần dạng chữ nguồn=tên Việt trên một dòng.');
+  // Deletion always uses the exact stored key supplied by the selected row.
   const original=await db.dictionaries.get('names');
+  const sharedBefore=await sharedCommonNames(),convertBefore=await db.settings.get(CONVERT_NAMES_KEY);
+  if(value!==null)key=resolveNameKey(canonicalNameKey(key),await readCommonNames());
+  if(!key.trim()||key!==key.trim()||key.length>256||/[\r\n=]/.test(key)||key.startsWith('#')||value!==null&&(!value.trim()||value.length>4096||/[\r\n]/.test(value)))throw new Error('Name cần dạng chữ nguồn=tên Việt trên một dòng.');
   const lines=original?(await original.blob.text()).split(/\r?\n/):[];let written=false;
   const next=lines.flatMap(line=>{
     if(dictionaryEntry('names',line)?.[0]!==key)return [line];
@@ -29,6 +33,7 @@ export async function editCommonName(key:string,value:string|null):Promise<void>
   await db.transaction('rw',[db.dictionaries,db.settings],async()=>{
     const current=await db.dictionaries.get('names');
     if(current?.sha256!==original?.sha256||current?.updatedAt!==original?.updatedAt)throw new Error('Names chung đã thay đổi ở tab khác; thử lại.');
+    if(JSON.stringify(await sharedCommonNames())!==JSON.stringify(sharedBefore)||JSON.stringify(await db.settings.get(CONVERT_NAMES_KEY))!==JSON.stringify(convertBefore))throw new Error('Names chung đã thay đổi ở tab khác; thử lại.');
     if(original&&!await db.settings.get(SHARED_DICTIONARY_PREFIX+'names'))await markSharedDictionary(original);
     await db.settings.put({key:SHARED_COMMON_PREFIX+encodeURIComponent(key),value:{kind:'common-name',key,value:value===null?null:value.trim()}});
     if(original||value!==null)await db.dictionaries.put({kind:'names',name:original?.name||'Names.txt',blob,sha256,updatedAt:Date.now()});

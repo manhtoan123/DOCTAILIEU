@@ -1,0 +1,91 @@
+.name-discovery {
+  --name-border: color-mix(in srgb, var(--ink) 26%, var(--paper));
+  --name-inset: color-mix(in srgb, var(--ink) 5%, var(--paper));
+  --name-selected: color-mix(in srgb, var(--ink) 12%, var(--paper));
+  display: grid;
+  gap: .55rem;
+  width: min(var(--reader-width, 900px), calc(100% - 24px));
+  margin: .85rem auto;
+  padding: .65rem .85rem;
+  border: 1px solid var(--name-border);
+  border-radius: 10px;
+  background: var(--name-inset);
+  font: 14px/1.4 system-ui, sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.name-discovery :is(header, .name-discovery-toolbar, .name-discovery-filters, .name-discovery-save) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem;
+}
+
+.name-discovery header { justify-content: space-between; }
+.name-discovery header strong { font-size: 1rem; }
+.name-discovery :is(p, label, pre) { margin: 0; }
+.name-discovery [role="alert"] { font-weight: 600; }
+.name-discovery :is(button, select, input:not([type="checkbox"]), textarea) {
+  min-height: 44px;
+  padding: .35rem .65rem;
+  border: 1px solid var(--name-border);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+}
+.name-discovery :is(button, select, input, textarea, summary):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.name-discovery button:not(:disabled):hover { background: var(--name-selected); }
+.name-discovery .name-discovery-icon { width: 44px; padding: 0; font-size: 1.25rem; }
+.name-discovery .name-discovery-primary,
+.name-discovery .name-discovery-primary:not(:disabled):hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+.name-discovery .name-discovery-primary:not(:disabled):hover { opacity: .87; }
+.name-discovery button[aria-pressed="true"] {
+  background: var(--name-selected);
+  border-color: var(--ink);
+}
+.name-discovery-toolbar select,
+.name-discovery-search { flex: 1 1 12rem; min-width: 0; }
+.name-discovery-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .25rem .6rem;
+}
+.name-discovery progress { flex: 1 1 10rem; accent-color: var(--ink); }
+
+.name-discovery-results {
+  display: grid;
+  gap: .45rem;
+  padding-top: .55rem;
+  border-top: 1px solid var(--name-border);
+}
+.name-discovery-search { display: flex; gap: .25rem; }
+.name-discovery-search input { flex: 1; width: 0; min-width: 0; }
+.name-discovery-search input::-webkit-search-cancel-button { display: none; }
+.name-discovery-list { max-height: 45vh; overflow: auto; padding: 3px; }
+.name-discovery-row {
+  display: grid;
+  grid-template-columns: minmax(76px, 1fr) minmax(0, 2fr);
+  align-items: center;
+  gap: .25rem .5rem;
+  padding: .3rem .35rem;
+  border-bottom: 1px solid var(--name-border);
+}
+.name-discovery-row[data-selected="true"] { background: var(--name-selected); }
+.name-discovery-row label { flex-direction: row; align-items: center; min-height: 44px; cursor: pointer; }
+.name-discovery-row input[type="checkbox"] { flex: none; accent-color: var(--ink); }
+.name-discovery-row small { grid-column: 2; }
+.name-discovery summary { cursor: pointer; padding-block: .25rem; }
+.name-discovery details details { margin-left: .85rem; }
+.name-discovery ul { margin: .25rem 0; padding-left: 1.5rem; }
+.name-discovery pre { white-space: pre-wrap; font: inherit; }
+
+@media (max-width: 600px) {
+  .name-discovery :is(input:not([type="checkbox"]), select, textarea) { font-size: 16px; }
+}

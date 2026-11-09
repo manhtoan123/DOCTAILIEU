@@ -26,10 +26,10 @@ export class AiChapterJob {
   readonly controller=new AbortController();
   readonly budget:AiChapterBudget;
   private failure?:AiTranslateClientError;
-  constructor(private limits=AI_CHAPTER_LIMITS,readonly metrics?:AiRunMetrics,budget?:AiChapterBudget){this.budget=budget??createAiChapterBudget(limits);}
+  constructor(private limits=AI_CHAPTER_LIMITS,readonly metrics?:AiRunMetrics,budget?:AiChapterBudget,private immediate=false){this.budget=budget??createAiChapterBudget(limits);}
   private exhaust(reason:'chapter_deadline'|'send_limit'){
     this.budget.recoveryAt??=Date.now()+AI_RECOVERY_ROUND_WAIT_MS;
-    this.failure??=new AiTranslateClientError('ai_recovery_exhausted',reason==='chapter_deadline'
+    this.failure??=new AiTranslateClientError('ai_recovery_exhausted',this.immediate?'Đợt dịch đã hết lượt hoặc thời gian thực hiện. Đã giữ tiến độ; bạn có thể tiếp tục ngay.':reason==='chapter_deadline'
       ?'Đợt dịch vượt thời gian chờ; đang giữ tiến độ để tự phục hồi.'
       :'Đợt dịch đã dùng hết lượt thử; đang giữ tiến độ để tự phục hồi.',undefined,reason);
     this.controller.abort();return this.failure;

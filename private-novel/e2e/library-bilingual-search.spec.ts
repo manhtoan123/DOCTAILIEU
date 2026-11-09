@@ -1,6 +1,7 @@
 import {test,expect} from '@playwright/test';
 
 test.beforeEach(async({page})=>{
+  await page.route('**/api/**',r=>r.fulfill({status:503,json:{error:'isolated synthetic library fixture'}}));
   await page.goto('/');
   await page.evaluate(async()=>{
     const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);
@@ -21,7 +22,7 @@ test.beforeEach(async({page})=>{
 });
 
 test('Album and book show Vietnamese above muted original; list view survives reload without overflow',async({page})=>{
-  const album=page.getByRole('button',{name:'Mở Album 正义人',exact:true});
+  const album=page.locator('.album-preview-title[href="/phong-toi?album=%E6%AD%A3%E4%B9%89%E4%BA%BA"]');
   await expect(album.locator('.title-primary')).toHaveText('Người chính nghĩa');
   await expect(album.locator('.title-original')).toHaveText('正义人');
   await album.click();
@@ -40,21 +41,20 @@ test('Album and book show Vietnamese above muted original; list view survives re
   for(const width of [320,390,869,1280]){
     await page.setViewportSize({width,height:835});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-    await expect(card.getByRole('button',{name:'Mở sách →',exact:true})).toBeVisible();
+    await expect(card.getByRole('link',{name:'Mở sách →',exact:true})).toBeVisible();
     if(width===390||width===869)await page.screenshot({path:test.info().outputPath(`library-list-${width}.png`),fullPage:true});
   }
   await page.reload();
   await expect(page.getByRole('button',{name:'Danh sách',exact:true})).toHaveAttribute('aria-pressed','true');
   await page.getByRole('button',{name:'Lưới',exact:true}).click();
-  await page.getByRole('button',{name:'Mở Album 正义人',exact:true}).click();
   await expect(page.locator('.book-grid')).toHaveClass(/cover-shelf/);
   await page.setViewportSize({width:390,height:835});
   await page.screenshot({path:test.info().outputPath('library-grid-390.png'),fullPage:true});
 });
 
 test('searches raw and Vietnamese chapter names within Album and opens the matched chapter',async({page})=>{
-  await page.getByRole('button',{name:'Mở Album 正义人',exact:true}).click();
-  const search=page.getByRole('textbox',{name:'Tìm truyện trong 正义人',exact:true});
+  await page.locator('.album-preview-title[href="/phong-toi?album=%E6%AD%A3%E4%B9%89%E4%BA%BA"]').click();
+  const search=page.getByLabel('Tìm truyện trong 正义人',{exact:true});
   for(const query of ['初见','lan dau gap','山门','SON MON','原书名','ten truyen viet']){
     await search.fill(query);
     await expect(page.locator('.book-card')).toHaveCount(1);
@@ -65,22 +65,21 @@ test('searches raw and Vietnamese chapter names within Album and opens the match
   await expect(page.getByText('Không có truyện hoặc tên chương khớp từ khóa tìm kiếm.',{exact:true})).toBeVisible();
   await expect(page.getByText('Album chưa có truyện',{exact:true})).toHaveCount(0);
   await search.fill('son mon');
-  await expect(page.getByRole('button',{name:'Chương: Sơn môn',exact:true})).toBeVisible();
+  await expect(page.getByRole('link',{name:'Chương: Sơn môn',exact:true})).toBeVisible();
   await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);await db.chapters.update('persisted',{displayTitle:'Cổng mới'});});
   await expect(page.getByText('Không có truyện hoặc tên chương khớp từ khóa tìm kiếm.',{exact:true})).toBeVisible();
   await search.fill('cong moi');
-  await page.getByRole('button',{name:'Chương: Cổng mới',exact:true}).click();
+  await page.getByRole('link',{name:'Chương: Cổng mới',exact:true}).click();
   await expect(page).toHaveURL(/\/read\/bilingual\/persisted$/);
 });
 
 test('compact view shows just book titles and chapter counts, persists and opens details',async({page})=>{
- await page.getByRole('button',{name:'Mở Album 正义人',exact:true}).click();
+ await page.locator('.album-preview-title[href="/phong-toi?album=%E6%AD%A3%E4%B9%89%E4%BA%BA"]').click();
  await page.getByRole('button',{name:'Thu gọn',exact:true}).click();
  const shelf=page.locator('.compact-shelf'),row=shelf.locator('.book-card').filter({hasText:'Tên truyện Việt'});
  await expect(row).toHaveText('Tên truyện Việt2 chương');await expect(shelf.locator('.cover,.book-detail,.book-menu')).toHaveCount(0);
- for(const width of [320,390,869]){await page.setViewportSize({width,height:835});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await expect(row.getByRole('button',{name:'Tên truyện Việt',exact:true})).toBeVisible();if(width===390)await page.screenshot({path:test.info().outputPath('library-compact-mobile.png'),fullPage:true});}
+ for(const width of [320,390,869]){await page.setViewportSize({width,height:835});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await expect(row.getByRole('link',{name:'Tên truyện Việt',exact:true})).toBeVisible();if(width===390)await page.screenshot({path:test.info().outputPath('library-compact-mobile.png'),fullPage:true});}
  await page.screenshot({path:test.info().outputPath('library-compact.png'),fullPage:true});
  await page.reload();await expect(page.getByRole('button',{name:'Thu gọn',exact:true})).toHaveAttribute('aria-pressed','true');
- await page.getByRole('button',{name:'Mở Album 正义人',exact:true}).click();
- await row.getByRole('button',{name:'Tên truyện Việt',exact:true}).click();await expect(page).toHaveURL(/\/book\/bilingual$/);
+ await row.getByRole('link',{name:'Tên truyện Việt',exact:true}).click();await expect(page).toHaveURL(/\/book\/bilingual$/);
 });

@@ -14,7 +14,7 @@ const model='gemini-2.5-flash',settings={...AI_DEFAULTS,model,fallbackModels:[]}
 const response=(result:string,parallel?:2):AiTranslateClientResponse=>({result,model,finishReason:'STOP',inputTokens:1,outputTokens:2,...(parallel?{parallel}: {})});
 const translatedNode=(value:string)=>({甲:'A',乙:'B',丙:'C'} as Record<string,string>)[value[0]]?.repeat(value.length)??value;
 const translatedEpub=(text:string)=>JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(text) as Record<string,string>).map(([id,value])=>[id,translatedNode(value)])));
-const source={bookId:'speed-review-book',id:'speed-review-chapter',revision:1,text:'甲'.repeat(400)+'乙'.repeat(400)+'丙'.repeat(800)};
+const source={bookId:'speed-review-book',id:'speed-review-chapter',revision:1,text:'甲'.repeat(24)+'a'.repeat(1476)+'乙'.repeat(24)+'b'.repeat(1476)+'丙'.repeat(24)+'c'.repeat(2976)};
 function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done;});return {promise,resolve};}
 const rows=()=>db.settings.where('key').startsWith('ai-reading-cache:').toArray();
 beforeEach(async()=>{
@@ -40,13 +40,13 @@ describe('independent AI speed integrity regressions',()=>{
   const saved=new Map<string,AiTranslateClientResponse>(),write=vi.fn(async()=>true);
   const cache:AiReadingCache={read:async()=>undefined,write,readParts:async()=>[...saved].map(([id,response])=>({id,response})),writePart:async(_s,_settings,_names,_plan,id,result)=>{saved.set(id,result);return true;}};
   const firstTranslate=vi.fn(async input=>{
-   if(input.text.length===1600||input.text.startsWith('甲')&&input.text.length===800)throw new AiTranslateClientError('ai_incomplete_result','Synthetic truncation',502,'output_limit');
+   if(input.text.length===6000||input.text.startsWith('甲')&&input.text.length===3000)throw new AiTranslateClientError('ai_incomplete_result','Synthetic truncation',502,'output_limit');
    if(input.text.startsWith('丙'))throw new AiTranslateClientError('ai_auth_error','Synthetic permanent failure',401);
    return response(input.text.startsWith('甲')?'A':'B');
   });
   const first=new AiReadingSession(firstTranslate,cache);await expect(first.request(source,settings,[])).rejects.toMatchObject({status:401});
   expect([...saved.keys()]).toEqual(['0/0/0','0/0/1']);expect(first.get(aiReadingKey(source,settings,[]))).toBeUndefined();expect(write).not.toHaveBeenCalled();
-  first.clear();const resumedTranslate=vi.fn(async input=>{expect(input.model).toBe(model);expect(input.text).toBe('丙'.repeat(800));return response('C');});
+  first.clear();const resumedTranslate=vi.fn(async input=>{expect(input.model).toBe(model);expect(input.text).toBe(source.text.slice(3000));return response('C');});
   const resumed=new AiReadingSession(resumedTranslate,cache);expect((await resumed.request(source,settings,[])).result).toBe('A\nB\nC');expect(resumedTranslate).toHaveBeenCalledOnce();expect(write).toHaveBeenCalledOnce();
  });
  it('EPUB singleton resume joins children into the exact original node and preserves layout',async()=>{
@@ -71,8 +71,8 @@ describe('independent AI speed integrity regressions',()=>{
    active++;if(quota)maxAfterQuota=Math.max(maxAfterQuota,active);await new Promise(resolve=>setTimeout(resolve,20));active--;return response(input.text[0],2);
   });
   const session=new AiReadingSession(translate);await session.request({...source,id:'seed',text:'seed'},settings,[]);seed=false;
-  const states:AiPartsProgress[]=[],run=session.request({...source,id:'quota',text:'甲'.repeat(32000)+'乙'.repeat(32000)+'丙'.repeat(32000)},settings,[],undefined,undefined,state=>states.push(state));
-  await vi.advanceTimersByTimeAsync(3000);expect((await run).result).toBe('甲\n乙\n丙');expect(maxAfterQuota).toBe(1);expect(states.some(state=>state.waitUntil!==undefined&&state.parallel===1)).toBe(true);
+  const states:AiPartsProgress[]=[],run=session.request({...source,id:'quota',text:'甲'.repeat(1800)+'乙'.repeat(1800)+'丙'.repeat(1800)+'丁'.repeat(1800)},{...settings,splitParts:true},[],undefined,undefined,state=>states.push(state));
+  await vi.advanceTimersByTimeAsync(3000);expect((await run).result).toBe('甲\n乙\n丙\n丁');expect(maxAfterQuota).toBe(1);expect(states.some(state=>state.waitUntil!==undefined&&state.parallel===1)).toBe(true);
  });
  it('propagates a recoverable EPUB 429 to the outer chapter scheduler',async()=>{
   vi.useFakeTimers();let seed=true,first=true,quota=false,active=0,maxAfterQuota=0;
@@ -93,17 +93,17 @@ describe('independent AI speed integrity regressions',()=>{
    active++;if(quota)maxAfterQuota=Math.max(maxAfterQuota,active);
    try{await new Promise(resolve=>setTimeout(resolve,20));if((id==='甲'||id==='乙')&&!attempt){quota=true;throw new AiTranslateClientError('ai_rate_limited','Synthetic simultaneous quota',429,'quota',undefined,undefined,1000);}return response(kind==='epub'?translatedEpub(input.text):id,2);}finally{active--;}
   });
-  const width=kind==='txt'?32000:31900,nodes=['甲'.repeat(width),'乙'.repeat(width),'丙'.repeat(width)],base={path:'synthetic.xhtml',body:'<body/>',styles:[],nodes:['seed']},states:AiPartsProgress[]=[];
+  const width=kind==='txt'?1800:31900,nodes=(kind==='txt'?['甲','乙','丙','丁']:['甲','乙','丙']).map(label=>label.repeat(width)),base={path:'synthetic.xhtml',body:'<body/>',styles:[],nodes:['seed']},states:AiPartsProgress[]=[];
   const session=kind==='txt'?new AiReadingSession(translate):new EpubAiSession(undefined,translate);
   if(session instanceof AiReadingSession)await session.request({...source,id:'two-seed',text:'seed'},settings,[]);else await session.request({...source,id:'two-seed',text:'seed'},settings,[],base);seed=false;
-  const src={...source,id:'two-quota',text:nodes.join(kind==='txt'?'':'\n')},run=session instanceof AiReadingSession?session.request(src,settings,[],undefined,undefined,state=>states.push(state)):session.request(src,settings,[],{...base,nodes},undefined,state=>states.push(state));
-  await vi.advanceTimersByTimeAsync(3000);expect((await run).result).toBe(kind==='epub'?nodes.map(translatedNode).join('\n'):'甲\n乙\n丙');expect(attempts.get('甲')).toBe(2);expect(attempts.get('乙')).toBe(2);expect(maxAfterQuota).toBe(1);expect(states.at(-1)?.parallel).toBe(1);
+  const src={...source,id:'two-quota',text:nodes.join(kind==='txt'?'':'\n')},run=session instanceof AiReadingSession?session.request(src,{...settings,splitParts:true},[],undefined,undefined,state=>states.push(state)):session.request(src,settings,[],{...base,nodes},undefined,state=>states.push(state));
+  await vi.advanceTimersByTimeAsync(3000);expect((await run).result).toBe(kind==='epub'?nodes.map(translatedNode).join('\n'):'甲\n乙\n丙\n丁');expect(attempts.get('甲')).toBe(2);expect(attempts.get('乙')).toBe(2);expect(maxAfterQuota).toBe(1);expect(states.at(-1)?.parallel).toBe(1);
  });
  it('does not send queued writes or publish a full response after cancellation during the first disk write',async()=>{
   const writing=deferred<void>(),release=deferred<boolean>(),writePart=vi.fn(async()=>{writing.resolve();return release.promise;}),write=vi.fn(async()=>true),states:AiPartsProgress[]=[];
   const session=new AiReadingSession(async input=>response(input.text[0],2),{read:async()=>undefined,write,writePart});
-  const src={...source,text:'甲'.repeat(96000)},key=aiReadingKey(src,settings,[]),run=session.request(src,settings,[],undefined,undefined,state=>states.push(state)),rejected=expect(run).rejects.toMatchObject({name:'AbortError'});
-  await writing.promise;await vi.waitFor(()=>expect(states.at(-1)?.done).toBe(3));session.cancel(key);release.resolve(false);await rejected;await Promise.resolve();expect(writePart).toHaveBeenCalledOnce();expect(write).not.toHaveBeenCalled();expect(session.get(key)).toBeUndefined();
+  const selected={...settings,splitParts:true},src={...source,text:'甲'.repeat(7200)},key=aiReadingKey(src,selected,[]),run=session.request(src,selected,[],undefined,undefined,state=>states.push(state)),rejected=expect(run).rejects.toMatchObject({name:'AbortError'});
+  await writing.promise;await vi.waitFor(()=>expect(states.at(-1)?.done).toBe(4));session.cancel(key);release.resolve(false);await rejected;await Promise.resolve();expect(writePart).toHaveBeenCalledOnce();expect(write).not.toHaveBeenCalled();expect(session.get(key)).toBeUndefined();
  });
  it('rolls a nested child write and its LRU eviction back together on a native success-time abort',async()=>{
   const plan='review-nested-plan';expect(await writeAiPart(source,settings,[],plan,'0/0/0',response('A'))).toBe(true);

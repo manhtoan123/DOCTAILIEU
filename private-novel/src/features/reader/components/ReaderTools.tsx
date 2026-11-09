@@ -36,7 +36,7 @@ export function DisplaySettings({settings,setSettings,onNames,onSpeech,onHelp}:{
       </label>
     </div>
     <label className="setting-line">Font<select aria-label="Font" value={settings.font} onChange={e=>update({font:e.target.value as ReaderSettings['font']})}><option value="arial">Arial</option><option value="tahoma">Tahoma</option><option value="times">Times New Roman</option><option value="palatino">Palatino</option><option value="serif">Georgia</option><option value="sans">Hệ thống</option></select></label>
-    <label className="setting-line">Nền<select aria-label="Nền" value={settings.theme} onChange={e=>update({theme:e.target.value as ReaderSettings['theme'],background:'',textColor:''})}><option value="sepia">Sepia</option><option value="light">Sáng</option><option value="dark">Tối</option><option value="gray">Xám</option></select></label>
+    <label className="setting-line">Nền<select aria-label="Nền" value={settings.theme} onChange={e=>update({theme:e.target.value as ReaderSettings['theme'],background:'',textColor:''})}><option value="light">Trắng</option><option value="sepia">Giấy</option><option value="dark">Tối</option>{settings.theme==='gray'&&<option value="gray" hidden>Tối</option>}</select></label>
     <details className="reader-display-advanced">
       <summary>Hiển thị nâng cao</summary>
     <label className="setting-line">Màu nền<input aria-label="Màu nền tùy chọn" type="color" value={settings.background||({sepia:'#eae4d3',light:'#ffffff',dark:'#161b19',gray:'#2b3030'}[settings.theme])} onChange={e=>update({background:e.target.value})}/></label>

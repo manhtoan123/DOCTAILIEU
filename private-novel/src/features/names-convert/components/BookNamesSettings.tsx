@@ -4,6 +4,7 @@ import type {Book} from '../../../core/domain';
 import NameManager from './NameManager';
 import {readNameScope,saveScopedBookNames,deleteScopedBookName} from '../services/scoped-names';
 import {nameAlbumRoot} from '../services/album-name-schema';
+import {formatNameList,removeNameDraftKey} from '../services/name-format';
 
 export default function BookNamesSettings({books,bookId,onSelect}:{books?:Book[];bookId?:string;onSelect:(id:string)=>void}){
  const groups=new Map<string,{id:string;label:string;count:number}>();
@@ -12,7 +13,7 @@ export default function BookNamesSettings({books,bookId,onSelect}:{books?:Book[]
  const loaded=useLiveQuery(async()=>({id:activeId,scope:await readNameScope(activeId)}),[activeId]);
  const scope=loaded?.id===activeId&&loaded.scope.album===album?loaded.scope:undefined;
  const [drafts,setDrafts]=useState<Record<string,string>>({}),[saving,setSaving]=useState(false);const busy=useRef(false);
- const draft=drafts[scopeKey]??scope?.rows.map(n=>`${n.key}=${n.value}`).join('\n')??'';
+ const draft=drafts[scopeKey]??(scope?formatNameList(scope.rows):'');
  function setDraft(update:SetStateAction<string>){setDrafts(old=>({...old,[scopeKey]:typeof update==='function'?update(old[scopeKey]??draft):update}));}
  async function save(text:string){
   if(busy.current||!book||!scope)throw Error('Kho Name chưa sẵn sàng.');
@@ -26,8 +27,8 @@ export default function BookNamesSettings({books,bookId,onSelect}:{books?:Book[]
    <p className="muted">{album?`Dùng chung cho ${scope?.members??groups.get(scopeKey)?.count??0} truyện trong Album ${album}, gồm các series.`:'Truyện ngoài Album dùng kho Name riêng.'}</p>
    {!scope?<p role="status">Đang tải Name…</p>:<>
     {scope.conflicts>0&&<p className="name-scope-note">{scope.conflicts} chữ có nghĩa cũ khác nhau giữa các truyện. Tên riêng đang hiện theo truyện “{book?.displayTitle??book?.title}”; lưu lại để dùng chung cho Album.</p>}
-    <NameManager key={scopeKey} bookId={activeId} names={scope.rows} draft={draft} setDraft={setDraft} saving={saving} onSave={save} onDelete={async entry=>{await deleteScopedBookName(activeId,entry.key,entry,album??null);setDraft(old=>old.split('\n').filter(line=>!line.startsWith(entry.key+'=')).join('\n'));}} notify={()=>undefined} scopeLabel={album?`Album ${album}`:undefined} pageSize={10}/>
-    <details className="name-settings-help"><summary>Định dạng Name</summary><p>Mỗi dòng: chữ gốc=tên Việt. Bỏ dòng khỏi bản nháp không xóa Name đã lưu. Name dùng cho Convert và lần dịch AI sau.</p><p>Name ảnh: <code>$可可多拉=[i]URL ảnh[/]Aron</code>, PNG/JPG/WebP từ archives.bulbagarden.net.</p></details>
+    <NameManager key={scopeKey} bookId={activeId} names={scope.rows} draft={draft} setDraft={setDraft} saving={saving} onSave={save} onDelete={async entry=>{await deleteScopedBookName(activeId,entry.key,entry,album??null);setDraft(old=>removeNameDraftKey(old,entry.key,scope.rows));}} notify={()=>undefined} scopeLabel={album?`Album ${album}`:undefined} pageSize={10}/>
+    <details className="name-settings-help"><summary>Định dạng Name</summary><p>Mỗi dòng: $中文=Việt. Dấu $ là ký hiệu hiển thị và nhập/xuất. Bỏ dòng khỏi bản nháp không xóa Name đã lưu. Name dùng cho Convert và lần dịch AI sau.</p><p>Name ảnh: <code>$可可多拉=[i]URL ảnh[/]Aron</code>, PNG/JPG/WebP từ archives.bulbagarden.net.</p></details>
    </>}
   </>}
  </section>;

@@ -1,8 +1,13 @@
+import {cleanImportedTitle} from '../services/import-advertising';
+import {prepareDocument,importDocument} from '../services/document-convert';
+import DocumentPreview from './DocumentPreview';
 import {importEpub} from '../services/epub-import';
 import {useEffect,useMemo,useRef,useState} from 'react';
 import Dexie from 'dexie';
 import {db,deleteBook} from '../../../core/db';
-import {importFiles,throwIfImportAborted,type ImportStatus} from '../services/importer';
+import {importFiles,throwIfImportAborted} from '../services/importer';
+import type {ImportStatus} from '../services/txt-import-progress';
+import ImportProgress from './ImportProgress';
 import {cleanTitle} from '../../../core/domain';
 import {commitAlbumImports,normalizeAlbum} from '../../library/services/albums';
 import {readStoredAlbumRegistry} from '../../library/services/album-registry';
@@ -11,14 +16,18 @@ import {Modal,errorText} from '../../../shared/components/common';
 import FolderImportDialog from './FolderImportDialog';
 import BatchImportDialog from './BatchImportDialog';
 import AnthologyImportDialog from './AnthologyImportDialog';
+import '../styles/import-dialog.css';
 
 export default function ImportDialog({initialAlbum='',onClose,onDone}:{initialAlbum?:string;onClose:()=>void;onDone:(id:string)=>void}){
   const [folderMode,setFolderMode]=useState(false);
   const [anthologyMode,setAnthologyMode]=useState(false),[anthologyParts,setAnthologyParts]=useState<{files:File[];titles:string[];encoding:string}>();
   const [files,setFiles]=useState<File[]>([]);const isEpub=files.length===1&&/\.epub$/i.test(files[0].name);
+  const isDocument=files.length===1&&/\.(pdf|docx)$/i.test(files[0].name);const isLayout=isEpub||isDocument;
+  const [prepared,setPrepared]=useState<File>();
   const [title,setTitle]=useState('');
   const [paste,setPaste]=useState('');
-  const [encoding,setEncoding]=useState('utf-8');
+  const [pasteExpanded,setPasteExpanded]=useState(false);
+  const [encoding,setEncoding]=useState('auto');
   const [pattern,setPattern]=useState('');
   const [effectiveMaxChars,setMaxChars]=useState(0);
   const [previewValid,setPreviewValid]=useState(false);
@@ -43,26 +52,29 @@ export default function ImportDialog({initialAlbum='',onClose,onDone}:{initialAl
   },[]);
 
   function choose(input:File[]){
-    if(input.some(file=>!/\.(txt|epub)$/i.test(file.name))){
+    setPrepared(undefined);
+    if(input.some(file=>!/\.(txt|epub|pdf|docx)$/i.test(file.name))){
       setFiles([]);
-      setError('Chọn file TXT hoặc EPUB.');
+      setError('Chọn TXT, EPUB, PDF hoặc DOCX.');
       return;
     }
     setFiles(input);
-    if(input.length===1&&!title) setTitle(cleanTitle(input[0].name));
-    setError(input.length?'':'Chọn file TXT hoặc EPUB. Mỗi file là một truyện.');
+    if(input.length===1&&!title) setTitle(cleanImportedTitle(cleanTitle(input[0].name)));
+    setError(input.length?'':'Chọn TXT, EPUB, PDF hoặc DOCX. Mỗi file là một truyện.');
   }
 
   async function run(){
     if(abort.current)return;
-    setError('');setBusy(true);const controller=new AbortController();abort.current=controller;
+    setError('');setStatus(undefined);setBusy(true);const controller=new AbortController();abort.current=controller;
     let staged='';let committed=false;
     try{
       normalizeAlbum(album);
-      if(!isEpub&&!validChapterLimit(effectiveMaxChars))throw new Error('Giới hạn chương không hợp lệ.');
+      if(!isLayout&&!validChapterLimit(effectiveMaxChars))throw new Error('Giới hạn chương không hợp lệ.');
       const selected=files.length?files:[new File([paste],`${title||'Truyện mới'}.txt`,{type:'text/plain'})];
-      const result=isEpub?await importEpub(selected[0],title,setStatus,controller.signal):await importFiles(selected,title,files.length?encoding:'utf-8',pattern,true,setStatus,controller.signal,{maxChars:effectiveMaxChars});
+      if(isDocument&&!prepared){setStatus({message:'Đang trích chữ và ảnh…',percent:0});const next=await prepareDocument(selected[0],controller.signal);throwIfImportAborted(controller.signal);if(mounted.current)setPrepared(next);return;}
+      const result=isDocument?await importDocument(selected[0],prepared!,title,setStatus,controller.signal):isEpub?await importEpub(selected[0],title,setStatus,controller.signal):await importFiles(selected,title,files.length?encoding:'utf-8',pattern,true,setStatus,controller.signal,{maxChars:effectiveMaxChars});
       staged=result.id;throwIfImportAborted(controller.signal);
+      if(mounted.current)setStatus({message:'Đang lưu truyện…',percent:99});
       // Keep cancellation live through the atomic publication boundary.
       let rejectCancellation!:(reason:Error)=>void;
       const cancellation=new Promise<never>((_,reject)=>{rejectCancellation=reject;});
@@ -89,12 +101,21 @@ export default function ImportDialog({initialAlbum='',onClose,onDone}:{initialAl
   if(anthologyMode&&files.length===1)return <AnthologyImportDialog file={files[0]} encoding={encoding} onBack={()=>setAnthologyMode(false)} onPrepared={(files,titles,encoding)=>setAnthologyParts({files,titles,encoding})}/>;
   if(files.length>1)return <BatchImportDialog files={files} encoding={encoding} pattern={pattern} initialAlbum={album} initialMaxChars={effectiveMaxChars} onClose={onClose} onDone={onDone}/>;
 
-  return <Modal title="Thêm truyện vào thư phòng" onClose={()=>void close()} wide>
-    <p className="muted">Lưu trên thiết bị trước; truyện đã nhập tự đồng bộ khi kho cloud được cấu hình. File gốc trên máy được giữ nguyên.</p>
-    {!busy&&<button onClick={()=>setFolderMode(true)}>Nhập folder truyện</button>}
+  return <Modal title="Thêm truyện" onClose={()=>void close()} wide className="import-dialog">
+   <div className="import-dialog-body">
     {error&&<p className="notice error" role="alert">{error}</p>}
-    <label>Tên truyện<input value={title} onChange={e=>setTitle(e.target.value)} maxLength={300} placeholder="Đặt tên cho cuốn sách mới" disabled={busy}/></label>
-    <label>Album (không bắt buộc)
+    <div className="import-source-card" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(!busy)choose([...e.dataTransfer.files]);}}>
+      {files.length>0&&<strong>{files[0].name}</strong>}
+      <div className="import-source-actions">
+        <label className="import-file-picker"><span>{files.length?'Đổi file':'Chọn file'}</span><input type="file" aria-describedby={files.length?undefined:'import-formats'} accept=".txt,.epub,.pdf,.docx" multiple disabled={busy} onChange={e=>choose(Array.from(e.target.files||[]))}/></label>
+        {files.length>0&&<button disabled={busy} onClick={()=>{setFiles([]);setPrepared(undefined);}}>Bỏ chọn</button>}
+        {!busy&&<button onClick={()=>setFolderMode(true)}>Nhập folder truyện</button>}
+      </div>
+      {!files.length&&<p id="import-formats">TXT, EPUB, PDF, DOCX</p>}
+    </div>
+    <div className="import-book-fields">
+     <label>Tên truyện<input value={title} onChange={e=>setTitle(e.target.value)} maxLength={300} placeholder="Tự điền theo tên file" disabled={busy}/></label>
+     <label>Album (không bắt buộc)
       <input
         list="album-list-options"
         value={album}
@@ -107,41 +128,42 @@ export default function ImportDialog({initialAlbum='',onClose,onDone}:{initialAl
         {albumList.map(a => <option key={a} value={a}/>)}
         {initialAlbum && !albumList.includes(initialAlbum) && <option value={initialAlbum}/>}
       </datalist>
-    </label>
-    <div className="dropzone" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(!busy)choose([...e.dataTransfer.files]);}}>
-      <strong>Kéo thả TXT hoặc EPUB vào đây</strong>
-      <span>TXT tự nhận diện chương; EPUB giữ mục lục, bố cục và ảnh gốc</span>
-      <input aria-label="Chọn file TXT hoặc EPUB" type="file" accept=".txt,.epub" multiple disabled={busy} onChange={e=>choose(Array.from(e.target.files||[]))}/>
-      {files.length>0&&<small>1 file đã chọn · {(files[0].size/1048576).toFixed(1)} MB <button disabled={busy} onClick={()=>setFiles([])}>Bỏ chọn</button></small>}
+     </label>
     </div>
-    {!files.length&&<label>Hoặc dán nội dung<textarea value={paste} onChange={e=>setPaste(e.target.value)} rows={5} placeholder="Chương 1…" disabled={busy}/></label>}
+    {!files.length&&<details className="import-disclosure import-paste" open={pasteExpanded} onToggle={event=>setPasteExpanded(event.currentTarget.open)}><summary>Dán nội dung truyện</summary><label>Hoặc dán nội dung<textarea value={paste} onChange={e=>setPaste(e.target.value)} rows={4} placeholder="Chương 1…" disabled={busy}/></label></details>}
 
-    {!isEpub&&<><div className="form-grid">
+    {!isLayout&&<><details className="import-disclosure"><summary>Cách đọc TXT</summary><div className="import-options-body">
       <label>Encoding
         <select value={encoding} onChange={e=>setEncoding(e.target.value)} disabled={busy}>
+          <option value="auto">Tự nhận diện theo file</option>
           <option value="utf-8">UTF-8 (thường dùng)</option>
           <option value="gb18030">GB18030 / GBK (tiếng Trung)</option>
           <option value="utf-16le">UTF-16 LE</option>
+          <option value="utf-16be">UTF-16 BE</option>
         </select>
       </label>
       <ChapterLimit value={effectiveMaxChars} onChange={setMaxChars} disabled={busy}/>
-    </div>
-
-    <details>
+    <details className="import-regex-options">
       <summary>Regex nhận diện tùy chỉnh</summary>
-      <input value={pattern} onChange={e=>setPattern(e.target.value)} disabled={busy} placeholder="Ví dụ: ^第[0-9一二三十百]+章"/>
-      <p className="muted">Áp dụng từng dòng. Để trống dùng bộ nhận diện mặc định thông minh (hỗ trợ Chương/Hồi/Tiết, 第X章/话/集, mốc số, lọc thông báo hệ thống, giữ nguyên văn bản).</p>
+      <input aria-label="Regex nhận diện chương" value={pattern} onChange={e=>setPattern(e.target.value)} disabled={busy} placeholder="Ví dụ: ^第[0-9一二三十百]+章"/>
     </details>
+    </div></details>
 
-    <ChapterSplitPreview files={previewFiles} encoding={files.length?encoding:'utf-8'} pattern={pattern} maxChars={effectiveMaxChars} onValidity={setPreviewValid}/></>}{isEpub&&<p className="notice">Giữ bố cục EPUB gốc, tối đa 128 MiB bố cục sau xử lý. Không chia lại mục lục. Có thể chọn Bản gốc, Convert hoặc Dịch AI khi đọc.</p>}
-    {!isEpub&&files.length===1&&<button disabled={busy} onClick={()=>setAnthologyMode(true)}>Tách tuyển tập thành nhiều truyện</button>}
+    <ChapterSplitPreview files={previewFiles} encoding={files.length?encoding:'utf-8'} pattern={pattern} maxChars={effectiveMaxChars} onValidity={setPreviewValid}/></>}
+    {!isLayout&&files.length===1&&<button className="import-anthology" disabled={busy} onClick={()=>setAnthologyMode(true)}>Tách tuyển tập thành nhiều truyện</button>}
 
-    {busy&&<div className="progress"><progress max={100} value={status?.percent||0}/><span>{status?.message||'Đang chuẩn bị…'}</span></div>}
+    {isDocument&&<p className="notice">PDF cần có lớp chữ. Kiểm tra thứ tự đoạn văn trong bản xem trước nếu trang có nhiều cột.</p>}
+    {prepared&&<DocumentPreview file={prepared}/>}
+   </div>
     <footer>
+     {busy&&<ImportProgress status={status}/>}
+     {(files.length>0||!!paste.trim())&&<p className="import-storage-note">Truyện tự đồng bộ nếu đã cấu hình kho chung.</p>}
+     <div className="import-submit-actions">
       <button onClick={()=>void close()}>{busy?'Hủy xử lý':'Đóng'}</button>
-      <button className="primary" disabled={busy||(!isEpub&&(!previewValid||!validChapterLimit(effectiveMaxChars)))||(!files.length&&!paste.trim())} onClick={()=>void run()}>
-        {busy?'Đang nhập…':'Nhập truyện'}
+      <button className="primary" disabled={busy||(!isLayout&&(!previewValid||!validChapterLimit(effectiveMaxChars)))||(!files.length&&!paste.trim())} onClick={()=>void run()}>
+        {busy?'Đang xử lý…':isDocument&&!prepared?'Xem trước tài liệu':'Nhập truyện'}
       </button>
+     </div>
     </footer>
   </Modal>;
 }

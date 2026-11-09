@@ -91,7 +91,7 @@ describe('independent TXT batch books',()=>{
   });
   it('rejects empty, unsupported, count, per-file and total byte limits before mutations',async()=>{
     await expect(prepare([])).rejects.toThrow('100');
-    await expect(prepare([file('book.pdf')])).rejects.toThrow('TXT');
+    await expect(prepare([file('book.zip')])).rejects.toThrow('TXT');
     await expect(prepare(Array.from({length:101},()=>file('book.txt')))).rejects.toThrow('100');
     const oversized=file('big.txt');Object.defineProperty(oversized,'size',{value:MAX_BATCH_FILE_BYTES+1});
     await expect(prepare([oversized])).rejects.toThrow('40 MiB');

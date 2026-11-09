@@ -7,7 +7,7 @@ const source=(length:number)=>({bookId:'division-fixture',id:'one',revision:1,te
 const settings={...AI_DEFAULTS,splitParts:false,fallbackModels:[]};
 const response={result:'Bản dịch ♾',model:settings.model,finishReason:'STOP',inputTokens:1,outputTokens:1};
 const cut=()=>new AiTranslateClientError('ai_incomplete_result','synthetic',502,'output_limit');
-it.each([[5400,true,3,'parallel'],[33000,false,2,'request_limit']] as const)('reports actual planned parts for length %i split=%s',async(length,splitParts,count,reason)=>{
+it.each([[7200,true,4,'parallel'],[33000,false,18,'request_limit']] as const)('reports actual planned parts for length %i split=%s',async(length,splitParts,count,reason)=>{
  const calls:string[]=[];const session=new AiReadingSession(async input=>{calls.push(input.text);return response;},undefined,undefined,false);
  try{const result=await session.request(source(length),{...settings,splitParts},[]);expect(calls).toHaveLength(count);expect(calls.join('')).toBe(source(length).text);expect(result.division).toEqual({version:1,parts:count,reasons:[reason]});}finally{session.clear();}
 });
@@ -23,7 +23,7 @@ it('retains recovery cause through saved children and resuming without resending
  expect(send).toHaveBeenCalledOnce();expect(result.division).toEqual({version:1,parts:2,reasons:['output_limit']});
 });
 it('keeps single successful result identity and treats unknown legacy information honestly',async()=>{
- const session=new AiReadingSession(async()=>response,undefined,undefined,false);try{expect(await session.request(source(200),settings,[])).toBe(response);}finally{session.clear();}
+ const session=new AiReadingSession(async()=>response,undefined,undefined,false);try{expect(await session.request({...source(6000),text:'a'.repeat(6000)},settings,[])).toBe(response);}finally{session.clear();}
  expect(response).not.toHaveProperty('division');expect(readAiDivision(undefined)).toBeUndefined();
 });
 it('sanitizes optional facts and rejects bad counts/reasons without trusting unknown fields',()=>{

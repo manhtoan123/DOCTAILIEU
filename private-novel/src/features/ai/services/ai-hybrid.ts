@@ -1,3 +1,4 @@
+import {combineAiHanAudits} from './ai-han-audit';
 import {combineAiDivision} from './ai-division';
 import type {AiReadingSource,AiReadingCache,ReadingAiSettings} from './ai-reading';
 import {AiTranslateClientError,type AiTranslateClientResponse} from './ai-translate';
@@ -46,11 +47,11 @@ export async function runHybridStages<T extends AiTranslateClientResponse>(sourc
  if(first.finishReason!=='STOP'||!first.result.trim())throw Error('Nửa đầu chưa hoàn chỉnh.');
  if(first.result.length>AI_HYBRID_SAMPLE_CHARS)throw new AiTranslateClientError('prompt_too_large','Toàn bộ mẫu vượt giới hạn dịch kết hợp. Giữ tiến độ; hãy chọn chế độ thường cho chương này.');
  const hash=await hybridSampleHash(first.result),sourceHash=await hybridSampleHash(firstHalfSource);check();
- const next={...normal,model:hybrid.liteModel,fallbackModels:[],continuation:{version:3 as const,sample:first.result,rules:hybrid.rules,promptTemplate,firstHalfSource}};
+ const next={...normal,model:hybrid.liteModel,modelMode:'fixed' as const,fallbackModels:[],continuation:{version:3 as const,sample:first.result,rules:hybrid.rules,promptTemplate,firstHalfSource}};
  const second=await run(1,next,hybridStageCache(source,settings,names,JSON.stringify([plan,1,hash,promptTemplate,'paired-source-3',sourceHash]),memory,persisted,[hybrid.liteModel]),p=>publish(1,p,first));check();
  if(second.finishReason!=='STOP'||!second.result.trim()||second.model!==hybrid.liteModel)throw Error('Nửa sau chưa hoàn chỉnh hoặc sai model.');
  return [first,second,hash];
 }
 export function hybridResult(first:AiTranslateClientResponse,second:AiTranslateClientResponse,sampleHash:string):AiTranslateClientResponse{
- return {division:first.division&&second.division?combineAiDivision([first,second],'hybrid'):undefined,result:first.result+'\n'+second.result,model:'hybrid',finishReason:'STOP',inputTokens:first.inputTokens+second.inputTokens,outputTokens:first.outputTokens+second.outputTokens,halves:{version:1,models:[first.model,second.model],sampleHash}};
+ return {...combineAiHanAudits([first,second]),division:first.division&&second.division?combineAiDivision([first,second],'hybrid'):undefined,result:first.result+'\n'+second.result,model:'hybrid',finishReason:'STOP',inputTokens:first.inputTokens+second.inputTokens,outputTokens:first.outputTokens+second.outputTokens,halves:{version:1,models:[first.model,second.model],sampleHash}};
 }

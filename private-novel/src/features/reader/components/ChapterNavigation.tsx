@@ -1,15 +1,18 @@
+import {NavigationLink} from '../../../shared/components/NavigationLink';
+import {readerRoutePath} from '../services/reader-route';
 interface Props {
+ bookId:string;
  top?:boolean;
  previousId?:string;
  nextId?:string;
  onChapterChange:(id:string)=>void;
  onOpenToc:()=>void;
 }
-/** Navigation renders callbacks only; Reader owns chapter transitions. */
-export function ChapterNavigation({top=false,previousId,nextId,onChapterChange,onOpenToc}:Props){
+/** Native URLs support new tabs; Reader still owns ordinary chapter transitions. */
+export function ChapterNavigation({bookId,top=false,previousId,nextId,onChapterChange,onOpenToc}:Props){
  return <nav className={`chapter-navigation${top?' chapter-navigation-top':''}`} aria-label={top?'Điều hướng chương đầu trang':'Điều hướng chương cuối trang'}>
-  <button disabled={!previousId} onClick={()=>{if(previousId)onChapterChange(previousId);}}>← Chương trước</button>
+  {previousId?<NavigationLink href={readerRoutePath({kind:'read',bookId,chapterId:previousId})} onNavigate={()=>onChapterChange(previousId)}>← Chương trước</NavigationLink>:<button disabled>← Chương trước</button>}
   <button onClick={onOpenToc}>☷ Mục lục</button>
-  <button disabled={!nextId} onClick={()=>{if(nextId)onChapterChange(nextId);}}>Chương sau →</button>
+  {nextId?<NavigationLink href={readerRoutePath({kind:'read',bookId,chapterId:nextId})} onNavigate={()=>onChapterChange(nextId)}>Chương sau →</NavigationLink>:<button disabled>Chương sau →</button>}
  </nav>;
 }

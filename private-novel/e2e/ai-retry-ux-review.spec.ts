@@ -35,7 +35,7 @@ test('review: a save continuation finishing after chapter navigation cannot retr
  await page.evaluate(async book=>{const {db}=await import('/src/core/db.ts');const table=db.settings as any,original=table.put.bind(table);table.put=(row:any,...rest:any[])=>row.key===`ai-book-settings:${book}`?new Promise((resolve,reject)=>{(window as any).__reviewSaveHeld=true;(window as any).__reviewReleaseSave=()=>{table.put=original;original(row,...rest).then(resolve,reject);};}):original(row,...rest);},book);
  await page.getByRole('button',{name:'Lưu và tiếp tục',exact:true}).click();await expect.poll(()=>page.evaluate(()=>(window as any).__reviewSaveHeld)).toBe(true);
  // The chapter navigation handler can also be invoked while the side panel stays mounted.
- await page.locator('.chapter-navigation-top').getByRole('button',{name:'Chương sau →',exact:true}).dispatchEvent('click');
+ await page.locator('.chapter-navigation-top').getByRole('link',{name:'Chương sau →',exact:true}).dispatchEvent('click');
  await expect(page).toHaveURL(new RegExp(`${second}$`));await expect.poll(()=>calls.filter(c=>c.text.startsWith('丙')).length).toBe(1);
  await page.evaluate(()=>(window as any).__reviewReleaseSave());await page.waitForTimeout(300);
  expect(calls.filter(c=>c.text.startsWith('丙'))).toHaveLength(1);expect(calls).toHaveLength(2);await expect(page.locator('.reader-panel-ai')).toBeVisible();

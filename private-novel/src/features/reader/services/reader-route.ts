@@ -1,6 +1,6 @@
-export type SettingsGroup='appearance'|'dictionary'|'names'|'prompts'|'ai'|'sync'|'backup'|'cloud'|'about';
-export type ReaderRoute={kind:'library';room?:'dark'}|{kind:'book';bookId:string}|{kind:'read';bookId:string;chapterId?:string;bookCode?:number;chapterNumber?:number}|{kind:'numeric-read';bookCode:number;chapterNumber?:number}|{kind:'settings';group:SettingsGroup;bookId?:string};
-const groups=new Set<SettingsGroup>(['appearance','dictionary','names','prompts','ai','sync','backup','cloud','about']);
+export type SettingsGroup='appearance'|'dictionary'|'names'|'prompts'|'ai'|'ai-log'|'sync'|'backup'|'cloud'|'about';
+export type ReaderRoute={kind:'library';room?:'dark';album?:string}|{kind:'book';bookId:string}|{kind:'read';bookId:string;chapterId?:string;bookCode?:number;chapterNumber?:number}|{kind:'numeric-read';bookCode:number;chapterNumber?:number}|{kind:'settings';group:SettingsGroup;bookId?:string};
+const groups=new Set<SettingsGroup>(['appearance','dictionary','names','prompts','ai','ai-log','sync','backup','cloud','about']);
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** Lossless UUID encoding, not a truncated ID or a database alias. */
 function shortId(id:string):string|undefined{
@@ -16,11 +16,11 @@ function fullId(id:string):string|undefined{
   // Reject non-canonical padding bits rather than accepting aliases for one ID.
   return shortId(value)===id?value:undefined;
 }
-export function parseReaderRoute(pathname:string):ReaderRoute{
+export function parseReaderRoute(pathname:string,search=''):ReaderRoute{
   try{
     const parts=pathname.split('/').filter(Boolean).map(decodeURIComponent);
     if(parts.some(part=>!part.trim()||part.includes('/')||part.includes('\\')||/[\u0000-\u001f]/u.test(part)))return {kind:'library'};
-    if(parts[0]==='phong-toi'&&parts.length===1)return {kind:'library',room:'dark'};
+    if(parts[0]==='phong-toi'&&parts.length===1){const album=new URLSearchParams(search).get('album');return {kind:'library',room:'dark',...(album?{album}:{})};}
     if(parts[0]==='book'&&parts.length===2)return {kind:'book',bookId:parts[1]};
     if(parts[0]==='r'&&(parts.length===2||parts.length===3)){
       if(/^[1-9]\d{4,11}$/.test(parts[1])&&Number(parts[1])>=10001){
@@ -41,7 +41,7 @@ export function parseReaderRoute(pathname:string):ReaderRoute{
   return {kind:'library'};
 }
 export function readerRoutePath(route:ReaderRoute):string{
-  if(route.kind==='library')return route.room==='dark'?'/phong-toi':'/';
+  if(route.kind==='library')return route.room==='dark'?'/phong-toi'+(route.album?'?album='+encodeURIComponent(route.album):''):'/';
   if(route.kind==='settings')return `/settings/${route.group==='prompts'?'ai':route.group}${(route.group==='names'||route.group==='ai')&&route.bookId?`/${encodeURIComponent(route.bookId)}`:''}`;
   if(route.kind==='numeric-read')return `/r/${route.bookCode}${route.chapterNumber!==undefined?`/${route.chapterNumber}`:''}`;
   if(route.kind==='read'){

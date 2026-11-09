@@ -1,4 +1,7 @@
+import {NavigationLink} from '../../../shared/components/NavigationLink';
+import {readerRoutePath} from '../../reader/services/reader-route';
 import {ChapterEditor} from './ChapterEditor';
+import CoverImage from '../../../shared/components/SharedImage';
 import {changeChapterVisibility} from '../../sync-cloud/services/shared-state-sync';
 import {ConvertedTitle} from '../../names-convert/components/ConvertedTitle';
 import {OriginalFiles} from '../../sync-cloud/components/OriginalFiles';
@@ -17,16 +20,28 @@ const PAGE_SIZE = 60;
 const number = new Intl.NumberFormat('vi-VN');
 const date = (value: number) => new Date(value).toLocaleDateString('vi-VN');
 
-export function StoryDetail({ bookId, onBack, onRead }: {
+export function StoryDetail({ bookId, backHref='/', backLabel='← Tủ sách', onBack, onRead }: {
   bookId: string;
+  backHref?:string;
+  backLabel?:string;
   onBack: () => void;
   onRead: (chapterId?: string) => void;
 }) {
   const [manage,setManage]=useState(false),[trash,setTrash]=useState(false),[selected,setSelected]=useState<string[]>([]),[editing,setEditing]=useState<Chapter>(),[confirmDelete,setConfirmDelete]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
+  const [locateChapterId, setLocateChapterId] = useState<string>();
+  const chapterListRef = useRef<HTMLOListElement>(null);
   const autoPreparedRef = useRef<string>('');
-  useEffect(() => { setSearch(''); setPage(0);setManage(false);setTrash(false);setSelected([]);setEditing(undefined);setConfirmDelete(false);setMessage(''); autoPreparedRef.current = ''; }, [bookId]);
+  useEffect(() => { setSearch(''); setPage(0);setLocateChapterId(undefined);setManage(false);setTrash(false);setSelected([]);setEditing(undefined);setConfirmDelete(false);setMessage(''); autoPreparedRef.current = ''; }, [bookId]);
+  useEffect(() => {
+    if (!locateChapterId) return;
+    const target = Array.from(chapterListRef.current?.querySelectorAll<HTMLAnchorElement>('a[data-chapter-id]') ?? [])
+      .find(button => button.dataset.chapterId === locateChapterId);
+    target?.focus({preventScroll:true});
+    target?.scrollIntoView({block:'center'});
+    setLocateChapterId(undefined);
+  }, [locateChapterId, bookId]);
   const snapshot = useLiveQuery(async () => {
     try {
       return await db.transaction('r', [db.books, db.progress, db.chapters], async () => {
@@ -62,7 +77,7 @@ export function StoryDetail({ bookId, onBack, onRead }: {
     }
   }, [bookId, book, chapters]);
 
-  const back = <button className="story-back" disabled={!!editing||busy} onClick={onBack}>← Tủ sách</button>;
+  const back = <NavigationLink className="story-back" href={backHref} disabled={!!editing||busy} onNavigate={onBack}>{backLabel}</NavigationLink>;
   if (!snapshot || snapshot.bookId !== bookId) {
     return <section className="story-detail" aria-label="Thông tin truyện">{back}<p role="status">Đang tải thông tin truyện…</p></section>;
   }
@@ -72,7 +87,8 @@ export function StoryDetail({ bookId, onBack, onRead }: {
   if (!book || book.status !== 'ready') {
     return <section className="story-detail" aria-label="Thông tin truyện">{back}<h1>Truyện không khả dụng</h1><p>Truyện có thể đã bị xóa hoặc chưa nhập xong. Hãy trở về tủ sách.</p></section>;
   }
-  const current = chapters.find(chapter => chapter.id === progress?.chapterId);
+  const currentIndex = chapters.findIndex(chapter => chapter.id === progress?.chapterId);
+  const current = chapters[currentIndex];
   const query = search.trim().toLocaleLowerCase('vi-VN');
   const list=manage&&trash?deleted:chapters;
   const filtered = query ? list.filter(chapter =>
@@ -85,38 +101,42 @@ export function StoryDetail({ bookId, onBack, onRead }: {
 
   return <section className="story-detail" aria-label="Thông tin truyện">
     {back}
-    <header className="story-summary">
-      <div className="story-cover-mark" aria-hidden="true">TXT</div>
+    <header className="story-summary" data-has-cover={book.cover?true:undefined}>
+      {book.cover&&<div className="story-cover-image"><CoverImage value={book.cover} title={book.displayTitle||book.title}/></div>}
       <div className="story-summary-content">
         <h1><ConvertedTitle text={book.title} bookId={bookId} displayTitle={book.displayTitle}/></h1>
-        <p className="story-author">Tác giả: {book.author.trim() || 'Chưa có thông tin'}</p>
+        {!!book.author.trim()&&<p className="story-author">{book.author}</p>}
+      </div>
+      <div className="story-reading">
+        {current ? <p className="story-progress"><span className="story-progress-label">Đang đọc</span><span className="story-progress-title"><ConvertedTitle text={current.title} bookId={bookId} displayTitle={current.displayTitle}/></span></p>
+          : progress && <p className="story-progress">Chương đã lưu không còn khả dụng. Đọc tiếp sẽ mở chương đầu tiên.</p>}
+        <div className="story-read-actions">
+          <NavigationLink className="story-read-resume" href={readerRoutePath({kind:'read',bookId})} disabled={!chapters.length||!!editing||busy} onNavigate={() => onRead()}>Đọc tiếp</NavigationLink>
+          <NavigationLink className="story-read-first" href={readerRoutePath({kind:'read',bookId,chapterId:chapters[0]?.id})} disabled={!chapters.length||!!editing||busy} onNavigate={() => onRead(chapters[0].id)}>Đọc từ đầu</NavigationLink>
+        </div>
+      </div>
+      <details className="story-facts">
+        <summary>Chi tiết truyện</summary>
         <dl className="story-metadata">
-          <div><dt>Số chương</dt><dd>{number.format(chapters.length)}</dd></div>
           <div><dt>Số ký tự</dt><dd>{number.format(book.charCount)}</dd></div>
           <div><dt>Ngày nhập</dt><dd>{date(book.createdAt)}</dd></div>
           <div><dt>Cập nhật</dt><dd>{date(book.updatedAt)}</dd></div>
         </dl>
-        <div className="story-read-actions">
-          <button className="story-read-first" disabled={!chapters.length||!!editing||busy} onClick={() => onRead(chapters[0].id)}>Đọc từ đầu</button>
-          <button disabled={!chapters.length||!!editing||busy} onClick={() => onRead()}>Đọc tiếp</button>
-        </div>
-        <p className="story-progress">
-          {current ? <>Đang đọc: <ConvertedTitle text={current.title} bookId={bookId} displayTitle={current.displayTitle}/></> : progress
-            ? 'Chương đã lưu không còn khả dụng. Đọc tiếp sẽ mở chương đầu tiên.'
-            : 'Chưa có tiến độ đọc. Đọc tiếp sẽ mở chương đầu tiên.'}
-        </p>
-      </div>
+      </details>
     </header>
-    <OriginalFiles key={bookId} bookId={bookId}/>
-    {!book.epub&&<UpdateTxt key={'update:'+bookId} bookId={bookId}/>}
+    <div className="story-tools">
+      <OriginalFiles key={bookId} bookId={bookId}/>
+      {!book.epub&&<UpdateTxt key={'update:'+bookId} bookId={bookId}/>}
+    </div>
     <section className="story-chapters" aria-labelledby="story-chapters-title">
       <div className="story-chapters-heading">
-        <h2 id="story-chapters-title">Danh sách chương</h2>
-        {!book.epub&&<button aria-pressed={manage} disabled={busy||!!editing} onClick={()=>{setManage(!manage);setTrash(false);setSelected([]);setEditing(undefined);setConfirmDelete(false);setPage(0);setMessage('');}}>{manage?'Xong':'Quản lý chương'}</button>}
-        <label htmlFor="story-chapter-search">Tìm chương
-          <input id="story-chapter-search" type="search" placeholder="Tên hoặc số chương" value={search}
-            onChange={event => { setSearch(event.target.value); setPage(0); }} />
-        </label>
+        <div className="story-chapters-title"><h2 id="story-chapters-title">Danh sách chương</h2><span>{number.format(list.length)} chương</span></div>
+        {!book.epub&&<button className="story-manage-toggle" aria-pressed={manage} disabled={busy||!!editing} onClick={()=>{setManage(!manage);setTrash(false);setSelected([]);setEditing(undefined);setConfirmDelete(false);setPage(0);setMessage('');}}>{manage?'Xong':'Quản lý chương'}</button>}
+      </div>
+      <div className="story-chapters-search">
+        <input aria-label="Tìm chương" type="search" placeholder="Tìm theo tên hoặc số chương…" value={search}
+          onChange={event => { setSearch(event.target.value); setPage(0); }} />
+        {current&&<button className="story-locate-current" disabled={busy||!!editing||confirmDelete||(manage&&trash)} onClick={()=>{setSearch('');setPage(Math.floor(currentIndex/PAGE_SIZE));setLocateChapterId(current.id);}}>Đến chương đang đọc</button>}
       </div>
       {manage&&<div className="chapter-manage-actions">
         <button aria-pressed={!trash} disabled={busy||!!editing} onClick={()=>{setTrash(false);setSelected([]);setPage(0);setConfirmDelete(false);}}>Đang dùng</button>
@@ -130,21 +150,24 @@ export function StoryDetail({ bookId, onBack, onRead }: {
       {!list.length ? <p className="story-empty" role="status">{trash?'Chưa có chương đã xóa.':'Truyện chưa có chương để đọc.'}</p>
         : !filtered.length ? <p className="story-empty" role="status">Không tìm thấy chương phù hợp.</p>
         : <>
-          <p className="story-chapter-count" role="status">{number.format(filtered.length)} chương{query ? ' phù hợp' : ''} · {number.format(activePage * PAGE_SIZE + 1)}–{number.format(Math.min((activePage + 1) * PAGE_SIZE, filtered.length))}</p>
-          <ol className="story-chapter-list" start={activePage * PAGE_SIZE + 1}>
+          {(query||pageCount>1)&&<p className="story-chapter-count" role="status">{number.format(filtered.length)} chương{query ? ' phù hợp' : ''}{pageCount>1&&` · ${number.format(activePage * PAGE_SIZE + 1)}–${number.format(Math.min((activePage + 1) * PAGE_SIZE, filtered.length))}`}</p>}
+          <ol ref={chapterListRef} className="story-chapter-list" start={activePage * PAGE_SIZE + 1}>
             {visible.map(chapter => <li key={chapter.id} className={manage?'chapter-manage-row':undefined}>
               {manage&&<input type="checkbox" aria-label={'Chọn '+chapter.title} checked={selected.includes(chapter.id)} disabled={busy||confirmDelete||!!editing} onChange={e=>setSelected(old=>e.target.checked?[...old,chapter.id]:old.filter(id=>id!==chapter.id))}/>}
               {manage&&!trash&&<button className="chapter-edit-button" disabled={busy||confirmDelete||!!editing} onClick={async()=>{try{const row=await db.chapters.get(chapter.id);if(row)setEditing(row);}catch(e){setMessage(String(e));}}}>Sửa</button>}
-              <button disabled={trash||!!editing||busy} onClick={() => onRead(chapter.id)} aria-label={chapter.title} aria-current={chapter.id === current?.id ? 'true' : undefined}>
-                <ConvertedTitle text={chapter.title} bookId={bookId} displayTitle={chapter.displayTitle}/>
+              <NavigationLink href={readerRoutePath({kind:'read',bookId,chapterId:chapter.id})} data-chapter-id={chapter.id} disabled={trash||!!editing||busy} onNavigate={() => onRead(chapter.id)} aria-label={chapter.title} aria-current={chapter.id === current?.id ? 'true' : undefined}>
+                <span className="story-chapter-title"><ConvertedTitle text={chapter.title} bookId={bookId} displayTitle={chapter.displayTitle}/></span>
                 {chapter.id === current?.id && <small>Đang đọc</small>}
-              </button>
+              </NavigationLink>
             </li>)}
           </ol>
           {pageCount > 1 && <nav className="story-pagination" aria-label="Trang danh sách chương">
             <button aria-label="Trang mục lục trước" disabled={activePage === 0} onClick={() => setPage(activePage - 1)}>Trang trước</button>
             <span>Trang {activePage + 1} / {pageCount}</span>
-            <button aria-label="Trang mục lục sau" disabled={activePage === pageCount - 1} onClick={() => setPage(activePage + 1)}>Trang sau</button>
+            <div className="story-pagination-next">
+              <button aria-label="Trang mục lục sau" disabled={activePage === pageCount - 1} onClick={() => setPage(activePage + 1)}>Trang sau</button>
+              <button disabled={activePage === pageCount - 1} onClick={() => setPage(pageCount - 1)}>Đến cuối</button>
+            </div>
           </nav>}
         </>}
     </section>

@@ -16,7 +16,7 @@ async function seed(page:Page,duplicate=false){
 test('legacy to numeric, TOC position instead of heading, explicit chapter overrides bookmark and next/back/reload preserve source',async({page})=>{
  await routes(page.context());await seed(page);const before=await page.evaluate(async()=>{const {db}=await import('/src/core/db.ts');return db.chapters.toArray();});
  await page.goto(`/read/${book}/${ids[0]}`);await expect(page).toHaveURL(/\/r\/31823\/1$/);await expect(page.locator('.prose')).toContainText('Nội dung chương 1429.');
- await page.getByRole('button',{name:'Chương sau →',exact:true}).first().click();await expect(page).toHaveURL(/\/r\/31823\/2$/);
+ await page.getByRole('link',{name:'Chương sau →',exact:true}).first().click();await expect(page).toHaveURL(/\/r\/31823\/2$/);
  await page.reload();await expect(page).toHaveURL(/\/r\/31823\/2$/);await expect(page.locator('.prose')).toContainText('Nội dung chương 1430.');
  await page.goBack();await expect(page).toHaveURL(/\/r\/31823\/1$/);await expect(page.locator('.prose')).toContainText('Nội dung chương 1429.');
  await page.goForward();await expect(page).toHaveURL(/\/r\/31823\/2$/);

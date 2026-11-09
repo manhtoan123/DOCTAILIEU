@@ -1,5 +1,6 @@
 import {db} from '../../../core/db';
-import {parseEntry,type NameEntry,type Book} from '../../../core/domain';
+import {type NameEntry,type Book} from '../../../core/domain';
+import {parseNameEntry,nameKeyResolver,type NamePair} from './name-format';
 import {validateSharedRecord,type SharedRecord} from '../../sync-cloud/services/shared-state-schema';
 import {nameTombKey} from '../../sync-cloud/services/shared-name-intents';
 import {saveBookNames} from './book-names';
@@ -48,17 +49,58 @@ export async function readEffectiveNamesByBook(){
 
 export async function readEffectiveBookNames(bookId:string){return (await readNameScope(bookId)).rows;}
 
+/** Check every member's effective size in one snapshot, without materializing
+ * and sorting the entire author pool again for each book. */
+export async function validateAlbumNameCapacity(albums:Iterable<string>){
+ const roots=new Set(albums);if(!roots.size)return;
+ return db.transaction('r',[db.books,db.names,db.settings],async()=>{
+  const members=(await db.books.where('status').equals('ready').toArray()).filter(book=>roots.has(nameAlbumRoot(book.album)??''));
+  if(!members.length)return;
+  const owners=new Map(members.map(book=>[book.id,nameAlbumRoot(book.album)!]));
+  const privateRows=await db.names.where('bookId').anyOf([...owners.keys()]).toArray();
+  for(const root of roots){
+   if(!members.some(book=>owners.get(book.id)===root))continue;
+   const rows=privateRows.filter(row=>owners.get(row.bookId)===root),candidates=new Map<string,Set<string>>();
+   for(const row of rows){const values=candidates.get(row.key)??new Set<string>();values.add(row.value);candidates.set(row.key,values);}
+   const shared=new Set<string>(),conflicts=new Set<string>();
+   for(const [key,values]of candidates)(values.size===1?shared:conflicts).add(key);
+   const prefix=ALBUM_NAMES_PREFIX+encodeURIComponent(JSON.stringify([root]).slice(0,-1)+',');
+   for(const setting of await db.settings.where('key').startsWith(prefix).toArray()){
+    const record=validateSharedRecord(setting.value),[owner,key]=parseAlbumNameKey(record.key);
+    if(record.kind!=='album-name'||albumNameSetting(record.key)!==setting.key||owner!==root)throw Error('Kho Name Album không hợp lệ.');
+    conflicts.delete(key);if(record.value===null)shared.delete(key);else shared.add(key);
+   }
+   const ownConflicts=new Map<string,Set<string>>();
+   for(const row of rows)if(conflicts.has(row.key)){const keys=ownConflicts.get(row.bookId)??new Set<string>();keys.add(row.key);ownConflicts.set(row.bookId,keys);}
+   if(shared.size>20000||[...ownConflicts.values()].some(keys=>shared.size+keys.size>20000))throw Error('Kho Name Album vượt 20.000 tên.');
+  }
+ });
+}
+
 /** Merge explicit keys atomically; never copy, rewrite or remove legacy Name rows. */
 export async function saveScopedBookNames(bookId:string,text:string,expectedAlbum?:string|null){
  if(text.length>2*1048576)throw Error('Name List tối đa 2 MB.');
- const entries=text.split(/\r?\n/).map(parseEntry).filter((v):v is [string,string]=>!!v);
+ const entries=text.split(/\r?\n/).map(parseNameEntry).filter((v):v is [string,string]=>!!v);
+ if(entries.some(([key,value])=>key.length>256||value.length>4096))throw Error('Tên hoặc nghĩa quá dài.');
  return db.transaction('rw',[db.books,db.names,db.settings],async()=>{
   const book=await db.books.get(bookId);if(book?.status!=='ready')throw Error('Truyện không còn trong thư viện.');
   const album=nameAlbumRoot(book.album);if(expectedAlbum!==undefined&&(album??null)!==expectedAlbum)throw Error('Album đã thay đổi; mở lại kho Name trước khi lưu.');
   if(!album)return saveBookNames(bookId,text);
-  const records=entries.map(([key,value])=>validateSharedRecord({kind:'album-name',key:albumNameKey(album,key),value}));
+  // Include legacy conflicts hidden in another member's private fallback. Shared
+  // exact-key values/tombstones still mask their old rows as in the read resolver.
+  const members=(await db.books.where('status').equals('ready').toArray()).filter(member=>nameAlbumRoot(member.album)===album);
+  const rows=new Map<string,NamePair[]>();
+  for(const row of await db.names.where('bookId').anyOf(members.map(member=>member.id)).toArray()){const matches=rows.get(row.key)??[];matches.push(row);rows.set(row.key,matches);}
+  const prefix=ALBUM_NAMES_PREFIX+encodeURIComponent(JSON.stringify([album]).slice(0,-1)+',');
+  for(const setting of await db.settings.where('key').startsWith(prefix).toArray()){
+   const record=validateSharedRecord(setting.value),[owner,key]=parseAlbumNameKey(record.key);
+   if(record.kind!=='album-name'||albumNameSetting(record.key)!==setting.key||owner!==album)throw Error('Kho Name Album không hợp lệ.');
+   rows.delete(key);if(record.value!==null)rows.set(key,[{key,value:record.value as string}]);
+  }
+  const resolveKey=nameKeyResolver([...rows.values()].flat());
+  const records=entries.map(([key,value])=>validateSharedRecord({kind:'album-name',key:albumNameKey(album,resolveKey(key)),value}));
   for(const record of records)await db.settings.put({key:albumNameSetting(record.key),value:record});
-  await readNameScope(bookId); // Validate effective capacity before committing all writes.
+  await validateAlbumNameCapacity([album]); // Validate every member before committing all writes.
   return entries.length;
  });
 }

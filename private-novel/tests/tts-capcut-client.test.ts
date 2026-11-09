@@ -1,8 +1,8 @@
 import {afterEach,it,expect,vi} from 'vitest';
 import {ttsGateway,capcutSessionFailure} from '../src/features/tts/services/tts-gateway';
 afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();vi.resetModules();vi.useRealTimers();});
-it('uses a nonsecret opt-in selector and cannot select arbitrary gateways',()=>{
-  expect(ttsGateway('capcut-v2')).toBe('/api/tts');expect(ttsGateway(undefined)).toBe('https://ottsy.weilbyte.dev/api/generation');expect(ttsGateway('https://attacker.invalid')).toBe(ttsGateway(undefined));expect(capcutSessionFailure('<script>')).toBeUndefined();
+it('defaults to CapCut and only explicitly selects the legacy gateway',()=>{
+  expect(ttsGateway('capcut-v2')).toBe('/api/tts');expect(ttsGateway(undefined)).toBe('/api/tts');expect(ttsGateway('https://attacker.invalid')).toBe('/api/tts');expect(ttsGateway('legacy-tiktok')).toBe('https://ottsy.weilbyte.dev/api/generation');expect(capcutSessionFailure('<script>')).toBeUndefined();
 });
 it.each([[503,'capcut_not_configured'],[422,'capcut_request_rejected']] as const)('does not keep retrying missing configuration or rejected voices (%i)',async(status,code)=>{
   vi.stubEnv('VITE_TTS_GATEWAY','capcut-v2');vi.resetModules();vi.useFakeTimers();
@@ -14,12 +14,12 @@ it.each([[503,'capcut_not_configured'],[422,'capcut_request_rejected']] as const
 });
 
 it('offers the shared verified Vietnamese catalog only on CapCut while retaining legacy IDs',async()=>{
- vi.stubEnv('VITE_TTS_GATEWAY','capcut-v2');vi.resetModules();
+ vi.stubEnv('VITE_TTS_GATEWAY','');vi.resetModules();
  const {tiktokVoices}=await import('../src/features/tts/services/tts');
  const {capcutVietnameseVoices}=await import('../src/shared/constants/capcut-voices');
  expect(tiktokVoices.map(v=>({id:v.id,serverId:v.serverId,name:v.name}))).toEqual(capcutVietnameseVoices.map(({id,serverId,name})=>({id,serverId,name})));
  expect(tiktokVoices.every(v=>v.available)).toBe(true);expect(new Set(tiktokVoices.map(v=>v.id)).size).toBe(tiktokVoices.length);
  expect(tiktokVoices.slice(0,2).map(v=>v.id)).toEqual(['tiktok-female-1','tiktok-male-1']);
- vi.stubEnv('VITE_TTS_GATEWAY','');vi.resetModules();const legacy=await import('../src/features/tts/services/tts');
+ vi.stubEnv('VITE_TTS_GATEWAY','legacy-tiktok');vi.resetModules();const legacy=await import('../src/features/tts/services/tts');
  expect(legacy.tiktokVoices.filter(v=>v.available).map(v=>v.serverId)).toEqual(['BV074_streaming','BV075_streaming']);
 });

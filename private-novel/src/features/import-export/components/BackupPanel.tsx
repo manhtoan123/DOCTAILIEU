@@ -40,7 +40,6 @@ export default function BackupPanel(){
     <section>
       <div className="section-heading">
         <div>
-          <span className="eyebrow">GIỮ LẠI NHỮNG TRANG SÁCH</span>
           <h1>Sao lưu & chuyển thiết bị</h1>
           <p className="muted">Windows và Android có thư viện riêng. Dùng các phần sao lưu để chuyển truyện và từ điển.</p>
         </div>

@@ -40,7 +40,7 @@ async function settle(page:Page){
 }
 test('1000 books reload without original requests or Blob reads; a changed source automatically verifies once',async({page},testInfo)=>{
   const originals=await setup(page,1000);await page.goto('/phong-toi');
-  await expect(page.getByRole('button',{name:'Mở Album Tác giả thử nghiệm',exact:true})).toBeVisible();
+  await expect(page.getByRole('link',{name:'Mở Album Tác giả thử nghiệm',exact:true})).toBeVisible();
   const measurement=await settle(page);expect(originals).toEqual([]);expect(measurement.blobReads).toBe(0);
   console.info(JSON.stringify({project:testInfo.project.name,books:1000,...measurement}));
   await testInfo.attach('1000-book-sync',{body:JSON.stringify(measurement),contentType:'application/json'});

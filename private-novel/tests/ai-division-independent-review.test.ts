@@ -12,14 +12,14 @@ function immediateRecovery(){const recovery=new AiRecovery();vi.spyOn(recovery,'
 
 describe('independent division resume evidence',()=>{
  it('does not expose the last known part count as a whole chapter count beside a legacy root',async()=>{
-  const source={bookId:'division-review',id:'mixed-legacy-roots',revision:1,text:'甲'.repeat(1800)+'乙'.repeat(1800)};
+  const source={bookId:'division-review',id:'mixed-legacy-roots',revision:1,text:'甲'.repeat(5400)+'乙'.repeat(1800)};
   const translate=vi.fn(async input=>{if(input.text.length===1800)throw new AiTranslateClientError('ai_incomplete_result','cut',502,'output_limit');return response('Phần mới.');});
   const states:AiPartsProgress[]=[];
   const session=new AiReadingSession(translate,{read:async()=>undefined,write:async()=>true,readParts:async(_source,_settings,_names,plan)=>plan.includes('txt-parallel-1')?[{id:'0',response:response('Phần cũ.')}]:[]},undefined,false,immediateRecovery());
   const result=await session.request(source,{...settings,splitParts:true},[],undefined,undefined,state=>states.push(state));
   expect(result.division).toBeUndefined();
   expect(states.at(-1)?.division).toBeUndefined();
-  expect(translate).toHaveBeenCalledTimes(3);
+  expect(translate).toHaveBeenCalledTimes(9);
  });
 
  it('keeps the exact count unknown when a legacy saved descendant has no division facts',async()=>{
@@ -56,7 +56,7 @@ describe('independent division resume evidence',()=>{
  });
 
  it('does not count an existing recovery cut again after a deferred quota retry',async()=>{
-  const source={bookId:'division-review',id:'deferred-retry',revision:1,text:'甲'.repeat(1800)+'乙'.repeat(1800)};
+  const source={bookId:'division-review',id:'deferred-retry',revision:1,text:'甲'.repeat(5400)+'乙'.repeat(1800)};
   let childCalls=0;
   const translate=vi.fn(async input=>{
    if(input.text.startsWith('甲'))return {...response('Đầu.'),parallel:2 as const};
@@ -67,9 +67,9 @@ describe('independent division resume evidence',()=>{
   }),states:AiPartsProgress[]=[];
   const session=new AiReadingSession(translate,undefined,undefined,false,immediateRecovery());
   const result=await session.request(source,{...settings,splitParts:true},[],undefined,undefined,state=>states.push(state));
-  expect(result.division?.parts).toBe(3);
+  expect(result.division?.parts).toBe(5);
   expect(states.at(-1)?.division).toEqual(result.division);
-  expect(Math.max(...states.map(state=>state.division?.parts??0))).toBe(3);
-  expect(translate).toHaveBeenCalledTimes(5);
+  expect(Math.max(...states.map(state=>state.division?.parts??0))).toBe(5);
+  expect(translate).toHaveBeenCalledTimes(7);
  });
 });

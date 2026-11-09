@@ -1,9 +1,10 @@
 /** Bounded SSE decoding; only nonempty, validated model text counts as activity. */
+import {normalizeGroqResponse} from './ai-groq';
 export class AiUpstreamStreamError extends Error {
   constructor(readonly reason:string){super('Invalid AI stream');}
 }
 const record=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
-export async function readAiUpstreamStream(response:Response,signal:AbortSignal,activity:()=>void,limit:number,maxResult:number):Promise<unknown>{
+export async function readAiUpstreamStream(response:Response,signal:AbortSignal,activity:(text?:string)=>void,limit:number,maxResult:number,groq=false):Promise<unknown>{
   if(response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase()!=='text/event-stream')throw new AiUpstreamStreamError('upstream_content_type');
   const reader=response.body?.getReader();if(!reader)throw new AiUpstreamStreamError('upstream_empty_result');
   const decoder=new TextDecoder('utf-8',{fatal:true,ignoreBOM:false});let size=0,buffer='',event:string[]=[],answer='',finishReason:unknown,usage:Record<string,unknown>|undefined,ended=false,events=0;
@@ -12,7 +13,7 @@ export async function readAiUpstreamStream(response:Response,signal:AbortSignal,
     if(!event.length)return;const raw=event.join('\n');event=[];
     if(++events>8192)fail('size_limit');
     if(raw==='[DONE]'){if(finishReason===undefined)fail('upstream_finish_reason');return;}
-    let data:unknown;try{data=JSON.parse(raw);}catch{fail('upstream_invalid_json');}
+    let data:unknown;try{data=JSON.parse(raw);if(groq)data=normalizeGroqResponse(data,true);}catch{fail('upstream_invalid_json');}
     if(!record(data)||data.error!==undefined)fail();
     if(data.usageMetadata!==undefined){
       if(!record(data.usageMetadata))fail('upstream_usage');
@@ -33,7 +34,7 @@ export async function readAiUpstreamStream(response:Response,signal:AbortSignal,
         if(part.text){
           if(finishReason!==undefined)fail('upstream_finish_reason');
           if(part.thought!==true){answer+=part.text;if(answer.length>maxResult)fail('size_limit');}
-          activity(); // Reasoning content stays server-side, but proves upstream activity.
+          if(part.thought!==true)activity(part.text); // Only answer text resets the output deadline.
         }
       }
     }else if(candidate.finishReason===undefined)fail('upstream_parts');

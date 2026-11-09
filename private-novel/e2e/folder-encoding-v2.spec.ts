@@ -1,7 +1,7 @@
 import {test,expect} from '@playwright/test';
 
 async function open(page:import('@playwright/test').Page){
-  await page.goto('/');await page.getByRole('button',{name:'＋ Thêm truyện TXT / EPUB',exact:true}).click();
+  await page.goto('/');await page.getByRole('button',{name:'Thêm truyện',exact:true}).click();
   await page.getByRole('button',{name:'Nhập folder truyện',exact:true}).click();
 }
 test('folder streams mixed BOM encodings as independent books and preserves actual source encodings',async({page})=>{

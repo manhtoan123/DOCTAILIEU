@@ -1,12 +1,14 @@
 import {db} from '../../../core/db';
-import {aiReadingKey,type AiReadingSource,type ReadingAiSettings} from './ai-reading';
+import {aiReadingKey,legacyAiReadingKey,type AiReadingSource,type ReadingAiSettings} from './ai-reading';
+import {readAiExecution,readUsageToken} from './ai-execution';
 import {readingPartModels,validReadingResult} from './ai-fallback';
 import type {AiTranslateClientResponse} from './ai-translate';
 import type {AiPartRecord} from './ai-parts';
 import {filterNamesForText} from './ai-translate';
-import {hasCopiedSource} from './ai-source-copy';
 import {readAiDivision} from './ai-division';
 import {validAiTextMap} from './ai-text-map';
+import {readAiHanAudits} from './ai-han-audit';
+import {completedAiCandidates} from './ai-completed-reuse';
 
 export const AI_READING_CACHE_PREFIX='ai-reading-cache:v1:';
 export const AI_PART_CACHE_PREFIX='ai-reading-cache:parts:v1:';
@@ -18,7 +20,7 @@ type Names={key:string;value:string}[];
 interface CacheEntry {version:1;bookId:string;chapterId:string;digest:string;accessedAt:number;response:AiTranslateClientResponse}
 interface Row {key:string;value:unknown}
 interface PartEntry {version:'parts-1';bookId:string;chapterId:string;digest:string;partId:string;accessedAt:number;response:AiTranslateClientResponse}
-export const validAiPartId=(id:string)=>/^\d{1,4}(?:\/[01]){0,3}$/.test(id);
+export const validAiPartId=(id:string)=>/^\d{1,4}(?:\/[01])*$/.test(id);
 const encoder=new TextEncoder();
 function bytes(value:unknown):number{try{return encoder.encode(JSON.stringify(value)).byteLength;}catch{return Infinity;}}
 function object(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==='object'&&!Array.isArray(value);}
@@ -29,8 +31,12 @@ function response(value:unknown):AiTranslateClientResponse|undefined{
   if(value.halves!==undefined){const h=value.halves;if(!object(h)||h.version!==1||!Array.isArray(h.models)||h.models.length!==2||h.models.some(m=>typeof m!=='string')||typeof h.sampleHash!=='string'||!/^[a-f0-9]{64}$/.test(h.sampleHash)||value.model!=='hybrid')return;halves={version:1,models:[h.models[0],h.models[1]],sampleHash:h.sampleHash};}
   if(value.model==='hybrid'&&!halves)return;
   let result:AiTranslateClientResponse={result:value.result,model:value.model,finishReason:'STOP',inputTokens:value.inputTokens,outputTokens:value.outputTokens,...(halves?{halves}:{})};
+  const execution=readAiExecution(value.execution),thinkingTokens=readUsageToken(value.thinkingTokens),totalTokens=readUsageToken(value.totalTokens);
+  if(execution)result.execution=execution;if(thinkingTokens!==undefined)result.thinkingTokens=thinkingTokens;if(totalTokens!==undefined)result.totalTokens=totalTokens;
   if(bytes(result)>MAX_RESPONSE_BYTES)return;
   const division=readAiDivision(value.division);if(division){const described={...result,division};if(bytes(described)<=MAX_RESPONSE_BYTES)result=described;}
+  const audits=readAiHanAudits(value),audited={...result,...audits};if(bytes(audited)<=MAX_RESPONSE_BYTES)result=audited;
+  else if(audits.hanRepairs?.length){const truncated={...result,hanRepairAuditTruncated:true};if(bytes(truncated)<=MAX_RESPONSE_BYTES)result=truncated;}
   if(validAiTextMap(value.textMap,value.result.length)){
     const textMap={version:1 as const,sourceLength:value.textMap.sourceLength,spans:value.textMap.spans.map(span=>({sourceStart:span.sourceStart,sourceEnd:span.sourceEnd,translatedStart:span.translatedStart,translatedEnd:span.translatedEnd}))};
     const mapped={...result,textMap};if(bytes(mapped)<=MAX_RESPONSE_BYTES)return mapped;
@@ -81,22 +87,39 @@ async function saveRow(tx:IDBTransaction,row:Row,signal?:AbortSignal):Promise<bo
 }
 
 /** Optional local cache. Failure is a miss; never prevents a successful translation being shown. */
-export async function readAiReadingCache(source:AiReadingSource,settings:ReadingAiSettings,names:Names,signal?:AbortSignal):Promise<AiTranslateClientResponse|undefined>{
+async function readCompletedCache(source:AiReadingSource,settings:ReadingAiSettings,names:Names,signal:AbortSignal|undefined,keepCompleted:boolean):Promise<AiTranslateClientResponse|undefined>{
   try{
-    source={...source};const key=aiReadingKey(source,settings,names);cancelled(signal);const hash=await digest(key);cancelled(signal);
+    source={...source};cancelled(signal);
+    // Reconstruct old identities: existing completed records need no migration.
+    // Prompt, Names, source/revision and every non-model option remain in the hash.
+    const candidates=keepCompleted?completedAiCandidates(settings):[settings];
+    const expected=new Map<string,ReadingAiSettings>();
+    for(const candidate of candidates)for(const key of [aiReadingKey(source,candidate,names),legacyAiReadingKey(source,candidate,names)])if(!expected.has(key))expected.set(key,candidate);
+    const hashes=await Promise.all([...expected].map(async([key,candidate])=>[await digest(key),candidate] as const));cancelled(signal);
     const result=await transaction(async tx=>{
       if(!await current(tx,source))return;
-      const store=tx.objectStore('settings'),row=await request(store.get(AI_READING_CACHE_PREFIX+hash)) as Row|undefined;
-      const cached=row&&entry(row);if(!cached||cached.bookId!==source.bookId||cached.chapterId!==source.id||!validReadingResult(cached.response,settings)||hasCopiedSource(source.text,cached.response.result,names.map(n=>n.value)))return;
-      cancelled(signal);await request(store.put({key:row!.key,value:{...cached,accessedAt:Date.now()}}));
-      return cached.response;
+      const store=tx.objectStore('settings');
+      for(const [hash,candidate] of hashes){
+        const row=await request(store.get(AI_READING_CACHE_PREFIX+hash)) as Row|undefined,cached=row&&entry(row);
+        if(!cached||cached.bookId!==source.bookId||cached.chapterId!==source.id||!validReadingResult(cached.response,candidate))continue;
+        cancelled(signal);await request(store.put({key:row!.key,value:{...cached,accessedAt:Date.now()}}));
+        return cached.response;
+      }
     },signal);cancelled(signal);return result;
   }catch{return undefined;}
+}
+export const readAiReadingCache=(source:AiReadingSource,settings:ReadingAiSettings,names:Names,signal?:AbortSignal)=>readCompletedCache(source,settings,names,signal,false);
+/** Reader-only preference reuse. Part caches and internal translation stages stay exact. */
+export async function readCompletedAiReadingCache(source:AiReadingSource,settings:ReadingAiSettings,names:Names,signal?:AbortSignal){
+  // The usual hit must not serialize/hash the whole chapter for every model.
+  const exact=await readAiReadingCache(source,settings,names,signal);
+  if(exact||signal?.aborted)return exact;
+  return readCompletedCache(source,settings,names,signal,true);
 }
 
 export async function writeAiReadingCache(source:AiReadingSource,settings:ReadingAiSettings,names:Names,result:AiTranslateClientResponse,signal?:AbortSignal):Promise<boolean>{
   try{
-    source={...source};const key=aiReadingKey(source,settings,names),completed=response(result);if(!completed||!validReadingResult(completed,settings)||hasCopiedSource(source.text,completed.result,names.map(n=>n.value)))return false;
+    source={...source};const key=aiReadingKey(source,settings,names),completed=response(result);if(!completed||!validReadingResult(completed,settings))return false;
     cancelled(signal);const hash=await digest(key);cancelled(signal);
     const saved=await transaction(async tx=>{
       if(!await current(tx,source))return false;
@@ -111,13 +134,13 @@ export async function readAiParts(source:AiReadingSource,settings:ReadingAiSetti
  try{
   source={...source};cancelled(signal);
   const key=legacyIdentity?JSON.stringify([source.bookId,source.id,source.revision,source.text,settings,settings.continuation||settings.hybrid?names:filterNamesForText(source.text,names)]):aiReadingKey(source,settings,names);
-  const hash=await digest(JSON.stringify([key,plan]));cancelled(signal);
-  const result=await transaction(async tx=>{if(!await current(tx,source))return [];const all=await rows(tx);return all.flatMap(row=>{const part=partEntry(row);return part&&part.digest===hash&&part.bookId===source.bookId&&part.chapterId===source.id&&!part.response.halves&&readingPartModels(settings).includes(part.response.model)&&!hasCopiedSource(source.text,part.response.result,names.map(n=>n.value))?[{id:part.partId,response:part.response}]:[];});},signal);cancelled(signal);return result;
+  const hash=await digest(JSON.stringify([key,plan])),oldHash=await digest(JSON.stringify([legacyAiReadingKey(source,settings,names),plan]));cancelled(signal);
+  const result=await transaction(async tx=>{if(!await current(tx,source))return [];const all=await rows(tx),found=new Map<string,AiPartRecord>();for(const expected of [...new Set([hash,oldHash])])for(const row of all){const part=partEntry(row);if(part&&part.digest===expected&&!found.has(part.partId)&&part.bookId===source.bookId&&part.chapterId===source.id&&!part.response.halves&&readingPartModels(settings).includes(part.response.model))found.set(part.partId,{id:part.partId,response:part.response});}return [...found.values()];},signal);cancelled(signal);return result;
  }catch{return [];}
 }
 export async function writeAiPart(source:AiReadingSource,settings:ReadingAiSettings,names:Names,plan:string,id:string,result:AiTranslateClientResponse,signal?:AbortSignal):Promise<boolean>{
  try{
-  source={...source};const completed=response(result);if(!completed||completed.halves||!validAiPartId(id)||!readingPartModels(settings).includes(completed.model)||hasCopiedSource(source.text,completed.result,names.map(n=>n.value)))return false;
+  source={...source};const completed=response(result);if(!completed||completed.halves||!validAiPartId(id)||!readingPartModels(settings).includes(completed.model))return false;
   cancelled(signal);const hash=await digest(JSON.stringify([aiReadingKey(source,settings,names),plan]));cancelled(signal);
   const row:Row={key:AI_PART_CACHE_PREFIX+hash+':'+id,value:{version:'parts-1',bookId:source.bookId,chapterId:source.id,digest:hash,partId:id,accessedAt:Date.now(),response:completed} satisfies PartEntry};
   const saved=await transaction(async tx=>{if(!await current(tx,source))return false;return saveRow(tx,row,signal);},signal);cancelled(signal);return saved;

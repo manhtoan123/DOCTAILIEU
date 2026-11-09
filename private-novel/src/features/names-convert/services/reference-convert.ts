@@ -1,4 +1,4 @@
-import type {ConvertOptions,Token} from './language';
+import type {ConvertBudget,ConvertOptions,Token} from './language';
 import type {DictKind} from '../../../core/domain';
 import {nameSourceKey,parseNameValue,NAME_IMAGE_LIMIT,type NameImage} from './name-images';
 
@@ -25,10 +25,13 @@ function normalize(source:string,enabled:boolean):Mapped {
   if(source.startsWith('\r\n',at))key='\r\n';
   else if(enabled&&(source.startsWith('——',at)||source.startsWith('……',at)))key=source.slice(at,at+2);
   at+=key.length;
-  if(enabled&&/^[ \t]$/.test(key)){
-   let left=start-1;while(left>=0&&/[ \t]/.test(source[left]))left--;
-   let right=at;while(right<source.length&&/[ \t]/.test(source[right]))right++;
-   if(punctuationChars.has(source[left])||punctuationChars.has(source[right]))continue;
+  if(enabled&&(key===' '||key==='\t')){
+   while(source[at]===' '||source[at]==='\t')at++;
+   if(!punctuationChars.has(source[start-1])&&!punctuationChars.has(source[at])){
+    result.text+=source.slice(start,at);
+    for(let i=start;i<at;i++){result.starts.push(i);result.ends.push(i+1);}
+   }
+   continue;
   }
   const value=/^\r\n?$/.test(key)?'\n':enabled?(punctuation.get(key)??key):key;
   result.text+=value;for(let i=0;i<value.length;i++){result.starts.push(start);result.ends.push(at);}
@@ -37,7 +40,10 @@ function normalize(source:string,enabled:boolean):Mapped {
 }
 export function normalizeKey(key:string){return normalize(key,true).text;}
 function replaceRanges(input:Mapped,replacements:{start:number;end:number;text:string}[]):Mapped {
- if(!replacements.length)return input;const output:Mapped={text:'',starts:[],ends:[]};let at=0;
+ if(!replacements.length)return input;
+ const length=replacements.reduce((size,row)=>size+row.text.length-(row.end-row.start),input.text.length);
+ if(length>2000000)throw new Error('Kết quả Luật Nhân quá lớn; hãy chia đoạn nhỏ hơn.');
+ const output:Mapped={text:'',starts:[],ends:[]};let at=0;
  for(const replacement of replacements){
   output.text+=input.text.slice(at,replacement.start);
   for(let i=at;i<replacement.start;i++){output.starts.push(input.starts[i]);output.ends.push(input.ends[i]);}
@@ -47,12 +53,11 @@ function replaceRanges(input:Mapped,replacements:{start:number;end:number;text:s
  }
  output.text+=input.text.slice(at);
  for(let i=at;i<input.text.length;i++){output.starts.push(input.starts[i]);output.ends.push(input.ends[i]);}
- if(output.text.length>2000000)throw new Error('Kết quả Luật Nhân quá lớn; hãy chia đoạn nhỏ hơn.');
  return output;
 }
 const escape=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 
-export function referenceConvert(source:string,names:{key:string;value:string}[],indexes:Indexes,rules:Map<string,string>,options:ConvertOptions):Token[]{
+export function referenceConvert(source:string,names:{key:string;value:string}[],indexes:Indexes,rules:Map<string,string>,options:ConvertOptions,budget?:ConvertBudget):Token[]{
  const normalized=options.standardizePunctuation!==false;
  const capitalize=options.capitalize!==false;
  let mapped=normalize(source,normalized);
@@ -61,23 +66,46 @@ export function referenceConvert(source:string,names:{key:string;value:string}[]
  for(const {key,value}of names){const sourceKey=nameSourceKey(key),normalizedKey=normalized?normalizeKey(sourceKey):sourceKey;const old=combined.get(normalizedKey);combined.set(normalizedKey,{value,type:'name',user:true,order:old?.order??order++});}
  // Gather only keys present in the paragraph, then protect globally longest names.
  // This also protects names that start inside a longer ordinary phrase or rule.
- const namePrefixes=new Map<string,string[]>();
- for(const key of combined.keys()){const list=namePrefixes.get(key[0])??[];list.push(key);namePrefixes.set(key[0],list);}
+ const nameLengths=new Map<string,Set<number>>();
+ for(const key of combined.keys()){const lengths=nameLengths.get(key[0])??new Set<number>();lengths.add(key.length);nameLengths.set(key[0],lengths);}
  const candidates:{start:number;end:number;key:string}[]=[];
- for(let at=0;at<mapped.text.length;at++)for(const key of namePrefixes.get(mapped.text[at])??[]){if(mapped.text.startsWith(key,at))candidates.push({start:at,end:at+key.length,key});}
+ for(let at=0;at<mapped.text.length;at++){
+  const lengths=nameLengths.get(mapped.text[at]);if(!lengths)continue;
+  budget?.(lengths.size);
+  for(const length of lengths){
+   const end=at+length;
+   if(end>mapped.text.length)continue;
+   const key=mapped.text.slice(at,end);
+   if(combined.has(key)){budget?.(64);candidates.push({start:at,end,key});}
+  }
+ }
  candidates.sort((a,b)=>b.key.length-a.key.length||Number(combined.get(b.key)!.user)-Number(combined.get(a.key)!.user)||combined.get(a.key)!.order-combined.get(b.key)!.order||a.start-b.start);
  const occupied=new Uint8Array(mapped.text.length);const selected:typeof candidates=[];
  for(const match of candidates){let overlap=false;for(let i=match.start;i<match.end;i++)if(occupied[i]){overlap=true;break;}if(overlap)continue;occupied.fill(1,match.start,match.end);selected.push(match);}
- let marker='\uE000';while(source.includes(marker))marker+='\uE001';
+ let markerTail=0;
+ for(let at=source.indexOf('\uE000');at!==-1;at=source.indexOf('\uE000',at)){
+  const start=++at;
+  while(source[at]==='\uE001')at++;
+  markerTail=Math.max(markerTail,at-start+1);
+ }
+ const marker='\uE000'+'\uE001'.repeat(markerTail);
+ budget?.(24*marker.length*selected.length);
  const protectedWords=new Map<string,{value:string;type:string;sourceKey:string}>();
  mapped=replaceRanges(mapped,selected.sort((a,b)=>a.start-b.start).map((match,i)=>{const id=`${marker}${i}\uE002`;const info=combined.get(match.key)!;protectedWords.set(id,{...info,sourceKey:match.key});return {...match,text:id};}));
  const priority:DictKind[]=['names2','names','vp','chapter','number','pronouns','hanviet','english','blacklist'];
  const exact=(key:string)=>{const own=combined.get(key);if(own)return first(own.value);for(const kind of priority){const value=indexes[kind].get(key,normalized);if(value!==undefined)return first(value);}return key;};
  for(const [key,value]of [...rules].sort((a,b)=>b[0].length-a[0].length)){
+  budget?.(Math.ceil(mapped.text.length/16));
   const [before,after]=key.split('{0}');if(!mapped.text.includes(before)||!mapped.text.includes(after))continue;
+  // The greedy capture can backtrack from multiple starts in one Han run.
+  if(budget)for(const run of mapped.text.matchAll(/[\u4e00-\u9fa5]+/g))budget(run[0].length**2);
   const pattern=new RegExp(`${escape(before)}([\u4e00-\u9fa5]+)${escape(after)}`,'g');
   const replacements:{start:number;end:number;text:string}[]=[];
-  for(const match of mapped.text.matchAll(pattern))replacements.push({start:match.index!,end:match.index!+match[0].length,text:value.replace('{0}',()=>exact(match[1]))});
+  for(const match of mapped.text.matchAll(pattern)){
+   const text=value.replace('{0}',()=>exact(match[1]));
+   budget?.(64+24*text.length);
+   replacements.push({start:match.index!,end:match.index!+match[0].length,text});
+  }
   mapped=replaceRanges(mapped,replacements);
  }
  const ordinary:DictKind[]=['vp','chapter','number','pronouns','hanviet','english','blacklist'];
@@ -112,6 +140,7 @@ export function referenceConvert(source:string,names:{key:string;value:string}[]
   if(target.trim()){lineStart=false;if(/[.!?]$/.test(target.trim())||openings.has(key)||openingQuote)sentenceStart=true;}
   if(quote){if(!openingQuote)sentenceStart=false;if(key==='"')doubleQuote=!doubleQuote;else singleQuote=!singleQuote;}
   if(isNewline){lineStart=true;sentenceStart=false;doubleQuote=false;singleQuote=false;}
+  if(budget)budget(160+6*(key.length+target.length+choices.reduce((sum,choice)=>sum+choice.length,0))+32*choices.length);
   raw.push({sourceStart:mapped.starts[start],sourceEnd:mapped.ends[at-1],source:source.slice(mapped.starts[start],mapped.ends[at-1]),targetText:space+target,type,meanings:choices,hanviet:'',...(nameImage?{nameImage}:{})});
   last=isNewline?'':key.slice(-1);
  }

@@ -17,14 +17,14 @@ async function seed(page:Page,savedChapter=1){
       return original.call(this,options);
     };
   },savedChapter);
-  await page.getByRole('button',{name:'Thông tin Truyện review',exact:true}).click();
+  await page.getByRole('link',{name:'Thông tin Truyện review',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Truyện review',exact:true})).toBeVisible();
 }
 
 for(const action of ['Đọc tiếp','Đọc từ đầu','Chương 1: Review']){
   test(`review same saved chapter: ${action} restores the intended paragraph`,async({page})=>{
     await seed(page);
-    await page.getByRole('button',{name:action,exact:true}).click();
+    await page.getByRole('link',{name:action,exact:true}).click();
     await expect(page.locator('.prose')).toContainText('Chương 1 đoạn 12.');
     await expect.poll(()=>page.evaluate(()=>(window as any).__reviewScrolls)).toEqual([
       // paragraphRanges indexes blank lines too, so text block 6 has paragraph index 12.
@@ -35,7 +35,7 @@ for(const action of ['Đọc tiếp','Đọc từ đầu','Chương 1: Review'])
 
 test('review explicit non-first saved chapter starts at zero',async({page})=>{
   await seed(page,2);
-  await page.getByRole('button',{name:'Chương 2: Review',exact:true}).click();
+  await page.getByRole('link',{name:'Chương 2: Review',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as any).__reviewScrolls)).toEqual([
     {paragraph:0,text:expect.stringContaining('Chương 2 đoạn 0.')}
   ]);
@@ -55,9 +55,9 @@ test('review cancelled paragraph lookup cannot scroll or save the previous chapt
       return row;
     };
   });
-  await page.getByRole('button',{name:'Đọc tiếp',exact:true}).click();
+  await page.getByRole('link',{name:'Đọc tiếp',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as any).__reviewLookupBlocked)).toBe(true);
-  await page.getByRole('button',{name:'Chương sau →',exact:true}).first().click();
+  await page.getByRole('link',{name:'Chương sau →',exact:true}).first().click();
   await expect(page.locator('.prose')).toContainText('Chương 2 đoạn 0.');
   await expect.poll(()=>page.evaluate(()=>(window as any).__reviewScrolls.length)).toBe(1);
   await page.evaluate(()=>(window as any).__reviewRelease());
@@ -66,7 +66,7 @@ test('review cancelled paragraph lookup cannot scroll or save the previous chapt
   expect(await page.evaluate(()=>(window as any).__reviewScrolls)).toEqual([
     {paragraph:0,text:expect.stringContaining('Chương 2 đoạn 0.')}
   ]);
-  await page.getByRole('button',{name:'← Thông tin truyện',exact:true}).click();
+  await page.getByRole('link',{name:'← Thông tin truyện',exact:true}).click();
   await expect.poll(()=>page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);return (await db.progress.get('review-book'))?.chapterId;})).toBe('review-2');
 });
 
@@ -74,12 +74,12 @@ test('review missing saved chapter resumes first chapter and empty story disable
   await seed(page);
   await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);await db.progress.update('review-book',{chapterId:'missing'});});
   await expect(page.locator('.story-progress')).toContainText('không còn khả dụng');
-  await page.getByRole('button',{name:'Đọc tiếp',exact:true}).click();
+  await page.getByRole('link',{name:'Đọc tiếp',exact:true}).click();
   await expect(page.locator('.prose')).toContainText('Chương 1 đoạn 0.');
-  await page.getByRole('button',{name:'← Thông tin truyện',exact:true}).click();
+  await page.getByRole('link',{name:'← Thông tin truyện',exact:true}).click();
   await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);await db.chapters.where('bookId').equals('review-book').delete();});
-  await expect(page.getByRole('button',{name:'Đọc tiếp',exact:true})).toBeDisabled();
-  await expect(page.getByRole('button',{name:'Đọc từ đầu',exact:true})).toBeDisabled();
+  await expect(page.getByRole('link',{name:'Đọc tiếp',exact:true})).toBeDisabled();
+  await expect(page.getByRole('link',{name:'Đọc từ đầu',exact:true})).toBeDisabled();
 });
 
 test('review leaving before paragraph lookup finishes preserves saved progress',async({page})=>{
@@ -96,9 +96,9 @@ test('review leaving before paragraph lookup finishes preserves saved progress',
       return row;
     };
   });
-  await page.getByRole('button',{name:'Đọc tiếp',exact:true}).click();
+  await page.getByRole('link',{name:'Đọc tiếp',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as any).__reviewLookupBlocked)).toBe(true);
-  await page.getByRole('button',{name:'← Thông tin truyện',exact:true}).click();
+  await page.getByRole('link',{name:'← Thông tin truyện',exact:true}).click();
   await expect(page.getByRole('region',{name:'Thông tin truyện',exact:true})).toBeVisible();
   await page.evaluate(()=>(window as any).__reviewRelease());
   await page.waitForTimeout(800);
@@ -123,13 +123,13 @@ test('review cancelled initial lookup cannot override a later explicit chapter m
       return row;
     };
   });
-  await page.getByRole('button',{name:'Đọc tiếp',exact:true}).click();
+  await page.getByRole('link',{name:'Đọc tiếp',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as any).__reviewInitialBlocked)).toBe(true);
   await expect(page.locator('.prose [data-paragraph]')).toHaveCount(0);
-  await page.getByRole('button',{name:'← Thông tin truyện',exact:true}).click();
+  await page.getByRole('link',{name:'← Thông tin truyện',exact:true}).click();
   await expect(page.getByRole('region',{name:'Thông tin truyện',exact:true})).toBeVisible();
   await page.evaluate(()=>{(window as any).__reviewBlockInitial=false;});
-  await page.getByRole('button',{name:'Chương 3: Review',exact:true}).click();
+  await page.getByRole('link',{name:'Chương 3: Review',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as any).__reviewScrolls.length)).toBe(1);
   await page.evaluate(()=>(window as any).__reviewReleaseAll());
   await page.waitForTimeout(800);

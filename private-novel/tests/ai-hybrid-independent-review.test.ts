@@ -11,7 +11,7 @@ import {EPUB_AI_CHAPTER_LIMITS} from '../src/features/ai/services/ai-job';
 import {hybridSampleHash} from '../src/features/ai/services/ai-hybrid';
 
 const settings:ReadingAiSettings={...AI_DEFAULTS,model:'gemini-2.5-flash',fallbackModels:[],hybrid:{version:1,liteModel:'gemini-3.5-flash-lite',rules:'Gọi anh; literal {{text}}.'}};
-const source={bookId:'hybrid-review',id:'hybrid-review-chapter',revision:1,text:'甲'.repeat(1800)+'乙'.repeat(1800)};
+const source={bookId:'hybrid-review',id:'hybrid-review-chapter',revision:1,text:'甲'.repeat(3000)+'乙'.repeat(3000)};
 const answer=(result:string,model:string)=>({result,model,finishReason:'STOP',inputTokens:1,outputTokens:1});
 const cache={read:readAiReadingCache,write:writeAiReadingCache,readParts:readAiParts,writePart:writeAiPart};
 const layout={path:'chapter.xhtml',nodes:[source.text],body:'<body><p><i>text</i><img src="cover.png"></p></body>',styles:[]};
@@ -29,23 +29,24 @@ it.each(['txt','epub'])('hybrid review: short %s still sends saved addressing ru
 it('hybrid review: reload preserves first-half child and its pinned model, then supplies full recovered sample',async()=>{
  let fail=true;const calls:AiTranslateClientRequest[]=[],send=async(req:AiTranslateClientRequest)=>{
   calls.push(req);if(req.continuation){expect(req.continuation.sample).toBe('A\nB');return answer('C',req.model!);}
-  if(req.text.length===1800)throw new AiTranslateClientError('ai_incomplete_result','Synthetic truncation',502,'output_limit');
-  if(calls.filter(r=>!r.continuation&&r.text.length===900).length===1)return answer('A',req.model!);
+  if(req.text.length===3000)throw new AiTranslateClientError('ai_incomplete_result','Synthetic truncation',502,'output_limit');
+  if(calls.filter(r=>!r.continuation&&r.text.length===1500).length===1)return answer('A',req.model!);
   if(fail)throw new AiTranslateClientError('ai_auth_error','Synthetic stop',403);
   return answer('B',req.model!);
  };
  const first=new AiReadingSession(send,cache);await expect(first.request(source,settings,[])).rejects.toThrow();first.clear();const before=calls.length;fail=false;
- const resumed=new AiReadingSession(send,cache);try{const result=await resumed.request(source,settings,[]);expect(result.result).toBe('A\nB\nC');expect(result.halves?.models).toEqual(['gemini-2.5-flash','gemini-3.5-flash-lite']);expect(calls.slice(before).map(r=>r.text.length)).toEqual([900,1800]);}finally{resumed.clear();}
+ const resumed=new AiReadingSession(send,cache);try{const result=await resumed.request(source,settings,[]);expect(result.result).toBe('A\nB\nC');expect(result.halves?.models).toEqual(['gemini-2.5-flash','gemini-3.5-flash-lite']);expect(calls.slice(before).map(r=>r.text.length)).toEqual([1500,3000]);}finally{resumed.clear();}
 });
 
 it('hybrid review: EPUB reload keeps full readable sample and original node mapping',async()=>{
+ const epubSource={...source,text:'甲'.repeat(1800)+'乙'.repeat(1800)},epubLayout={...layout,nodes:['甲'.repeat(1800)+'乙'.repeat(1800)]};await db.chapters.update(source.id,{text:epubSource.text});
  let fail=true,firstCalls=0,secondCalls=0;const send=async(req:AiTranslateClientRequest)=>{
   const row=JSON.parse(req.text);if(!req.continuation){firstCalls++;return answer(JSON.stringify(Object.fromEntries(Object.keys(row).map(k=>[k,'A {{text}}']))),req.model!);}
   secondCalls++;expect(req.continuation.sample).toBe('A {{text}}');if(fail)throw new AiTranslateClientError('ai_auth_error','Synthetic stop',403);
   return answer(JSON.stringify(Object.fromEntries(Object.keys(row).map(k=>[k,'B']))),req.model!);
  };
- const first=new EpubAiSession(cache,send);await expect(first.request(source,settings,[],layout)).rejects.toThrow();first.clear();fail=false;
- const resumed=new EpubAiSession(cache,send);try{const result=await resumed.request(source,settings,[],layout);expect(result.nodes).toEqual(['A {{text}}B']);expect(firstCalls).toBe(1);expect(secondCalls).toBe(2);expect((await readAiReadingCache(source,settings,[]))?.halves).toEqual(result.halves);}finally{resumed.clear();}
+ const first=new EpubAiSession(cache,send);await expect(first.request(epubSource,settings,[],epubLayout)).rejects.toThrow();first.clear();fail=false;
+ const resumed=new EpubAiSession(cache,send);try{const result=await resumed.request(epubSource,settings,[],epubLayout);expect(result.nodes).toEqual(['A {{text}}B']);expect(firstCalls).toBe(1);expect(secondCalls).toBe(2);expect((await readAiReadingCache(epubSource,settings,[]))?.halves).toEqual(result.halves);}finally{resumed.clear();}
 });
 
 it('hybrid review: cancelled second-half response cannot overwrite a replacement same-key job',async()=>{
@@ -70,9 +71,9 @@ it('hybrid review: real prompt preview matches server rendering for legacy {name
  const response=await handleAiTranslate(new Request('https://test/api/ai/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),{GEMINI_API_KEY:'synthetic-only'});expect(response.status).toBe(200);expect(aiUserPromptPreview(body)).toBe(actual);
 });
 
-it('hybrid review: legacy 3.5 Lite still aliases default outside continuation',async()=>{
+it('hybrid review: restored 3.5 Lite uses its actual endpoint outside continuation',async()=>{
  let endpoint='';vi.spyOn(globalThis,'fetch').mockImplementation(async(url)=>{endpoint=String(url);return Response.json({candidates:[{content:{parts:[{text:'Result'}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:1,candidatesTokenCount:1}});});
- const response=await handleAiTranslate(new Request('https://test/api/ai/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'Target',model:'gemini-3.5-flash-lite'})}),{GEMINI_API_KEY:'synthetic-only'});expect(response.status).toBe(200);expect(endpoint).toContain('/models/gemini-3.5-flash:generateContent');expect(await response.json()).toMatchObject({model:'gemini-3.5-flash-lite'});
+ const response=await handleAiTranslate(new Request('https://test/api/ai/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'Target',model:'gemini-3.5-flash-lite'})}),{GEMINI_API_KEY:'synthetic-only'});expect(response.status).toBe(200);expect(endpoint).toContain('/models/gemini-3.5-flash-lite:generateContent');expect(await response.json()).toMatchObject({model:'gemini-3.5-flash-lite'});
 });
 
 it('hybrid v2 review: changing only second prompt resumes incomplete first-half checkpoint',async()=>{

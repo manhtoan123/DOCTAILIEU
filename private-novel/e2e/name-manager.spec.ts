@@ -18,7 +18,7 @@ async function fixture(page:Page,count=2){
   await expect(page.locator('.prose')).toContainText('Cổng A. Nước A.');
   return openNames(page);
 }
-async function openBook(page:Page,title:string){if(new URL(page.url()).pathname!=='/')await page.goto('/');await page.locator('.book-card').filter({has:page.getByRole('button',{name:title,exact:true})}).getByRole('button',{name:'Mở sách →',exact:true}).click();}
+async function openBook(page:Page,title:string){if(new URL(page.url()).pathname!=='/')await page.goto('/');await page.locator('.book-card').filter({has:page.getByRole('button',{name:title,exact:true})}).getByRole('link',{name:'Mở sách →',exact:true}).click();}
 async function openNames(page:Page){
   await page.getByRole('button',{name:'Cài đặt đọc truyện',exact:true}).click();
   await page.getByRole('button',{name:'✎ Name',exact:true}).click();
@@ -40,7 +40,7 @@ test('inline Name saves one key, reconverts, preserves other book and survives r
   expect(after.filter((entry:{id:string})=>entry.id!=='a-gate')).toEqual(before.filter((entry:{id:string})=>entry.id!=='a-gate'));
   expect(after.find((entry:{id:string})=>entry.id==='a-gate')).toMatchObject({key:'山门',value:'Cổng Mới'});
   await page.reload();await openBook(page,'Name UI A');await page.getByRole('button',{name:'Convert',exact:true}).click();await expect(page.locator('.prose')).toContainText('Cổng Mới. Nước A.');
-  await page.getByRole('button',{name:'← Tủ sách',exact:true}).click();await openBook(page,'Name UI B');await page.getByRole('button',{name:'Convert',exact:true}).click();await expect(page.locator('.prose')).toContainText('Cổng B.');
+  await page.getByRole('link',{name:'← Tủ sách',exact:true}).click();await openBook(page,'Name UI B');await page.getByRole('button',{name:'Convert',exact:true}).click();await expect(page.locator('.prose')).toContainText('Cổng B.');
   panel=await openNames(page);await panel.getByRole('button',{name:'Thêm tên',exact:true}).click();
   await panel.getByLabel('Chữ nguồn của Name').fill('水');await panel.getByLabel('Tên Việt của Name').fill('Nước B');await panel.getByRole('button',{name:'Lưu tên',exact:true}).click();await expect(page.locator('.prose')).toContainText('Cổng B. Nước B.');
 });

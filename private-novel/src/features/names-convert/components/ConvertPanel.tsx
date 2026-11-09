@@ -4,6 +4,7 @@ import {convert,lookup} from '../services/language-client';
 import type {Token} from '../services/language';
 import {deleteConvertName,expandConvertSelection,formatConvertNames,parseConvertNames,readConvertNames,saveConvertNames} from '../services/convert-names';
 import {errorText} from '../../../shared/components/common';
+import {canonicalNameKey,displayNameKey,formatNameDraft,nameKeyResolver,resolveNameKey} from '../services/name-format';
 
 const LIMIT=64000;
 type Mode='vietphrase'|'hanviet';
@@ -86,13 +87,16 @@ export default function ConvertPanel({dictionaryVersion=''}:{dictionaryVersion?:
     try {
       const text=await readTxt(file);
       if(!alive.current||context!==generation.current||(toNames&&revision!==draftRevision.current))return;
-      if(toNames){parseConvertNames(text);changeNames(text);}else setSource(text);
+      if(toNames){parseConvertNames(text);changeNames(formatNameDraft(text));}else setSource(text);
       setMessage(toNames?'Đã nhập bản nháp Name List; bấm Lưu Name List để lưu lâu dài.':'Đã nhập đoạn TXT UTF-8; bấm Convert.');
     }catch(e){if(alive.current&&context===generation.current)setMessage(errorText(e));}
   }
   async function saveDraft() {
     const revision=draftRevision.current,draft=namesText;setSaving(true);
     try {
+      // A formatted list cannot identify which legacy alias the user intended.
+      // Report that ambiguity before deriving edits from a canonical draft.
+      const resolveKey=nameKeyResolver(stored?.names??[]);for(const row of stored?.names??[])resolveKey(row.key);
       const old=new Map(parseConvertNames(baseline.current).map(n=>[n.key,n.value]));
       const edits=parseConvertNames(draft).filter(n=>old.get(n.key)!==n.value);
       const count=await saveConvertNames(formatConvertNames(edits));
@@ -125,8 +129,9 @@ export default function ConvertPanel({dictionaryVersion=''}:{dictionaryVersion?:
     finally{if(alive.current)setSaving(false);}
   }
   async function removeName() {
-    if(!selected)return;const key=selected.source,context=contentVersion.current;setSaving(true);
+    if(!selected)return;const context=contentVersion.current;setSaving(true);
     try {
+      const key=resolveNameKey(selected.source,stored?.names??[]);
       await deleteConvertName(key);const latest=formatConvertNames(await readConvertNames());
       if(!alive.current)return;observed.current=latest;
       if(!dirty.current){baseline.current=latest;setNamesText(latest);}
@@ -156,9 +161,9 @@ export default function ConvertPanel({dictionaryVersion=''}:{dictionaryVersion?:
         </div>
       </div>
       <div className="convert-names"><h3>Name List <span className="convert-count">{stored?.names.length??'…'} mục đã lưu</span></h3>
-        <p className="muted">Mỗi dòng: chữ Trung=tên Việt. Bấm Lưu để hợp nhất; đóng trang hoặc tải lại vẫn giữ mục đã lưu.</p>
+        <p className="muted">Mỗi dòng: $中文=Việt. Bấm Lưu để hợp nhất; đóng trang hoặc tải lại vẫn giữ mục đã lưu.</p>
         <p className="muted">Bản sao lưu truyện có kèm Name List chung. Khi khôi phục, giữ mục đang có hoặc đã xóa trên thiết bị; chỉ bổ sung mục còn thiếu. Bạn cũng có thể xuất Name List TXT riêng.</p>
-        <label>Name List<textarea aria-label="Name List" rows={10} value={namesText} placeholder="张三=Trương Tam" onChange={event=>changeNames(event.target.value)}/></label>
+        <label>Name List<textarea aria-label="Name List" rows={10} value={namesText} placeholder="$张三=Trương Tam" onChange={event=>changeNames(event.target.value)}/></label>
         {dirty.current&&<p className="muted">Bản nháp chưa lưu. Convert dùng Name List đã lưu.</p>}
         <div className="convert-toolbar">
           <button className="primary" disabled={saving||!stored||!!stored.error} onClick={()=>void saveDraft()}>{saving?'Đang lưu…':'Lưu Name List'}</button>
@@ -176,18 +181,18 @@ export default function ConvertPanel({dictionaryVersion=''}:{dictionaryVersion?:
     }}>Sao chép kết quả</button><button disabled={!tokens.length} onClick={()=>saveTxt(output,'Convert.txt')}>Tải kết quả TXT</button></div>
     {selected&&<div className="convert-lookup" aria-label="Tra từ Convert"><div className="convert-output-heading"><h3>Dịch nhanh · Thêm / chỉnh Name</h3><button onClick={()=>{selection.current++;setSelected(undefined);setDetails(undefined);}}>Đóng tra từ</button></div>
       <div className="convert-expand"><button aria-label="Mở rộng sang trái" disabled={selected.sourceStart===0} onClick={()=>expand('left')}>← Mở rộng</button>
-        <strong aria-label="Chữ Trung đang chọn">{selected.source}</strong><button aria-label="Mở rộng sang phải" disabled={selected.sourceEnd===source.length} onClick={()=>expand('right')}>Mở rộng →</button></div>
+        <strong aria-label="Chữ Trung đang chọn">{displayNameKey(selected.source)}</strong><button aria-label="Mở rộng sang phải" disabled={selected.sourceEnd===source.length} onClick={()=>expand('right')}>Mở rộng →</button></div>
       <p>Hán-Việt: {lookupBusy?'Đang tra…':details?.hanviet||selected.hanviet||'Không có phiên âm'}</p>
       <p>Nghĩa: {choices.join(' / ')||'Chưa có nghĩa trong từ điển'}</p>
       <div className="convert-toolbar">{choices.map(value=><button key={value} onClick={()=>setEdit(value)}>{value}</button>)}{details?.hanviet&&<button onClick={()=>setEdit(details.hanviet)}>Dùng Hán-Việt</button>}</div>
       <label>Nghĩa tùy chỉnh<input aria-label="Tên Việt tạm" value={edit} onChange={event=>setEdit(event.target.value)}/></label>
       <div className="convert-toolbar"><button onClick={()=>setEdit(edit.replace(/(^|\s)(\p{L})/gu,(_all,space:string,char:string)=>space+char.toLocaleUpperCase('vi')))}>Hoa chữ đầu</button><button onClick={()=>setEdit(edit.toLocaleUpperCase('vi'))}>Hoa toàn bộ</button></div>
-      <div className="convert-toolbar"><button className="primary" disabled={saving} onClick={()=>void editName(true)}>Thêm Name</button><button disabled={saving} onClick={()=>void editName(false)}>Áp dụng tạm và Convert lại</button><button disabled={saving||!stored?.names.some(n=>n.key===selected.source)} onClick={()=>void removeName()}>Xóa Name đã lưu</button></div>
+      <div className="convert-toolbar"><button className="primary" disabled={saving} onClick={()=>void editName(true)}>Thêm Name</button><button disabled={saving} onClick={()=>void editName(false)}>Áp dụng tạm và Convert lại</button><button disabled={saving||!stored?.names.some(n=>canonicalNameKey(n.key)===canonicalNameKey(selected.source))} onClick={()=>void removeName()}>Xóa Name đã lưu</button></div>
       <p className="muted">Thêm Name lưu lâu dài trên thiết bị; Áp dụng tạm chỉ giữ trong phiên này.</p>
     </div>}
     <details className="convert-temporary"><summary>Name List tạm — chỉ trong phiên này</summary>
       <label>Name List tạm<textarea aria-label="Name List tạm" rows={3} value={temporaryText} onChange={event=>{contentVersion.current++;invalidate();if(event.target.value.length>LIMIT){setMessage('Name List vượt 64.000 ký tự UTF-16.');return;}setTemporaryText(event.target.value);}}/></label>
-      <div className="convert-toolbar"><button onClick={()=>{try{parseConvertNames(temporaryText);saveTxt(temporaryText,'NameList-session.txt');}catch(e){setMessage(errorText(e));}}}>Xuất Name List tạm</button><button onClick={()=>{contentVersion.current++;invalidate();setTemporaryText('');}}>Xóa Name List tạm</button></div>
+      <div className="convert-toolbar"><button onClick={()=>{try{parseConvertNames(temporaryText);saveTxt(formatNameDraft(temporaryText),'NameList-session.txt');}catch(e){setMessage(errorText(e));}}}>Xuất Name List tạm</button><button onClick={()=>{contentVersion.current++;invalidate();setTemporaryText('');}}>Xóa Name List tạm</button></div>
     </details>
   </section>;
 }
