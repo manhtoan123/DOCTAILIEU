@@ -1,10 +1,10 @@
 # Private Novel
 02/11/2026.
 
-Chỉ mục: docs/README.md. UI gọn 09/11: docs/QUIET-UI.md.
+Chỉ mục: docs/README.md. UI gọn và nút về Phòng tối: docs/QUIET-UI.md. Chuẩn bị Android: mục Android trong docs/README.md.
 
 ## Online
-https://thu-phong-private.pages.dev/ — Pages1ed7a036, index-VRCJMJKm.js; AIWorkere2e5a4ea. Schema0018, SHARED_STATE_ENABLED=1. RollbackPages1dda9704; AI710b3319.
+https://thu-phong-private.pages.dev/ — Pages b56d1e87, index-CznOMLyy.js, source c9ea547. AI Worker e2e5a4ea. Schema0018, SHARED_STATE_ENABLED=1. Rollback Pages 1ed7a036, AI 710b3319.
 
 Nhập lọc quảng cáo, giữ nguồn/sách cũ: docs/IMPORT-ADVERTISING-CLEANUP.md. Gemma26 cố định prompt/auto-resume: docs/GEMMA26-AND-AI-RESUME-2026-11-02.md.
 
