@@ -1,13 +1,12 @@
 import type {Chapter,NameEntry} from '../../../core/domain';
 import {convertBatchTitles} from '../../names-convert/services/title-converter';
 import {hasChinese} from './title-resolver';
+import {normalizeLibrarySearch} from './fuzzy-library-search';
+
+export {normalizeLibrarySearch,searchFuzzyLibraryBooks,type FuzzyLibraryBook,type FuzzyLibraryHit,type FuzzyLibraryRow} from './fuzzy-library-search';
 
 export type SearchChapter=Pick<Chapter,'id'|'bookId'|'order'|'title'|'displayTitle'>;
 export interface ChapterMatch {chapterId:string;title:string;displayTitle:string;count:number}
-
-export function normalizeLibrarySearch(text:string):string{
-  return text.toLocaleLowerCase('vi-VN').normalize('NFD').replace(/\p{M}/gu,'').replace(/đ/g,'d').trim();
-}
 
 export async function searchChapterTitles(chapters:SearchChapter[],query:string,namesByBook:Map<string,NameEntry[]>,signal:AbortSignal):Promise<Record<string,ChapterMatch>>{
   const matches:Record<string,ChapterMatch>=Object.create(null);

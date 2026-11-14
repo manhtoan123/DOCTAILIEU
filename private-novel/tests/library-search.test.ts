@@ -2,7 +2,7 @@ import {describe,it,expect,vi} from 'vitest';
 import type {NameEntry} from '../src/core/domain';
 
 vi.mock('../src/features/names-convert/services/title-converter',()=>({convertBatchTitles:vi.fn(async(titles:string[],names:NameEntry[])=>titles.map(title=>names.find(name=>name.key===title)?.value||({'初见':'Lần đầu gặp','山门':'Sơn môn'}[title]||title)))}));
-import {searchChapterTitles,type SearchChapter} from '../src/features/library/services/library-search';
+import {searchChapterTitles,searchFuzzyLibraryBooks,type SearchChapter,type FuzzyLibraryBook} from '../src/features/library/services/library-search';
 import {convertBatchTitles} from '../src/features/names-convert/services/title-converter';
 
 const chapters:SearchChapter[]=[
@@ -33,5 +33,29 @@ describe('library chapter search',()=>{
     const controller=new AbortController();
     vi.mocked(convertBatchTitles).mockImplementationOnce(async titles=>{controller.abort();return titles;});
     await expect(searchChapterTitles(chapters,'初见',new Map(),controller.signal)).rejects.toMatchObject({name:'AbortError'});
+  });
+});
+
+describe('fuzzy library metadata search',()=>{
+  const books:FuzzyLibraryBook[]=[
+    {bookId:'vi-title',title:'Lâm Viễn Trở Về',convertedTitle:'Lâm Viễn Trở Về',author:'Người Khác',album:''},
+    {bookId:'zh-title',title:'重生之我是大佬',convertedTitle:'Ta Là Đại Lão',author:'Mộ Dung Liễu',album:'Tác giả/Huyền Huyễn'},
+    {bookId:'author-hit',title:'Một Truyện Khác',convertedTitle:'',author:'Lâm Viễn Trở Về',album:''},
+  ];
+
+  it('matches Vietnamese typos across normalized title, author and Album fields',async()=>{
+    expect((await searchFuzzyLibraryBooks(books,'lam vien tro vef')).map(hit=>hit.bookId)).toEqual(['vi-title','author-hit']);
+    expect((await searchFuzzyLibraryBooks(books,'mo dung liue')).map(hit=>hit.bookId)).toEqual(['zh-title']);
+    expect((await searchFuzzyLibraryBooks(books,'huyen huyehn')).map(hit=>hit.bookId)).toEqual(['zh-title']);
+  });
+
+  it('matches a typo in the raw CJK title while keeping the query separate from chapter text',async()=>{
+    expect((await searchFuzzyLibraryBooks(books,'重生之我是不佬')).map(hit=>hit.bookId)).toEqual(['zh-title']);
+  });
+
+  it('does not fuzz short queries or unrelated strings',async()=>{
+    expect(await searchFuzzyLibraryBooks(books,'la')).toEqual([]);
+    expect(await searchFuzzyLibraryBooks(books,'xyz')).toEqual([]);
+    expect(await searchFuzzyLibraryBooks(books,'x'.repeat(65))).toEqual([]);
   });
 });

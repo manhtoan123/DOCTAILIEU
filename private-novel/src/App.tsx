@@ -17,7 +17,7 @@ import {setReaderTheme} from './features/reader/services/reader-theme';
 import {startSharedStateSync} from './features/sync-cloud/services/shared-state-sync';
 import SharedSyncPanel from './features/sync-cloud/components/SharedSyncPanel';
 import {ConvertedTitle,type TitlePresentation} from './features/names-convert/components/ConvertedTitle';
-import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {useLiveQuery} from 'dexie-react-hooks';
 import {db,deleteBook} from './core/db';
 import {removeBookWithLocalData} from './features/library/services/book-removal';
@@ -45,11 +45,14 @@ import {syncLocalBooks,listCloudBooks,listDeletedCloudBooks,downloadCloudBook,de
 import {initializeCloudDevice,connectCloudDeviceFromLocation} from './features/sync-cloud/services/cloud-device';
 import {Modal,errorText} from './shared/components/common';
 import {hasChinese} from './features/library/services/title-resolver';
-import {normalizeLibrarySearch} from './features/library/services/library-search';
+import {normalizeLibrarySearch,type FuzzyLibraryRow} from './features/library/services/library-search';
+import {useFuzzyLibrarySearch} from './features/library/components/useFuzzyLibrarySearch';
 import {useChapterSearch} from './features/library/components/useChapterSearch';
 import {albumContains,buildAlbumTree,type AlbumNode} from './features/library/services/album-tree';
 import {parseReaderRoute,readerRoutePath,type ReaderRoute} from './features/reader/services/reader-route';
 const sample=`Chương 1: Một chỗ ngồi bên cửa sổ\n\nBuổi sáng, nắng ghé qua khung cửa gỗ. Trên bàn có một cuốn sách chưa đọc hết và tách trà vừa pha.\n\nBạn mở trang sách, chỉnh cỡ chữ vừa mắt, rồi để câu chuyện dẫn mình đi. Không có thông báo, không có vội vàng. Chỉ có những trang chữ và một chút thời gian dành riêng cho mình.\n\nChương 2: Lối mòn trong vườn\n\nSau cơn mưa, khu vườn trở nên yên tĩnh. Tiếng lá xào xạc như một lời nhắc: đôi khi điều cần làm chỉ là chậm lại.\n\nBạn có thể thử nút Nghe truyện, đổi nền Sepia, hoặc quay về tủ sách để nhập TXT của mình.\n\nChương 3: Trang sách tiếp theo\n\nThư phòng ghi nhớ nơi bạn dừng lại. Khi trở về, câu chuyện vẫn chờ ở đó.\n\nĐây là văn bản mẫu tự viết để kiểm tra trình đọc và giọng nói.\n`;
+type IndexedTitlePresentation=TitlePresentation&{normalizedValue:string};
+type LibrarySearchSnapshot={books:Book[];normalizedById:Map<string,string>;fuzzyRowById:Map<string,FuzzyLibraryRow>;fuzzyRows:FuzzyLibraryRow[]};
 export default function App(){
   const appearance=useLiveQuery(()=>db.settings.get('reader'),[],null);const libraryBackground=useSharedImage((appearance?.value as ReaderSettings|undefined)?.libraryBackground);
   const [initialUiTheme]=useState(cachedUiTheme),[themeSaving,setThemeSaving]=useState(false);
@@ -80,8 +83,28 @@ export default function App(){
   },[route]);
   const [libraryView,setLibraryView]=useState<'grid'|'list'|'compact'>(()=>{try{const value=localStorage.getItem('library-view');return value==='list'||value==='compact'?value:'grid';}catch{return 'grid';}});
   useEffect(()=>{try{localStorage.setItem('library-view',libraryView);}catch{}},[libraryView]);
-  const [titleIndex,setTitleIndex]=useState<Record<string,TitlePresentation>>({});
-  const recordTitle=useCallback((result:TitlePresentation)=>setTitleIndex(old=>old[result.bookId]?.signature===result.signature&&old[result.bookId]?.text===result.text&&old[result.bookId]?.value===result.value?old:{...old,[result.bookId]:result}),[]);
+  const [titleIndex,setTitleIndex]=useState<Record<string,IndexedTitlePresentation>>({});
+  const pendingTitleIndex=useRef<Record<string,IndexedTitlePresentation>>({});
+  const titleIndexFlush=useRef<number|undefined>(undefined);
+  const recordTitle=useCallback((result:TitlePresentation)=>{
+    pendingTitleIndex.current[result.bookId]={...result,normalizedValue:normalizeLibrarySearch(result.value)};
+    if(titleIndexFlush.current!==undefined)return;
+    titleIndexFlush.current=requestAnimationFrame(()=>{
+      titleIndexFlush.current=undefined;
+      const updates=pendingTitleIndex.current;pendingTitleIndex.current={};
+      setTitleIndex(old=>{
+        let next=old;
+        for(const [bookId,value] of Object.entries(updates)){
+          const current=old[bookId];
+          if(current?.signature===value.signature&&current.text===value.text&&current.value===value.value)continue;
+          if(next===old)next={...old};
+          next[bookId]=value;
+        }
+        return next;
+      });
+    });
+  },[]);
+  useEffect(()=>()=>{if(titleIndexFlush.current!==undefined)cancelAnimationFrame(titleIndexFlush.current);},[]);
   const titleContext=useLiveQuery(async()=>{
     if(readingRoute||backend!=='local')return undefined;
     const [namesByBook,global,files]=await Promise.all([readEffectiveNamesByBook(),db.settings.get(CONVERT_NAMES_KEY),db.dictionaries.toArray()]);
@@ -174,29 +197,69 @@ export default function App(){
     const protectedIds=new Set(protectedRows.map(row=>row.key.slice(protectedPrefix.length)));
     return new Set(deleted.map(row=>row.key.slice(deletedPrefix.length)).filter(id=>!protectedIds.has(id)));
   }),[]);
-  const localIds=new Set(books?.map(book=>book.id));
-  const shelf=[...(books||[]),...cloudBooks.filter(book=>!localIds.has(book.id)).map(book=>({...book,author:book.author??'',createdAt:book.updatedAt,status:'ready' as const,chapterCount:0,charCount:0}))];
+  const localIds=useMemo(()=>new Set(books?.map(book=>book.id)??[]),[books]);
+  const shelf=useMemo(()=>[...(books||[]),...cloudBooks.filter(book=>!localIds.has(book.id)).map(book=>({...book,author:book.author??'',createdAt:book.updatedAt,status:'ready' as const,chapterCount:0,charCount:0}))],[books,cloudBooks,localIds]);
   const detailDestination:ReaderRoute=!darkRoom&&detail&&shelf.find(book=>book.id===detail)?.album
     ?{kind:'library',room:'dark'}:libraryDestination;
   const albumRegistry=useLiveQuery(async()=>{try{return await readStoredAlbumRegistry();}catch{return undefined;}},[]);
   const albumProgress=useLiveQuery(async()=>tab==='library'&&darkRoom?await db.progress.toArray():[],[tab,darkRoom]);
-  const shelfTitles:Record<string,string>={};
-  for(const book of shelf){const entry=titleIndex[book.id],signature=titleContext?JSON.stringify({names:titleContext.namesByBook.get(book.id)||[],global:titleContext.global,dictionaries:titleContext.dictionaries}):'';shelfTitles[book.id]=book.displayTitle||(entry?.text===book.title&&entry.signature===signature?entry.value:book.title);}
+  const titleSignatures=useMemo(()=>new Map(shelf.map(book=>[book.id,titleContext?JSON.stringify({names:titleContext.namesByBook.get(book.id)||[],global:titleContext.global,dictionaries:titleContext.dictionaries}):''])),[shelf,titleContext]);
+  const shelfTitles=useMemo(()=>{
+    const titles:Record<string,string>={};
+    for(const book of shelf){const entry=titleIndex[book.id];titles[book.id]=book.displayTitle||(entry?.text===book.title&&entry.signature===titleSignatures.get(book.id)?entry.value:book.title);}
+    return titles;
+  },[shelf,titleIndex,titleSignatures]);
+  const [librarySearchSnapshot,setLibrarySearchSnapshot]=useState<LibrarySearchSnapshot>();
+  useEffect(()=>{
+    let active=true,cursor=0;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const normalizedById=new Map<string,string>(),fuzzyRowById=new Map<string,FuzzyLibraryRow>(),fuzzyRows:FuzzyLibraryRow[]=[];
+    const indexNextChunk=()=>{
+      const end=Math.min(cursor+128,shelf.length);
+      for(;cursor<end;cursor++){
+        const book=shelf[cursor];
+        normalizedById.set(book.id,normalizeLibrarySearch(`${book.title} ${book.displayTitle||''} ${book.author} ${book.album||''}`));
+        const fuzzyRow=[book.id,book.title,book.displayTitle||book.title,book.author,book.album||''] as const;
+        fuzzyRowById.set(book.id,fuzzyRow);fuzzyRows.push(fuzzyRow);
+      }
+      if(cursor<shelf.length)timer=setTimeout(indexNextChunk,0);
+      else if(active)setLibrarySearchSnapshot({books:shelf,normalizedById,fuzzyRowById,fuzzyRows});
+    };
+    indexNextChunk();
+    return()=>{active=false;if(timer!==undefined)clearTimeout(timer);};
+  },[shelf]);
+  const currentSearchSnapshot=librarySearchSnapshot?.books===shelf?librarySearchSnapshot:undefined;
   const albums=[...new Set([...shelf.map(book=>book.album).filter((album):album is string=>!!album),...(albumRegistry?.albums.map(album=>album.name)??[])])].sort((a,b)=>a.localeCompare(b,'vi'));
   const albumTree=buildAlbumTree(albums,shelf);
   const currentAlbum=selectedAlbum?albumTree.nodes.get(selectedAlbum):undefined;
   const childAlbums=selectedAlbum?currentAlbum?.children||[]:albumTree.roots;
   const albumTrail:AlbumNode[]=[];
   for(let node=currentAlbum;node;node=node.parent?albumTree.nodes.get(node.parent):undefined)albumTrail.unshift(node);
-  const directBooks=selectedAlbum?shelf.filter(b=>b.album===selectedAlbum):darkRoom?[]:shelf.filter(b=>!b.album);
-  const currentBooks=search.trim()?(selectedAlbum?shelf.filter(book=>albumContains(selectedAlbum,book.album)):darkRoom?shelf.filter(book=>!!book.album):directBooks):directBooks;
+  const directBooks=useMemo(()=>selectedAlbum?shelf.filter(b=>b.album===selectedAlbum):darkRoom?[]:shelf.filter(b=>!b.album),[selectedAlbum,shelf,darkRoom]);
+  const hasSearch=Boolean(search.trim());
+  const currentBooks=useMemo(()=>hasSearch?(selectedAlbum?shelf.filter(book=>albumContains(selectedAlbum,book.album)):darkRoom?shelf.filter(book=>!!book.album):directBooks):directBooks,[hasSearch,selectedAlbum,shelf,darkRoom,directBooks]);
   const searchChapters=!readingRoute&&tab==='library'&&!detail&&(!darkRoom||!!selectedAlbum);
-  const chapterSearch=useChapterSearch(searchChapters?currentBooks.filter(book=>localIds.has(book.id)).map(book=>book.id):[],searchChapters?search:'',titleContext?.namesByBook,JSON.stringify(titleContext?{names:[...titleContext.namesByBook],global:titleContext.global,dictionaries:titleContext.dictionaries}:null));
-  const filtered=currentBooks.filter(b=>{
-    const entry=titleIndex[b.id],signature=titleContext?JSON.stringify({names:titleContext.namesByBook.get(b.id)||[],global:titleContext.global,dictionaries:titleContext.dictionaries}):'';
-    const converted=b.displayTitle||(entry?.text===b.title&&entry.signature===signature?entry.value:'');
-    return normalizeLibrarySearch(`${b.title} ${converted} ${b.author} ${b.album||''}`).includes(normalizeLibrarySearch(search))||Boolean(chapterSearch.matches[b.id]);
+  const currentLocalBookIds=useMemo(()=>currentBooks.filter(book=>localIds.has(book.id)).map(book=>book.id),[currentBooks,localIds]);
+  const chapterNameSignature=useMemo(()=>JSON.stringify(titleContext?{names:[...titleContext.namesByBook],global:titleContext.global,dictionaries:titleContext.dictionaries}:null),[titleContext]);
+  const chapterSearch=useChapterSearch(searchChapters?currentLocalBookIds:[],searchChapters?search:'',titleContext?.namesByBook,chapterNameSignature);
+  const fuzzyRows=useMemo<FuzzyLibraryRow[]>(()=>{
+    if(!currentSearchSnapshot)return [];
+    if(currentBooks.length===shelf.length)return currentSearchSnapshot.fuzzyRows;
+    return currentBooks.flatMap(book=>{const record=currentSearchSnapshot.fuzzyRowById.get(book.id);return record?[record]:[];});
+  },[currentBooks,currentSearchSnapshot,shelf]);
+  const currentBooksById=useMemo(()=>new Map(currentBooks.map(book=>[book.id,book])),[currentBooks]);
+  const searchNeedle=normalizeLibrarySearch(search);
+  const exactFiltered=currentBooks.filter(book=>{
+    if(chapterSearch.matches[book.id])return true;
+    if(!currentSearchSnapshot)return false;
+    if(currentSearchSnapshot.normalizedById.get(book.id)?.includes(searchNeedle))return true;
+    const converted=titleIndex[book.id];
+    return Boolean(!book.displayTitle&&converted?.text===book.title&&converted.signature===titleSignatures.get(book.id)&&converted.normalizedValue.includes(searchNeedle));
   });
+  const metadataSearchPending=hasSearch&&!currentSearchSnapshot;
+  const fuzzySearch=useFuzzyLibrarySearch(fuzzyRows,search,hasSearch&&!!currentSearchSnapshot&&tab==='library'&&!readingRoute&&!detail&&exactFiltered.length===0&&!chapterSearch.pending);
+  const fuzzyUsed=exactFiltered.length===0&&!fuzzySearch.pending&&fuzzySearch.matches.length>0;
+  const filtered=exactFiltered.length?exactFiltered:fuzzyUsed?fuzzySearch.matches.flatMap(match=>{const book=currentBooksById.get(match.bookId);return book?[book]:[]}):[];
   const emptyView=darkRoom&&!selectedAlbum?!childAlbums.length:!filtered.length;
   const catalogLoading=books===undefined||(!cloudLoaded&&!cloudError);
   const showRoomEntry=!darkRoom&&!selectedAlbum&&!search.trim()&&!directBooks.length&&albums.length>0;
@@ -309,7 +372,7 @@ export default function App(){
       </div>}
       {darkRoom&&librarySelecting&&selectedCount>0&&<div className="library-selection-actions" role="group" aria-label="Thao tác đã chọn"><span>{selectedCount} đã chọn</span><button disabled={opening||selectedCount!==1} onClick={()=>setManagingLibrary({action:'rename',bookIds:[...selectedBooks],albumPaths:[...selectedAlbums]})}>Sửa tên</button><button className="btn-danger" disabled={opening} onClick={()=>setManagingLibrary({action:'delete',bookIds:[...selectedBooks],albumPaths:[...selectedAlbums]})}>Xóa</button></div>}
       <section className="library-section">
-        {shelf.map(b=>!b.displayTitle&&<ConvertedTitle key={b.id} text={b.title} bookId={b.id} onReady={recordTitle} render={false}/>)}
+        {titleContext?.dictionaries.length?shelf.map(b=>!b.displayTitle&&hasChinese(b.title)&&<ConvertedTitle key={b.id} text={b.title} bookId={b.id} onReady={recordTitle} render={false}/>):null}
         {cloudStatus&&<p className="muted" role="status">{cloudStatus}</p>}
         {(cloudError||cloudSyncError)&&<p className="notice" role="status">{cloudError||cloudSyncError} <button onClick={()=>void syncCloud().then(()=>refreshCloud())}>Thử lại kho</button></p>}
 
@@ -340,7 +403,7 @@ export default function App(){
             <button className={libraryView==='compact'?'active':''} aria-pressed={libraryView==='compact'} onClick={()=>setLibraryView('compact')}>Thu gọn</button>
           </div>
         </div>
-        {search.trim()&&(!darkRoom||!!selectedAlbum)&&<p className="muted" role="status">{chapterSearch.pending?'Đang tìm tên chương…':chapterSearch.error?'Không thể tìm theo tên chương.':`${filtered.length} kết quả`}{currentBooks.some(book=>!localIds.has(book.id))&&' Chỉ tìm tên chương trong truyện đã tải.'}</p>}
+        {search.trim()&&(!darkRoom||!!selectedAlbum)&&<p className="muted" role="status">{chapterSearch.pending?'Đang tìm tên chương…':metadataSearchPending?'Đang chuẩn bị chỉ mục tìm kiếm…':fuzzySearch.pending?'Đang tìm gần đúng…':chapterSearch.error?'Không thể tìm theo tên chương.':`${filtered.length} kết quả${fuzzyUsed?' · khớp gần đúng':''}`}{currentBooks.some(book=>!localIds.has(book.id))&&' Chỉ tìm tên chương trong truyện đã tải.'}</p>}
 
         {selectedAlbum&&childAlbums.length>0&&directBooks.length>0&&!search.trim()&&<div className="section-heading"><h2>Truyện ngoài Series ({directBooks.length})</h2></div>}
 
@@ -360,7 +423,7 @@ export default function App(){
         ) : !currentBooks.length && !search.trim() ? (
           <p className="library-empty">Chưa có truyện</p>
         ) : !filtered.length ? (
-          <p className="notice">{chapterSearch.pending?'Đang tìm truyện và tên chương…':'Không có truyện hoặc tên chương khớp từ khóa tìm kiếm.'}</p>
+          <p className="notice">{chapterSearch.pending?'Đang tìm truyện và tên chương…':metadataSearchPending?'Đang chuẩn bị chỉ mục tìm kiếm…':fuzzySearch.pending?'Đang tìm kết quả gần đúng…':'Không có truyện hoặc tên chương khớp từ khóa tìm kiếm.'}</p>
         ) : (
           <VirtualizedBookGrid items={filtered} view={libraryView} renderItem={(book,index,virtualized)=>(
               <LibraryBookCard
