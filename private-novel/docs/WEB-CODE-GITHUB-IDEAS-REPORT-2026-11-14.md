@@ -57,7 +57,7 @@ Checkout được rà là `DOCTAILIEU/private-novel` (package `private-novel`, c
 ## Thứ tự làm việc đề xuất
 
 1. Profile list sách với fixture tổng hợp; nếu chậm, làm grouping Map trước, virtualization sau.
-2. Thiết kế PWA app shell thành thay đổi riêng; cache tài nguyên build có version, không intercept/cache API và có hướng dẫn update.
+2. **PWA app shell đã triển khai** (xem [PWA-OFFLINE-SHELL-M0.md](PWA-OFFLINE-SHELL-M0.md)); bước còn lại là test worker update trên deploy kế tiếp.
 3. Chạy corpus tìm kiếm typo đa ngôn ngữ trước khi chọn fuzzy library hoặc tự triển khai.
 4. Đo audio gap trên thiết bị/browser thật trước khi thử Web Audio; không cam kết 0 ms.
 5. Chỉ làm EPUB prototype nếu chốt rõ nhu cầu (TOC, locator, accessibility, paged mode); không thay engine theo cảm tính.

@@ -6,6 +6,7 @@ import {PackedBuilder,PackedIndex,validatePackedData} from '../src/features/name
 import {packedSignature,readPackedCache} from '../src/features/names-convert/services/packed-cache';
 import {loadLanguageEngine} from '../src/features/names-convert/services/load-language-engine';
 import {LanguageEngine} from '../src/features/names-convert/services/language';
+import {parseEntry} from '../src/core/domain';
 
 describe('packed dictionary index',()=>{
  it('matches Index semantics including normalized collisions and supplementary characters',async()=>{
@@ -22,5 +23,20 @@ describe('packed dictionary index',()=>{
   const first=await loadLanguageEngine([row],options);expect(first.engine.convert('你好',[],{}).map(x=>x.targetText).join('')).toContain('xin chào');
   const unreadable={...row,blob:{size:row.blob.size,arrayBuffer:()=>{throw new Error('blob read');}} as unknown as Blob};const second=await loadLanguageEngine([unreadable],options);expect(second.stats).toEqual(first.stats);
   expect(await readPackedCache('vp',packedSignature({sha256:'hash-b',updatedAt:1}))).toBeUndefined();
+ });
+ it('uses the same parseEntry semantics for packed and regular dictionary loads',async()=>{
+  const text='# comment\n的=\n=value\n key = first=second \n\uFEFF bom = value\nempty= \n';
+  expect(parseEntry(' 的= ')).toBeNull();expect(parseEntry(' =value')).toBeNull();expect(parseEntry(' key = first=second ')).toEqual(['key','first=second']);
+  const row={kind:'vp' as const,name:'Vietphrase.txt',sha256:'parser-parity',updatedAt:3,blob:new Blob([text])};
+  const regular=await loadLanguageEngine([row]);
+  const packed=await loadLanguageEngine([row],{packed:{enabled:true,normalizeKey,idb:indexedDB}});
+  expect(packed.stats).toEqual(regular.stats);
+  expect(packed.stats[0]).toMatchObject({valid:2,invalid:3,ignored:1});
+  expect(packed.engine.indexes.vp.get('key')).toBe('first=second');
+  expect(packed.engine.indexes.vp.get('bom')).toBe('value');
+  expect(packed.engine.indexes.vp.get('的')).toBeUndefined();
+  expect(packed.engine.indexes.vp.get('')).toBeUndefined();
+  expect(packed.engine.indexes.vp.get('key')).toEqual(regular.engine.indexes.vp.get('key'));
+  expect(packed.engine.indexes.vp.get('bom')).toEqual(regular.engine.indexes.vp.get('bom'));
  });
 });

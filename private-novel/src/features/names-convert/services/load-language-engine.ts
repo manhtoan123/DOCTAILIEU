@@ -1,4 +1,4 @@
-import type {DictKind} from '../../../core/domain';
+import {parseEntry,type DictKind} from '../../../core/domain';
 import {readDictionary,type DictionaryStats} from './dictionary-reader';
 import {LanguageEngine} from './language';
 import {PACKED_KINDS,PackedBuilder,PackedIndex} from './packed-index';
@@ -25,7 +25,7 @@ export async function loadLanguageEngine(
     if(packed?.enabled&&(PACKED_KINDS as readonly string[]).includes(kind)&&file.sha256&&file.updatedAt!==undefined){
       const signature=packedSignature({sha256:file.sha256,updatedAt:file.updatedAt}),hit=await readPackedCache(kind as typeof PACKED_KINDS[number],signature,packed.idb);
       if(hit){engine.setPacked(kind as 'vp'|'hanviet',new PackedIndex(hit.data,packed.normalizeKey));stats.push(hit.stats);onProgress?.(file.name,100);onDictionary?.(hit.stats);continue;}
-      const builder=new PackedBuilder(packed.normalizeKey),report=await readDictionary(kind,file.blob,file.name,line=>{onEntry?.(kind);const entry=line.trim().replace(/^\uFEFF/,'');const p=entry.indexOf('=');if(p>0)builder.add(entry.slice(0,p).trim(),entry.slice(p+1).trim());},percent=>onProgress?.(file.name,percent));
+      const builder=new PackedBuilder(packed.normalizeKey),report=await readDictionary(kind,file.blob,file.name,line=>{const entry=parseEntry(line);if(!entry)return;onEntry?.(kind);builder.add(entry[0],entry[1]);},percent=>onProgress?.(file.name,percent));
       const data=await builder.build(percent=>onProgress?.(file.name,percent));stats.push(report);onDictionary?.(report);await writePackedCache({kind:kind as typeof PACKED_KINDS[number],signature,stats:report,data},packed.idb);engine.setPacked(kind as 'vp'|'hanviet',new PackedIndex(data,packed.normalizeKey));continue;
     }
     const report=await readDictionary(kind,file.blob,file.name,line=>{onEntry?.(kind);engine.add(kind,line);},
