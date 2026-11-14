@@ -13,7 +13,11 @@ self.addEventListener('install',event=>{
         const request=new Request(new URL(url,self.location.origin),{cache:'reload'});
         const response=await fetch(request);
         if(!response.ok)throw new Error(`Shell asset failed: ${url} (${response.status})`);
-        await cache.put(url,response);
+        const headers=new Headers(response.headers);
+        headers.delete('content-encoding');
+        headers.delete('content-length');
+        headers.delete('transfer-encoding');
+        await cache.put(url,new Response(await response.arrayBuffer(),{status:response.status,statusText:response.statusText,headers}));
       }
     }catch(error){
       await caches.delete(CACHE_NAME);

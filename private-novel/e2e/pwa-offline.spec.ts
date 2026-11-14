@@ -37,13 +37,15 @@ test('offline shell opens a saved story and leaves API data uncached',async({pag
     const registrations=await navigator.serviceWorker.getRegistrations();
     const cacheNames=await caches.keys();
     const requests=(await Promise.all(cacheNames.map(async name=>(await caches.open(name)).keys()))).flat();
-    return {scope:registrations[0]?.scope,controller:Boolean(navigator.serviceWorker.controller),paths:requests.map(request=>new URL(request.url).pathname)};
+    const index=await caches.match('/index.html');
+    return {scope:registrations[0]?.scope,controller:Boolean(navigator.serviceWorker.controller),paths:requests.map(request=>new URL(request.url).pathname),indexEncoding:index?.headers.get('content-encoding')};
   });
-  expect(cached.scope).toBe('http://127.0.0.1:4173/');
+  expect(cached.scope).toBe(`${new URL(page.url()).origin}/`);
   expect(cached.controller).toBe(true);
   expect(cached.paths).toContain('/index.html');
   expect(cached.paths).toContain('/epub-bridge-v2.js');
   expect(cached.paths.some(path=>path.startsWith('/assets/')&&path.endsWith('.js'))).toBe(true);
+  expect(cached.indexEncoding).toBeNull();
   expect(cached.paths.some(path=>path==='/api'||path.startsWith('/api/'))).toBe(false);
 
   await context.setOffline(true);
