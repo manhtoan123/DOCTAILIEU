@@ -41,4 +41,19 @@ Build cache lần đầu mất 3.213 ms; packed Vietphrase index chiếm 55,55 M
 
 ## Trạng thái sau khi chốt phạm vi web (14/11/2026)
 
-Edge production-build persistence/Convert E2E dùng dictionary tổng hợp đã pass 1/1; nó xác nhận IndexedDB cache và Convert hoạt động trong browser, nhưng không đo hiệu năng của dictionary thật. Benchmark bốn file thật ở trên là Node-only, không đại diện IndexedDB trên disk hay jank trong browser. Người dùng sau đó xác nhận không cần kết nối điện thoại cho công việc web hiện tại; Android thật chưa đo và không chặn phần web. Chưa có bằng chứng để nói Packed cải thiện cold load hoặc Convert trên thiết bị người dùng.
+Edge production-build persistence/Convert E2E dùng dictionary tổng hợp đã pass 1/1; nó xác nhận IndexedDB cache và Convert hoạt động trong browser, nhưng không đo hiệu năng của dictionary thật. Benchmark bốn file thật ở trên là Node-only, không đại diện IndexedDB trên disk hay jank trong browser. Người dùng sau đó xác nhận không cần kết nối điện thoại cho công việc web hiện tại; Android thật chưa đo và không chặn phần web.
+
+## Edge desktop cold/warm benchmark trên fixture tổng hợp (14/11/2026)
+
+Đo bằng Microsoft Edge `157.0.4341.46` trên Windows, Vite dev server của source hiện hành, browser context mới. Fixture được tạo trong `.dsh-tmp`: `Vietphrase.txt` có 200.000 entry/9.600.000 byte, thêm `Names.txt`, `HanViet.txt`, `DaiTuNhanXung.txt`; tổng 9.600.121 byte. Trước lượt cold, `indexedDB.databases()` xác nhận `dsh-dictionary-cache` chưa tồn tại. Sau cold load, store `packed` có hai record (`vp`, `hanviet`). Mỗi warm sample kết thúc bằng `resetLanguage()` để Worker mới phải tải lại từ IndexedDB; tất cả vẫn trong cùng context.
+
+| Phép đo | Kết quả |
+|---|---:|
+| Lưu bốn file qua UI | 245,64 ms (một lượt) |
+| Cold load + tạo cache | 754,3 ms (một lượt) |
+| Warm load sau Worker reset | p50 56,0 ms / p95 57,7 ms (n=5) |
+| Convert 15.600 UTF-16 units | cold 42,4 ms; warm p50 15,1 / p95 16,0 ms (n=5) |
+| Output cold/warm | SHA-256 khớp; 33.599 UTF-16 units |
+| Long task ở main page trong call đo | 0 entry >50 ms; PerformanceObserver được hỗ trợ |
+
+Đây là đo web native IndexedDB trong một context cô lập, không phải Vietphrase thật, browser restart, chương thực tế hay Android. Cold có n=1; warm n=5 nên p95 chỉ là gần giá trị cực đại của tập nhỏ. `performance.memory` chỉ thấy main page (~27,9 MB ở lượt cold), không đo heap của Worker. Bốn API request đã được intercept local; không có cloud request/write. Không dùng số này để kết luận hiệu năng trên thư viện người dùng.
