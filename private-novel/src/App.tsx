@@ -8,6 +8,7 @@ import {chapterIdForNumber} from './features/reader/services/chapter-route-numbe
 import {useSharedImage} from './shared/components/SharedImage';
 import {AlbumShelf} from './features/library/components/AlbumShelf';
 import {LibraryBookCard} from './features/library/components/LibraryBookCard';
+import {VirtualizedBookGrid} from './features/library/components/VirtualizedBookGrid';
 import {setLibraryBackground,storeSharedImage} from './features/sync-cloud/services/shared-images';
 import {defaults,type ReaderSettings} from './core/domain';
 import {applyUiTheme,cachedUiTheme,normalizeUiTheme,type UiTheme} from './shared/ui-theme';
@@ -361,12 +362,13 @@ export default function App(){
         ) : !filtered.length ? (
           <p className="notice">{chapterSearch.pending?'Đang tìm truyện và tên chương…':'Không có truyện hoặc tên chương khớp từ khóa tìm kiếm.'}</p>
         ) : (
-          <div className={`book-grid ${libraryView==='grid'?'cover-shelf':libraryView==='compact'?'compact-shelf':'list-shelf'}`}>
-            {filtered.map((book, index) => (
+          <VirtualizedBookGrid items={filtered} view={libraryView} renderItem={(book,index,virtualized)=>(
               <LibraryBookCard
                 key={book.id}
                 book={book}
                 index={index}
+                virtualIndex={virtualized?index:undefined}
+                virtualTotal={virtualized?filtered.length:undefined}
                 compact={libraryView==='compact'}
                 displayTitle={book.displayTitle || (titleIndex[book.id]?.text === book.title ? titleIndex[book.id].value : book.title)}
                 isLocal={localIds.has(book.id)}
@@ -382,8 +384,7 @@ export default function App(){
                 onEdit={() => setEdit({...book})}
                 onRemove={() => void removeShelf(book)}
               />
-            ))}
-          </div>
+          )}/>
         )}
       </section>
       {!darkRoom&&!showRoomEntry&&<footer className="room-footer">{darkRoomLink}</footer>}

@@ -22,7 +22,8 @@
     "hash-wasm": "^4.12.0",
     "fflate": "^0.8.2",
     "mammoth": "^1.13.0",
-    "pdfjs-dist": "^6.4.299"
+    "pdfjs-dist": "^6.4.299",
+    "@tanstack/react-virtual": "3.14.26"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",

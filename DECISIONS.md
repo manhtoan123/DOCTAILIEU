@@ -271,3 +271,7 @@ Theo yêu cầu: kết quả paired-polish gắn với nguyên văn/revision; gi
 - Dùng chung LanguageEngine và bộ đọc với worker local. OCI giữ một bộ TXT có thứ tự trong một profile SHA-256. Ghi ứng viên trên cùng volume, kiểm byte/UTF-8 và dựng chỉ mục trước khi đổi profile; khôi phục từ đĩa khi service khởi động.
 - Máy chủ được bật bằng origin HTTPS tường minh. Dùng mTLS với CA thiết bị riêng và Origin/CSP chính xác. App có máy chủ yêu cầu chọn đích; lỗi server giữ nguyên đích. Reader Bản gốc giữ nội dung nguồn và tiêu đề có sẵn, không khởi chạy Convert.
 - Chưa cấp hoặc phát hành OCI/Pages. Hạn mức, file triển khai, bằng chứng và giới hạn ở private-novel/docs/OCI-CONVERT.md.
+
+## 2026-11-14 — Virtualize large library lists
+
+After a production-build profile showed tens of thousands of DOM elements and long tasks at 1,000–5,000 synthetic books, use `@tanstack/react-virtual` 3.14.26 (MIT) for filtered lists above 300 items. Keep the existing renderer for 300 or fewer. Preserve stable book order, all three view modes, focus/Tab traversal, selection, and scroll restoration. The 300 threshold caps a 300-item list near 3,300 DOM elements while avoiding a new layout path for smaller shelves. This is a measured synthetic-browser cutoff, not proof for physical Android or real libraries. Details/evidence: `private-novel/docs/LIST-VIRTUALIZATION-PERF.md`.

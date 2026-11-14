@@ -23,6 +23,8 @@ interface LibraryBookCardProps {
   selected?:boolean;
   onToggle?:()=>void;
   hideActions?:boolean;
+  virtualIndex?:number;
+  virtualTotal?:number;
 }
 
 // Chỉ hiển thị dữ liệu; App quyết định cách mở, sửa và xóa truyện.
@@ -43,9 +45,12 @@ export function LibraryBookCard({
   selected=false,
   onToggle,
   hideActions=false,
+  virtualIndex,
+  virtualTotal,
 }: LibraryBookCardProps) {
   const checkbox=onToggle&&<label className="library-select"><input type="checkbox" aria-label={`Chọn truyện ${displayTitle||book.title}`} checked={selected} disabled={opening} onChange={onToggle}/></label>;
-  if(compact)return <article className={`book-card compact-book-row ${selected?'library-item-selected':''}`}>
+  const virtualAttributes=virtualIndex===undefined?{}:{role:'listitem' as const,'aria-posinset':virtualIndex+1,'aria-setsize':virtualTotal,'data-virtual-book-index':virtualIndex};
+  if(compact)return <article {...virtualAttributes} className={`book-card compact-book-row ${selected?'library-item-selected':''}`}>
     {checkbox}
     <h3><NavigationLink className="text-button" disabled={opening} href={readerRoutePath({kind:'book',bookId:book.id})} onNavigate={onOpenDetails} title={book.title}>{displayTitle||book.title}</NavigationLink></h3>
     <span className="compact-chapter-count">{book.chapterCount} chương</span>
@@ -59,7 +64,7 @@ export function LibraryBookCard({
   ].filter(Boolean).join(' · ');
 
   return (
-    <article className={`book-card ${onToggle?'selectable-book':''} ${selected?'library-item-selected':''}`}>
+    <article {...virtualAttributes} className={`book-card ${onToggle?'selectable-book':''} ${selected?'library-item-selected':''}`}>
       {checkbox}
       <NavigationLink
         className={`cover cover-${index % 4}`}

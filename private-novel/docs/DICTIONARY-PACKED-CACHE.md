@@ -23,3 +23,18 @@ Preview E2E follow-up: `dictionary-persistence.spec.ts` now uses native IndexedD
 Static-only Cloudflare Pages Preview: `https://eabc0ed1.thu-phong-private.pages.dev` (deployment `eabc0ed1-1f96-42f1-97d1-47731e0ad86e`, branch `codex-packed-dictionary`, Environment Preview). Uploaded only the built `dist` tree from `.dsh-tmp/packed/static-preview`; did not include the root `functions/` directory or project D1/R2/service bindings. Production remains deployment `85b93944-0c18-4e79-bf34-dbfcf4dcb4d9` on `master`. The Preview URL is public. App API/Cloudflare Function flows are not available on this static-only Preview; local dictionary/IndexedDB testing is the intended scope. HTTP page + bundle both returned 200 and bundle SHA matched uploaded artifact. Remote Preview E2E with synthetic dictionary: 1/1 pass in 9.7s. Other front-end changes already present in the built `dist` are included; this is not a feature-only frontend artifact. Independent Astra/Sol review and manual real-file/Android checks remain outstanding.
 ## Production deployment
 Deployed by explicit user request to Pages production branch `master`: deployment `a51be252-5bb6-4d07-a639-271c05f837bd`; canonical `https://thu-phong-private.pages.dev`. Previous production deployment `85b93944-0c18-4e79-bf34-dbfcf4dcb4d9` recorded as rollback target. Production root and bundle returned HTTP 200; `/assets/index-CRh0Vw8e.js` SHA-256 matches local `dist`. Production persistence E2E with synthetic local IndexedDB fixture and all `/api/**` calls intercepted: 1/1 pass in 9.5s; no cloud test writes. Build exit0 immediately before release. Full suite remains 45 failing tests across 27 files; independent Astra/Sol review, real Vietphrase file test, and Android testing remain outstanding. This release includes other frontend and Pages Functions changes present in the working tree, not just Packed Cache.
+
+## Benchmark bằng các dictionary đã chọn (Node trên Windows)
+
+`node --expose-gc scripts/benchmark-vietphrase-readonly.mjs <thư-mục-dictionary>` đọc bốn file TXT vào RAM, không ghi lâu dài và không gửi request. Lượt đo dùng Vietphrase thật (41,66 MiB) cùng ba dictionary liên quan; tổng raw 44,16 MiB. Node v24.14.0, cold load 3 lượt, warm cache 30 lượt gồm 5 warm-up, Convert 35 lượt gồm 5 warm-up; p95 với tập nhỏ không đại diện phân vị ổn định.
+
+| Phép đo | Map | Packed |
+|---|---:|---:|
+| Cold load p50 / p95 (n=3) | 1.910 / 1.938 ms | 3.255 / 3.303 ms |
+| Convert 10k UTF-16 units p50 / p95 (n=30) | 6,60 / 13,19 ms | 12,57 / 13,82 ms |
+| Convert 100k UTF-16 units p50 / p95 (n=30) | 72,21 / 120,92 ms | 137,21 / 144,99 ms |
+| Warm packed cache p50 / p95 (n=25) | — | 161 / 177 ms |
+
+Build cache lần đầu mất 3.213 ms; packed Vietphrase index chiếm 55,55 MiB. Map và packed trả output giống nhau trên input CJK tổng hợp. Đỉnh RSS khoảng 1,30 GiB và heap 538 MiB là giá trị gộp qua các phase, không tách được từng engine.
+
+Đây là Node benchmark trên máy tính, Convert dùng câu CJK lặp tổng hợp và IndexedDB giả chỉ ở RAM; không đo disk IndexedDB, Worker/main-thread jank, chương thật, browser hay Android. Kết quả cho thấy cache hit packed nhanh, nhưng cold build và Convert trực tiếp của packed chậm hơn Map ở lượt này. Chưa đổi thuật toán/storage vì kết quả chưa đại diện runtime của app. Bản sao Vietphrase lên Android được người dùng cho phép riêng qua USB, không gửi mạng và phải xóa khỏi điện thoại sau phép đo; file nguồn `D:` tiếp tục read-only.

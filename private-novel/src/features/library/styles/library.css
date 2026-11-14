@@ -98,6 +98,20 @@ a.album-card-item{border:1px solid var(--border);border-radius:8px;padding:11px 
 
 /* Album previews expose contents without opening or downloading each story. */
 .album-preview-shelf .album-card-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}
+
+/* Large shelves keep measured rows in the viewport while preserving the three existing views. */
+.book-grid.virtualized-book-grid{position:relative}
+.book-grid.virtualized-book-grid.cover-shelf{display:block;gap:0}
+.virtualized-book-grid .virtual-book-spacer{position:relative;width:100%}
+.virtualized-book-grid .virtual-book-row{position:absolute;top:0;left:0;width:100%}
+.virtualized-book-grid.cover-shelf .virtual-book-row{display:grid;grid-template-columns:repeat(var(--book-grid-columns),minmax(0,1fr));gap:20px 18px}
+.virtualized-book-grid.list-shelf .virtual-book-row{display:block}
+.virtualized-book-grid.compact-shelf .virtual-book-row{display:block}
+.virtualized-book-grid.list-shelf .virtual-book-row:not([data-virtual-last-row="true"]) .book-card{border-bottom:1px solid var(--border)}
+.virtualized-book-grid.list-shelf .virtual-book-row[data-virtual-last-row="true"] .book-card{border-bottom:0}
+.virtualized-book-grid.compact-shelf .virtual-book-row:not([data-virtual-last-row="true"]) .compact-book-row{border-bottom:1px solid var(--border)}
+.virtualized-book-grid.compact-shelf .virtual-book-row[data-virtual-last-row="true"] .compact-book-row{border-bottom:0}
+@media(max-width:700px){.virtualized-book-grid.cover-shelf .virtual-book-row{gap:14px 12px}}
 .album-preview-card{min-width:0;border:1px solid var(--ui-border,var(--border));border-radius:12px;background:var(--ui-surface,var(--paper));overflow:hidden;color:var(--ui-text,inherit)}
 .album-preview-header{display:flex;align-items:center;gap:8px;padding:16px;border-bottom:1px solid var(--ui-border-soft,var(--border));background:var(--ui-inset,var(--paper))}
 .album-preview-title{display:flex;align-items:flex-start;gap:12px;min-width:0;flex:1;color:inherit;text-decoration:none;min-height:44px}
