@@ -38,3 +38,11 @@ Chưa nghiệm thu Android phần cứng. Lần đầu và browser không hỗ t
 Edge local phục vụ worker hiện hành với build ID cũ giả lập, mở app và để tab cũ được worker điều khiển. Sau khi đổi script worker sang build ID mới, registration.update() cài worker mới ở trạng thái installed/waiting, trong khi worker cũ tiếp tục active và cache của cả hai phiên bản còn nguyên. Đóng tab cũ làm worker mới active; cache cũ được dọn, cache mới được giữ. Đây kiểm tra lifecycle thật của service worker bằng cùng public/sw.js, nhưng fixture đổi ID và dùng cùng một bộ asset; không thay cho kiểm tra hai bộ hashed asset production hoặc tab production đang mở. Script tạm: .dsh-tmp/pwa-update-lifecycle.mjs.
 
 Production deploy 97962f61 (48b1e9cdcbd76e96) sau đó có Edge offline-shell E2E 1/1 pass trong profile riêng; API và dữ liệu người dùng không cache. Tab phiên bản cũ thực tế trên production chưa được giữ qua một lần deploy.
+
+## Lifecycle với hai bộ asset production khác nhau (14/11/2026)
+
+Edge local nhận worker, index và precache assets trực tiếp từ hai Pages deployment: cũ `82fd26db` (build `78ae21da2c0f28d6`, 10 URL) và mới `97962f61` (build `48b1e9cdcbd76e96`, 11 URL). Chúng có bundle khác hash (`index-D_mK8lJo.js` cũ, `index-BiyQs2jW.js` mới) và thêm worker tìm kiếm fuzzy ở bản mới.
+
+Khi đổi server sang manifest mới trong lúc tab cũ còn mở, worker cũ tiếp tục điều khiển tab; worker mới ở `waiting`; cả hai cache còn tồn tại. Tab cũ lấy bundle cũ với HTTP 200, 1.119.535 byte và SHA-256 `64264c259193b56b65844de5c18ea27970a6b0b72fe525ce46ab38b3f7d7729f`; server không nhận request mạng cho URL bundle cũ sau khi đổi phiên bản, xác nhận response đến từ cache cũ. Đóng tab cũ làm worker mới active; cache cũ bị dọn, cache mới còn lại. Không có page error; API chỉ tới mock local, không có cloud write.
+
+Đây kiểm tra lifecycle bằng hai bộ asset production có thật trên cùng một origin localhost giả lập. Chưa giữ tab tại domain Pages qua lần deploy production thật; do đó không xác nhận thời điểm Cloudflare chuyển traffic hay giữ asset cũ ở mạng production.
