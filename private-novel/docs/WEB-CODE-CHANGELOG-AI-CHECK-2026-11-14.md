@@ -13,7 +13,7 @@
 
 ## Comparison boundary
 
-This report compares GitHub `master` **before `29e47f3`** with the clean checkout at **`0e33424`**. `git ls-remote` reported `0e33424` as current `origin/master`. The diff is 41 files, +1,342 / -92 lines; that count includes documentation, E2E specs, benchmark scripts and build support, so it is not 1,342 lines of product behavior.
+This report compares baseline **`29e47f3`** with the app-code snapshot **`0e33424`**. At the time of source comparison, `git ls-remote` reported `0e33424` as current `origin/master`. These two reports were later added by documentation-only commit **`9a5aa1b`**, which is now the remote `master` tip and does not change app code. The code diff is 41 files, +1,342 / -92 lines; that count includes documentation, E2E specs, benchmark scripts and build support, so it is not 1,342 lines of product behavior.
 
 This is not the same as the open workspace checkout. The open workspace is detached at `b84f718`, has many pre-existing modified files, and lacks the PWA, virtualization and fuzzy-search source files present on remote `master`. Its `HANDOFF.md` records Pages deployment `591d1c98`; the clean-checkout release notes record `97962f61`. A live read on 2026-11-14 returned `/` HTTP 200, `/assets/index-BiyQs2jW.js`, and `/sw.js` HTTP 200 with JavaScript build ID `48b1e9cdcbd76e96`. That confirms the live site serves a worker and the reported app bundle, but does not independently map the live response to either deployment ID. Treat the remote clean checkout, the open dirty checkout, and production as three states until their commit/artifact mapping is reconciled.
 
