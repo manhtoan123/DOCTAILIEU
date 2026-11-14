@@ -11,7 +11,7 @@ export default function CommonNamesPanel(){
   const [query,setQuery]=useState(''),[key,setKey]=useState(''),[value,setValue]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const selected=(rows||[]).filter(row=>!query.trim()||`${row.key} ${row.value}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   async function save(source:string,replacement:string|null){if(busy)return;setBusy(true);setError('');try{await editCommonName(source,replacement);if(replacement!==null){setKey('');setValue('');}}catch(e){setError(errorText(e));}finally{setBusy(false);}}
-  return <section aria-label="Sửa Names chung"><p>Names chung dùng cho Convert của mọi truyện. Định dạng: $中文=Việt. Name riêng đưa vào AI nằm ở mục Name truyện.</p>
+  return <section aria-label="Sửa Names chung"><p>Names chung dùng cho Convert của mọi truyện. Các mục lưu bằng nút Lưu Name chung cho AI trong Trau chuốt Convert cũng dùng khi Dịch AI. Định dạng $中文=Việt.</p>
     {error&&<p role="alert">{error}</p>}
     <label>Tìm Names chung<input value={query} onChange={e=>setQuery(e.target.value)}/></label>
     <fieldset disabled={busy}><label>Chữ nguồn chung<input value={key} onChange={e=>setKey(e.target.value)} maxLength={256}/></label><label>Tên Việt chung<input value={value} onChange={e=>setValue(e.target.value)} maxLength={4096}/></label><button disabled={!key.trim()||!value.trim()} onClick={()=>void save(key.trim(),value.trim())}>Lưu Name chung</button></fieldset>

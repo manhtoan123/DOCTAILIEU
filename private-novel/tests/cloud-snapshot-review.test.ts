@@ -23,7 +23,7 @@ describe('independent cloud compact snapshot review',()=>{
     const data=snapshot();await db.books.add({...data.book,chapterCount:20,charCount:999});
     await db.chapters.bulkAdd(data.chapters.map((c,index)=>({...c,order:index*4,sourceId:'private-original'})));
     await db.settings.put({key:CONVERT_NAMES_KEY,value:[{key:'中文',value:'global shadowed'},{key:'山',value:'Sơn'}]});
-    await db.names.add({id:uid(),bookId:data.book.id,key:'中文',value:'per book 😀'});
+    await db.names.add({id:uid(),bookId:data.book.id,key:'中文',value:''});
     await db.sources.add({id:'private-original',bookId:data.book.id,name:'original.txt',relativePath:'original.txt',encoding:'utf-8',sha256:'private',bytes:6,blob:new Blob(['SECRET'])});
     await db.dictionaries.add({kind:'vp',name:'dictionary',blob:new Blob(['DICTSECRET']),sha256:'dictionary',updatedAt:1});
     await db.progress.add({bookId:data.book.id,chapterId:data.chapters[0].id,paragraph:3,offset:1,revision:1,updatedAt:10});
@@ -31,13 +31,14 @@ describe('independent cloud compact snapshot review',()=>{
     expect(Object.keys(saved).sort()).toEqual(['book','chapters','format','names','version']);
     expect(serialized).not.toMatch(/SECRET|private-original|DICTSECRET/);
     expect(saved.chapters.map(c=>c.order)).toEqual([0,1]);expect(saved.book.chapterCount).toBe(2);expect(saved.book.charCount).toBe(data.book.charCount);
-    expect(saved.names).toEqual(expect.arrayContaining([{key:'中文',value:'per book 😀'},{key:'山',value:'Sơn'}]));
+    expect(saved.names).toEqual(expect.arrayContaining([{key:'中文',value:''},{key:'山',value:'Sơn'}]));
     expect((await db.chapters.get(data.chapters[1].id))?.order).toBe(4);expect((await db.books.get(data.book.id))?.charCount).toBe(999);
     expect(await createCloudSnapshot(data.book.id)).toEqual(bytes);
     await db.delete();await db.open();const globalNames=[{key:'山',value:'local remains'}];await db.settings.add({key:CONVERT_NAMES_KEY,value:globalNames});
     expect(await restoreCloudSnapshot(bytes,data.book.id,await contentHash(bytes))).toBe('added');
     expect((await db.chapters.toArray()).map(c=>c.text)).toEqual(expect.arrayContaining(data.chapters.map(c=>c.text)));
     expect((await db.names.toArray()).every(n=>n.bookId===data.book.id)).toBe(true);
+    expect(await db.names.where('[bookId+key]').equals([data.book.id,'中文']).first()).toMatchObject({value:''});
     expect((await db.settings.get(CONVERT_NAMES_KEY))?.value).toEqual(globalNames);
     for(const table of [db.sources,db.progress,db.dictionaries])expect(await table.count()).toBe(0);
   });

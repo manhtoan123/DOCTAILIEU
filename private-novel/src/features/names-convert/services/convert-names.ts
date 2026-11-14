@@ -4,11 +4,12 @@ import {canonicalNameKey,formatNameList,nameKeyResolver} from './name-format';
 
 export type ConvertName={key:string;value:string};
 export const CONVERT_NAMES_KEY='convert-name-list';
+const AI_COMMON_KEYS='convert-name-list:ai-keys';
 export const CONVERT_NAMES_LIMIT=64000;
 const ENTRY_LIMIT=4096;
 
 function validEntry(key:string,value:string,line:number) {
-  if(!key||!value||/[\r\n=]/.test(key)||/[\r\n]/.test(value))throw new Error(`Name List: dòng ${line} cần dạng chữ Trung=tên Việt trên một dòng.`);
+  if(!key||/[\r\n=]/.test(key)||/[\r\n]/.test(value))throw new Error(`Name List: dòng ${line} cần dạng chữ Trung=tên Việt trên một dòng.`);
   if(key.length>256||value.length>2048)throw new Error(`Name List: dòng ${line} vượt giới hạn khóa 256 hoặc nghĩa 2.048 ký tự.`);
 }
 export function formatConvertNames(names:ConvertName[]) {return formatNameList(names);}
@@ -43,20 +44,36 @@ export async function readConvertNames():Promise<ConvertName[]> {
   const row=await db.settings.get(CONVERT_NAMES_KEY);
   return row?validateConvertNames(row.value):[];
 }
+async function readAiCommonKeys():Promise<Set<string>> {
+  const value=(await db.settings.get(AI_COMMON_KEYS))?.value;
+  return new Set(Array.isArray(value)?value.filter((key):key is string=>typeof key==='string'):[]);
+}
+export async function readAiCommonNames():Promise<ConvertName[]> {
+  return db.transaction('r',db.settings,async()=>{
+    const keys=await readAiCommonKeys();
+    return keys.size?(await readConvertNames()).filter(row=>keys.has(row.key)&&row.value):[];
+  });
+}
 /** Merge only: omissions and invalid input never delete existing entries. */
-export async function saveConvertNames(text:string):Promise<number> {
+export async function saveConvertNames(text:string,options?:{forAi:true}):Promise<number> {
   const edits=parseConvertNames(text);
   return db.transaction('rw',db.settings,async()=>{
     const rows=await readConvertNames(),resolveKey=nameKeyResolver(rows),names=new Map(rows.map(n=>[n.key,n.value]));
-    for(const entry of edits){const key=resolveKey(entry.key);names.set(key,entry.value);await db.settings.delete(convertTombKey(key));}
+    const aiKeys=options?.forAi?await readAiCommonKeys():undefined;
+    for(const entry of edits){const key=resolveKey(entry.key);names.set(key,entry.value);aiKeys?.add(key);await db.settings.delete(convertTombKey(key));}
     const merged=[...names].map(([key,value])=>({key,value}));checkSize(merged);
-    await db.settings.put({key:CONVERT_NAMES_KEY,value:merged});return merged.length;
+    await db.settings.put({key:CONVERT_NAMES_KEY,value:merged});
+    if(aiKeys)await db.settings.put({key:AI_COMMON_KEYS,value:merged.filter(row=>aiKeys.has(row.key)).map(row=>row.key)});
+    return merged.length;
   });
 }
 export async function deleteConvertName(key:string):Promise<void> {
   if(!key.trim()||key!==key.trim()||/[\r\n=]/.test(key))throw new Error('Khóa Name cần hợp lệ để xóa.');
   await db.transaction('rw',db.settings,async()=>{
-    const names=await readConvertNames();await db.settings.put({key:CONVERT_NAMES_KEY,value:names.filter(n=>n.key!==key)});await db.settings.put({key:convertTombKey(key),value:{kind:'convert-name',key,value:null}});
+    const names=await readConvertNames(),aiKeys=await readAiCommonKeys();
+    await db.settings.put({key:CONVERT_NAMES_KEY,value:names.filter(n=>n.key!==key)});
+    await db.settings.put({key:convertTombKey(key),value:{kind:'convert-name',key,value:null}});
+    if(aiKeys.delete(key))await db.settings.put({key:AI_COMMON_KEYS,value:[...aiKeys]});
   });
 }
 /** Move one Unicode code point, keeping the engine's raw UTF-16 offsets. */

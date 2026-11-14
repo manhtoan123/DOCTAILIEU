@@ -8,9 +8,13 @@ Chuột phải có menu liên kết gốc của trình duyệt; Ctrl/Meta/Shift/
 
 Album dùng `/phong-toi?album=<đường dẫn đã encode>`; nhánh tác giả/Series được khôi phục khi mở tab mới, tải lại và Back/Forward. Đây chỉ là trạng thái điều hướng, không đổi định danh Album, phân cấp, ID truyện/chương, dữ liệu đã lưu hay chính sách tải cloud. Liên kết đọc dùng router hiện hành; URL cũ/short/numeric vẫn được giải quyết như trước.
 
+Khi mở trực tiếp một route đọc mà app còn phải tra mã truyện hoặc tải truyện từ kho chung, hiển thị trạng thái “Đang mở chương…” thay cho Tủ sách trong lúc chờ. Trạng thái ban đầu được suy ra từ URL để tránh chớp Tủ sách trước khi effect xử lý route chạy; lỗi tải vẫn hiện thông báo như trước.
+
 ## Nguồn và cách áp dụng
 
 Tham khảo mã nguồn chính chủ [React Router shouldProcessLinkClick](https://github.com/remix-run/react-router/blob/main/packages/react-router/lib/dom/dom.ts): giữ anchor/href, chỉ chặn click trái không modifier và target hiện tại. Áp dụng bằng NavigationLink nhỏ dùng callback/router sẵn có; không thêm React Router hoặc dependency. Nguồn là ý tưởng thiết kế, không thay thế kiểm chạy.
+
+Với trạng thái chờ mở route, đã thử truy cập repository GitHub của app nhưng không đọc được (404/không công khai trong phiên). Giữ nguyên cơ chế nạp route hiện có; chỉ thay phần UI được render khi route đọc đang chờ, không thêm router hay dependency.
 
 ## Kiểm chứng
 

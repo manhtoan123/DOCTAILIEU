@@ -39,8 +39,12 @@ describe('independent Convert shared quota guard in workerd/D1',()=>{
   const response=await post(text);expect(response.status).toBe(text==='throw'||text==='unavailable'?503:200);
   expect(await budget()).toMatchObject({spent:2000000,lease:null});expect((await post()).status).toBe(429);
  });
+ it('admits an explicit empty Name through the guarded runtime',async()=>{
+  expect((await post('known',[{key:'known',value:''}])).status).toBe(200);
+  expect(await budget()).toMatchObject({spent:44,lease:null});
+ });
  it('rejects malformed Names, stale versions and oversized requests before reserving',async()=>{
-  for(const names of [[{key:'',value:'x'}],[{key:'x=y',value:'x'}],[{key:'x\ny',value:'x'}],[{key:'x',value:''}],[{key:'x',value:'x\ny'}],[{key:'x',value:'x'.repeat(257)}]])expect((await post('known',names)).status).toBe(413);
+  for(const names of [[{key:'',value:'x'}],[{key:'x=y',value:'x'}],[{key:'x\ny',value:'x'}],[{key:'x',value:' '}],[{key:'x',value:'x\ny'}],[{key:'x',value:'x'.repeat(257)}]])expect((await post('known',names)).status).toBe(413);
   expect((await post('known',[],'old-version')).status).toBe(409);
   expect((await post('甲'.repeat(257))).status).toBe(400);
   expect((await runtime.dispatchFetch('https://private.internal/convert',{method:'POST',headers:{'X-Convert-Version':convertVersion,'Content-Type':'text/plain'},body:JSON.stringify({text:'known',names:[]})})).status).toBe(415);

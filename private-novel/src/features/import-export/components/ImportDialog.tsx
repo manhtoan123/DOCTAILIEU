@@ -153,7 +153,7 @@ export default function ImportDialog({initialAlbum='',onClose,onDone}:{initialAl
     {!isLayout&&files.length===1&&<button className="import-anthology" disabled={busy} onClick={()=>setAnthologyMode(true)}>Tách tuyển tập thành nhiều truyện</button>}
 
     {isDocument&&<p className="notice">PDF cần có lớp chữ. Kiểm tra thứ tự đoạn văn trong bản xem trước nếu trang có nhiều cột.</p>}
-    {prepared&&<DocumentPreview file={prepared}/>}
+    {(isEpub||prepared)&&<DocumentPreview file={isEpub?files[0]:prepared!}/>}
    </div>
     <footer>
      {busy&&<ImportProgress status={status}/>}

@@ -15,7 +15,7 @@ import {planPolishText,formatPolishPairs,polishPairsInRange,polishPairCut,accept
 import {planAiText,AI_WHOLE_CHAPTER_CHARS} from './ai-output-plan';
 import {maySkipPolishPart,readPolishOutput,type PolishFallbackRange} from './polish-output';
 import {AiChapterJob,AI_CHAPTER_LIMITS,EPUB_AI_CHAPTER_LIMITS,selectAiChapterBudget,type AiChapterBudget,optionalAiCache,AI_CACHE_READ_MS,AI_CACHE_WRITE_MS} from './ai-job';
-import {splitAiText,runAiParts,aiQuotaFeedback,withAiRequestCapacity,AI_TEXT_REQUEST_CHARS,type AiPart,type AiPartsControl,type AiPartsProgress,type AiPartRecord} from './ai-parts';
+import {splitAiText,runAiParts,aiQuotaFeedback,withAiRequestCapacity,AI_TEXT_REQUEST_CHARS,type AiPart,type AiPartsControl,type AiPartsProgress,type AiPartRecord,type PolishPartsResume} from './ai-parts';
 import {AiJobHandoff} from './ai-job-handoff';
 import {AiCompletedMemory,mayReuseCompletedAi,validCompletedAi} from './ai-completed-reuse';
 export type {ReadingAiSettings} from '../types/ai-settings-type';
@@ -35,6 +35,8 @@ export interface AiReadingCache {
   writePart?:(source:AiReadingSource,settings:ReadingAiSettings,names:{key:string;value:string}[],plan:string,id:string,result:AiTranslateClientResponse,signal?:AbortSignal)=>Promise<boolean>;
 }
 export function legacyAiReadingKey(source:AiReadingSource,settings:ReadingAiSettings,names:{key:string;value:string}[]):string{
+  // Fallback priority only changes retry order, so existing complete translations remain reusable.
+  const {fallbackOrder:_fallbackOrder,...orderIndependent}=settings;settings=orderIndependent;
   // Fixed is the previously deployed policy: retain existing validated cache identities.
   if(settings.modelMode==='fixed'){const {modelMode,...previous}=settings;settings=previous;}
   const effective=settings.hybrid?{...settings,hybridProtocol:3,hybrid:{...settings.hybrid,secondHalfPrompt:settings.hybrid.secondHalfPrompt??DEFAULT_SECOND_HALF_PROMPT}}:settings;
@@ -53,6 +55,7 @@ export class AiReadingSession {
   private resultFacts=new AiResultFactsStore();
   private parts=new Map<string,Map<string,AiTranslateClientResponse>>();
   private partPlans=new Map<string,{parts:AiPart[];plan:string}>();
+  private polishRun?:{key:string;identity:string;resume:PolishPartsResume};
   private progress=new Map<string,AiPartsProgress>();
   private listeners=new Map<string,Set<(state:AiPartsProgress)=>void>>();
   private pending=new Map<string,{controller:AbortController;promise:Promise<AiTranslateClientResponse>;handoff:AiJobHandoff}>();
@@ -60,7 +63,33 @@ export class AiReadingSession {
   private budgets=new Map<string,AiChapterBudget>();
   private hybridMemory=new Map<string,HybridMemory>();
   constructor(private translate:AiReadingTranslate=aiTranslate,private persisted?:AiReadingCache,private onQuota?:(delay:number,pause:boolean)=>void,private observeMetrics=true,sharedRecovery?:AiRecovery,private sharedControl?:AiPartsControl,private planOutput=true){if(sharedRecovery)this.recovery=sharedRecovery;}
-  retain(keys:string[]){this.resultFacts.retain(keys);const keep=new Set(keys);for(const [key,job] of this.pending)if(!keep.has(key)){this.clearPreview(key);job.handoff.close();job.controller.abort();this.pending.delete(key);}for(const map of [this.cache,this.parts,this.partPlans,this.progress,this.listeners,this.budgets,this.hybridMemory])for(const key of map.keys())if(!keep.has(key))map.delete(key);}
+  retain(keys:string[]){this.resultFacts.retain(keys);const keep=new Set(keys);if(this.polishRun&&!keep.has(this.polishRun.key))this.polishRun=undefined;for(const [key,job] of this.pending)if(!keep.has(key)){this.clearPreview(key);job.handoff.close();job.controller.abort();this.pending.delete(key);}for(const map of [this.cache,this.parts,this.partPlans,this.progress,this.listeners,this.budgets,this.hybridMemory])for(const key of map.keys())if(!keep.has(key))map.delete(key);}
+  /** Keep a live Convert plan across explicit model changes. Only whole roots
+   * can cross that boundary. Child recovery remains tied to its request model. */
+  preparePolishRun(source:AiReadingSource,settings:ReadingAiSettings,resume:boolean){
+    const key=aiReadingKey(source,settings,[]);
+    const identity=legacyAiReadingKey(source,{...settings,model:''},[]);
+    const previous=this.polishRun;
+    if(resume){
+      if(!previous||previous.identity!==identity)return false;
+      if(previous.key===key)return true;
+      const plan=this.partPlans.get(previous.key);
+      if(!plan)return false;
+      const retained=new Map(previous.resume.retained),completed=this.parts.get(previous.key);
+      for(const part of plan.parts){
+        const result=completed?.get(part.id);
+        if(result)retained.set(part.id,result);
+      }
+      const skipped=this.progress.get(previous.key)?.polishSkipped??previous.resume.skipped;
+      this.retain([]);
+      this.partPlans.set(key,plan);
+      this.polishRun={key,identity,resume:{retained,skipped}};
+    }else{
+      this.retain([]);
+      this.polishRun={key,identity,resume:{retained:new Map()}};
+    }
+    return true;
+  }
   get(key:string){return this.cache.get(key);}
   facts(key:string){return this.resultFacts.get(key);}
   visible(key:string,preview:boolean,accepted:boolean){const budget=this.budgets.get(key);if(budget){const metric=AiRunMetrics.existing(budget);metric?.foreground();metric?.visible(preview,accepted);}}
@@ -77,6 +106,7 @@ export class AiReadingSession {
     const wholeShort=this.planOutput&&!validate&&!source.polishPairs&&source.text.length<AI_WHOLE_CHAPTER_CHARS;
     if(settings.hybrid&&(isHybridLiteModel(settings.model)||!hybridTemplateValid(settings.userPromptTemplate)))return Promise.reject(new AiTranslateClientError('invalid_prompt','Dịch kết hợp cần model ưu tiên cho nửa đầu và đúng một {{text}}.'));
     const key=aiReadingKey(source,settings,names),cached=this.cache.get(key);if(cached){validate?.(cached);return Promise.resolve(cached);}
+    const polishRun=source.polishPairs&&options.skipFailedPolishParts&&!this.persisted&&this.polishRun?.key===key?this.polishRun.resume:undefined;
     const reuseCompleted=!!this.persisted?.readCompleted&&this.planOutput&&!validate&&!source.polishPairs&&mayReuseCompletedAi(settings);
     const kept=reuseCompleted?this.completed.get(source,settings,names):undefined;
     if(kept){this.cache.set(key,kept);this.resultFacts.set(key,kept);return Promise.resolve(kept);}
@@ -177,20 +207,26 @@ export class AiReadingSession {
       const warmParallel=!!warm&&!!settings.splitParts&&parts.length>1&&(!!pinned||models.length===1);if(warmParallel&&models.length===1)pinned??=this.capacity!.model;
       const splitReason:AiDivisionReason=plan.includes('txt-parts-2')?'legacy':plan.includes('txt-output-budget-1')?'request_limit':settings.splitParts?'parallel':'request_limit';
       if(parts.length>1)logMetrics?.planSplit(splitReason);
-      const splitEvents=new Map<string,AiDivisionReason>(),unknownDivision=hasUnknownAiParts(parts,completed);let freshSingle=false;
+      const retained=polishRun?.retained;
+      const acceptedParts=()=>retained?.size?new Map([...retained,...completed!]):completed!;
+      const splitEvents=new Map<string,AiDivisionReason>(),unknownDivision=hasUnknownAiParts(parts,acceptedParts());let freshSingle=false;
       const publish=(state:AiPartsProgress)=>{
         job.check();
-        const tree=wholeShort?{division:{version:1 as const,parts:1,reasons:[]},leafProgress:{done:completed!.has('0')?1:0,total:1}}:aiTreeFacts(parts,completed!,splitEvents,splitReason,unknownDivision);
+        const acceptedRoots=acceptedParts();
+        const tree=wholeShort?{division:{version:1 as const,parts:1,reasons:[]},leafProgress:{done:completed!.has('0')?1:0,total:1}}:aiTreeFacts(parts,acceptedRoots,splitEvents,splitReason,unknownDivision);
         const text=aiCompletedPrefix(parts,completed!,source.polishPairs?'':'\n'),draft=wholeShort&&!text?this.progress.get(key)?.previewText:undefined;
         // Lease/progress events may arrive after the last stream chunk but
         // before completed.set(). Keep its draft until acceptance or explicit clear.
         let completedSourceEnd=0,targetStart=0;
         const polishFallback:PolishFallbackRange[]=[];
-        const accepted:string[]=[], skippedRoots=new Set(state.polishSkipped?.map(row=>row.part));
+        const accepted:string[]=[], acceptedModels=new Set<string>(), skippedRoots=new Set(state.polishSkipped?.map(row=>row.part));
         for(const [index,part] of parts.entries()){
-          const result=completed!.get(part.id);
+          const result=acceptedRoots.get(part.id);
           let acceptedText:string;
-          if(result?.finishReason==='STOP'&&result.result.trim())acceptedText=result.result;
+          if(result?.finishReason==='STOP'&&result.result.trim()){
+            acceptedText=result.result;
+            if(retained?.size)acceptedModels.add(result.model);
+          }
           else if(skippedRoots.has(index+1)){
             acceptedText=part.text;
             polishFallback.push({sourceStart:part.start,sourceEnd:part.end,targetStart,targetEnd:targetStart+acceptedText.length});
@@ -200,7 +236,8 @@ export class AiReadingSession {
           targetStart+=acceptedText.length+(source.polishPairs?0:1);
           completedSourceEnd=part.end;
         }
-        const progress={...state,text,completedSourceEnd,completedText:accepted.join(source.polishPairs?'':'\n'),...(polishFallback.length?{polishFallback}:{}),...(draft?{previewText:draft}:{}),...tree};if(progress.text.length>512000)throw Error('Bản dịch vượt giới hạn hiển thị.');job.metrics?.tree(progress.leafProgress);job.metrics?.progress(progress.done,progress.total,progress.text,progress.recoveryPasses);this.progress.set(key,progress);for(const listener of this.listeners.get(key)||[])listener(progress);};
+        const completedText=accepted.join(source.polishPairs?'':'\n');
+        const progress={...state,text:retained?.size?completedText:text,completedSourceEnd,completedText,...(acceptedModels.size?{polishModels:[...acceptedModels]}:{}),...(polishFallback.length?{polishFallback}:{}),...(draft?{previewText:draft}:{}),...tree};if(progress.text.length>512000)throw Error('Bản dịch vượt giới hạn hiển thị.');job.metrics?.tree(progress.leafProgress);job.metrics?.progress(progress.done,progress.total,progress.text,progress.recoveryPasses);this.progress.set(key,progress);for(const listener of this.listeners.get(key)||[])listener(progress);};
       const split=(reason:AiDivisionReason,id:string)=>{logMetrics?.split(aiMetricPartPath(id,options.logPartPath),reason);splitEvents.set(id,reason);const previous=this.progress.get(key);if(previous)publish(previous);};
       const save=async(id:string,result:AiTranslateClientResponse)=>{
         job.check();logMetrics?.result(wholeShort?(options.logPartPath??'0'):aiMetricPartPath(id,options.logPartPath),result);if(pinned&&pinned!==result.model)throw Error('Model thay đổi trong khi phục hồi.');pinned??=result.model;completed.set(id,result);const previous=this.progress.get(key);if(previous)publish(previous);
@@ -220,7 +257,8 @@ export class AiReadingSession {
           },separator:'',
         }:{};
         const response=await send(part.text,part.context,{id:part.id,completed,save,protectedKeys,onSplit:split,parallel:paired?()=>false:canParallel,...editorial},onLease,onRelease);if(parts.length===1&&!response.division&&!unknownDivision)freshSingle=true;pinned??=response.model;return response;
-      },publish,(part,result)=>save(part.id,result),undefined,warmParallel&&requestLimit===2?2:1,control,`${source.bookId}/${source.id}`,splitReason,()=>!!settings.splitParts&&(!!pinned||models.length===1),source.polishPairs?'':'\n',requestLimit,source.polishPairs&&options.skipFailedPolishParts?maySkipPolishPart:undefined);
+      },publish,(part,result)=>save(part.id,result),undefined,warmParallel&&requestLimit===2?2:1,control,`${source.bookId}/${source.id}`,splitReason,()=>!!settings.splitParts&&(!!pinned||models.length===1),source.polishPairs?'':'\n',requestLimit,source.polishPairs&&options.skipFailedPolishParts?maySkipPolishPart:undefined,
+        polishRun&&{retained:polishRun.retained,skipped:this.progress.get(key)?.polishSkipped??polishRun.skipped});
       knownDivision=wholeShort?{version:1,parts:1,reasons:[]}:result.division??(freshSingle?{version:1,parts:1,reasons:[]}:undefined);
       if(result.result.length>512000)throw Error('Bản dịch vượt giới hạn hiển thị.');return result;
     };
@@ -230,13 +268,18 @@ export class AiReadingSession {
     return work.then(async result=>{
       job.check();
       if(controller.signal.aborted||this.pending.get(key)?.controller!==controller)throw new DOMException('Cancelled','AbortError');
-      if(result.finishReason!=='STOP'||!result.result.trim()||!(persistedHit&&reuseCompleted?validCompletedAi(result):validReadingResult(result,settings)))throw new Error('Bản dịch chưa hoàn chỉnh hoặc sai model.');
+      // If no new root was accepted, the aggregate still has an old model.
+      // New responses are validated in send().
+      const retainedOnly=!!polishRun?.retained.size&&
+        this.partPlans.get(key)?.parts.length===polishRun.retained.size+(result.polishSkipped?.length??0)&&
+        [...polishRun.retained.values()].some(row=>row.model===result.model);
+      if(result.finishReason!=='STOP'||!result.result.trim()||!(persistedHit&&reuseCompleted?validCompletedAi(result):validReadingResult(result,settings)||retainedOnly))throw new Error('Bản dịch chưa hoàn chỉnh hoặc sai model.');
       validate?.(result);
       if(this.persisted&&!persistedHit&&!result.polishSkipped?.length)await optionalAiCache(controller.signal,AI_CACHE_WRITE_MS,false,signal=>this.persisted!.write(source,settings,names,knownDivision?{...result,division:knownDivision}:result,signal));
       job.check();
       if(controller.signal.aborted||this.pending.get(key)?.controller!==controller)throw new DOMException('Cancelled','AbortError');
       if(wholeShort)logMetrics?.result(options.logPartPath??'0',result);if(wholeShort)job.metrics?.tree({done:1,total:1});
-      this.resultFacts.set(key,result,knownDivision);if(!result.polishSkipped?.length)this.cache.set(key,result);if(reuseCompleted)this.completed.set(source,settings,names,knownDivision?{...result,division:knownDivision}:result);return result;
+      this.resultFacts.set(key,result,knownDivision);if(!result.polishSkipped?.length&&!polishRun?.retained.size)this.cache.set(key,result);if(reuseCompleted)this.completed.set(source,settings,names,knownDivision?{...result,division:knownDivision}:result);return result;
     });
     }).finally(()=>{controller.signal.removeEventListener('abort',abortPreview);handoff.close();if(this.pending.get(key)?.controller===controller){this.pending.delete(key);this.listeners.delete(key);}});
     this.pending.set(key,{controller,promise,handoff});return promise;

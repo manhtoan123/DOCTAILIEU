@@ -25,7 +25,7 @@ import * as backupModule from '../src/features/import-export/services/backup';
 import {syncLocalBooks} from '../src/features/sync-cloud/services/cloud-client';
 
 const mockedPackage=vi.hoisted(()=>({open:vi.fn(),read:vi.fn()}));
-vi.mock('../src/features/import-export/services/epub-package',()=>({openEpubPackage:mockedPackage.open,readEpubChapter:mockedPackage.read}));
+vi.mock('../src/features/import-export/services/epub-package',()=>({openEpubPackage:mockedPackage.open,readEpubChapter:mockedPackage.read,readEpubChapterParts:async(...args:unknown[])=>{const result=await mockedPackage.read(...args);return Array.isArray(result)?result:[result];}}));
 const bookId='00000000-0000-4000-8000-000000000081',sourceId='00000000-0000-4000-8000-000000000082',chapterId='00000000-0000-4000-8000-000000000083',origin='https://epub-persistence.example';
 const layout={path:'OPS/chapter.xhtml',body:'<body xmlns="http://www.w3.org/1999/xhtml"><h1>標題</h1><p>字😀文</p></body>',styles:[{path:'OPS/style.css',text:'p { text-indent: 2em; }'}],nodes:['標題','字😀文']};
 const payload=new Uint8Array([80,75,3,4,1,2,3,4]);

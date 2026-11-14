@@ -19,7 +19,7 @@ const entry=(album:string,key:string,value:string|null):SharedRecord=>({kind:'al
 async function put(record:SharedRecord,baseRevision=0){return handle(new Request('https://fixture.invalid/api/state',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:await sharedRecordId(record),baseRevision,record})}));}
 
 it('production handler persists independent Album keys, pages them globally and CAS protects stale edits/tombs',async()=>{
- const a=entry('Author','甲','Tên A'),b=entry('Other','甲','Tên B');
+ const a=entry('Author','甲',''),b=entry('Other','甲','Tên B');
  const first=await put(a);expect(first.status).toBe(200);const row=(await first.json()).row;
  expect((await put(b)).status).toBe(200);
  const stale=await put({...a,value:'Stale'},0);expect(stale.status).toBe(409);expect((await stale.json()).row.record).toEqual(a);
@@ -30,6 +30,6 @@ it('production handler persists independent Album keys, pages them globally and 
  expect(database.native.prepare('SELECT row_count FROM shared_state_meta').get()?.row_count).toBe(2);
 });
 it('rejects malformed Album identity and book ownership before any SQL publication',async()=>{
- for(const record of [{...entry('A','甲','Name'),bookId:'book'},{...entry('A','甲','Name'),key:'["A/Series","甲"]'},{...entry('A','甲','Name'),key:'["A","a=b"]'}])expect((await put(record)).status).toBe(400);
+ for(const record of [{...entry('A','甲','Name'),bookId:'book'},{...entry('A','甲','Name'),key:'["A/Series","甲"]'},{...entry('A','甲','Name'),key:'["A","a=b"]'},entry('A','甲',' ')])expect((await put(record)).status).toBe(400);
  expect(database.native.prepare('SELECT COUNT(*) AS n FROM shared_state').get()?.n).toBe(0);
 });

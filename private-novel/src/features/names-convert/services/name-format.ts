@@ -1,13 +1,12 @@
-import {parseEntry} from '../../../core/domain';
-
 export type NamePair={key:string;value:string};
 /** `$` is the Name-list marker, not part of a newly stored source key. */
 export const canonicalNameKey=(key:string)=>key.trim().replace(/^\$+/,'').trim();
 export const displayNameKey=(key:string)=>'$'+canonicalNameKey(key);
 export const formatNameEntry=(key:string,value:string)=>`${displayNameKey(key)}=${value}`;
 export function parseNameEntry(line:string):[string,string]|null{
- const entry=parseEntry(line);if(!entry)return null;
- const key=canonicalNameKey(entry[0]);return key&&!key.startsWith('#')?[key,entry[1]]:null;
+ const text=line.replace(/^\uFEFF/,'').trim(),at=text.indexOf('=');
+ if(at<1)return null;
+ const key=canonicalNameKey(text.slice(0,at));return key&&!key.startsWith('#')?[key,text.slice(at+1).trim()]:null;
 }
 export function formatNameList(rows:readonly NamePair[]){
  return [...rows].sort((a,b)=>canonicalNameKey(b.key).length-canonicalNameKey(a.key).length||canonicalNameKey(a.key).localeCompare(canonicalNameKey(b.key))).map(row=>formatNameEntry(row.key,row.value)).join('\n');

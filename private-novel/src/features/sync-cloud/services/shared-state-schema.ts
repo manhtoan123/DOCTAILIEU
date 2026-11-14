@@ -19,7 +19,7 @@ function string(value:unknown,max:number,empty=false):string{if(typeof value!=='
 function number(value:unknown,min:number,max=Number.MAX_SAFE_INTEGER,integer=true):number{if(typeof value!=='number'||!Number.isFinite(value)||value<min||value>max||integer&&!Number.isSafeInteger(value))invalid();return value;}
 function enumValue(value:unknown,values:readonly string[]):string{if(typeof value!=='string'||!values.includes(value))invalid();return value;}
 function hash(value:unknown):string{const result=string(value,64);if(!/^[a-f0-9]{64}$/.test(result))invalid();return result;}
-function nameValue(value:unknown):string{const result=string(value,4096);if(/[\r\n]/.test(result))invalid();return result;}
+function nameValue(value:unknown,allowEmpty:boolean):string{const result=string(value,4096,allowEmpty&&value==='');if(/[\r\n]/.test(result))invalid();return result;}
 function album(value:unknown):string|undefined{if(value===undefined)return;const result=string(value,120);if(/[\r\n]/.test(result))invalid();return result;}
 export function validateSharedRecord(value:unknown):SharedRecord{return validateRecord(value,false);}
 /** Replica base descriptors carry no payload; this is not a publishable tombstone. */
@@ -40,7 +40,7 @@ function validateRecord(value:unknown,descriptorOnly:boolean):SharedRecord{
  if(kind==='convert-name'&&(typeof input.value!=='string'||input.value.length>2048||input.value!==input.value.trim()))invalid();
  if(kind==='chapter-state')record.value=validateChapterState(input.value);
  else if(kind==='chapter-append'||kind==='chapter-append-packet')record.value=validateAppendValue(kind,bookId!,key,input.value);
- else if(['name','album-name','convert-name','common-name'].includes(kind))record.value=nameValue(input.value);
+ else if(['name','album-name','convert-name','common-name'].includes(kind))record.value=nameValue(input.value,kind!=='common-name');
  else if(kind==='book'){const v=object(input.value);record.value={title:string(v.title,BOOK_METADATA_MAX_CHARS),author:string(v.author,BOOK_METADATA_MAX_CHARS,true),...(v.displayTitle===undefined?{}:{displayTitle:string(v.displayTitle,BOOK_METADATA_MAX_CHARS)}),...(v.cover===undefined?{}:{cover:validateSharedImage(v.cover)}),...(v.album===undefined?{}:{album:album(v.album)})};}
  else if(kind==='ai-settings'){
   const v=object(input.value),settings=validatePromptSettings(v);

@@ -100,7 +100,11 @@ async function route(request: Request, env: CloudLibraryEnv, waitUntil:(promise:
   if (!id) return error(404, 'not_found');
   if (request.method === 'DELETE') {
     // Optional reviewed owner/content precondition; legacy callers retain ID-only deletion.
-    if(request.body){
+    // Guarded callers declare their JSON body with Content-Type. Do not use
+    // Request.body truthiness here: Pages may expose a stream and Content-Length: 0
+    // for a bodyless DELETE. A positive or malformed length still gets validated.
+    const declaredLength=request.headers.get('Content-Length');
+    if(request.headers.has('Content-Type')||declaredLength!==null&&(!/^\d+$/.test(declaredLength)||Number(declaredLength)>0)){
       let expected:{title:string;album?:string;sha256:string;bytes:number;updatedAt:number}|null;
       try{const value=JSON.parse(new TextDecoder('utf-8',{fatal:true,ignoreBOM:false}).decode(await boundedBody(request,CLOUD_DELETE_METADATA_MAX_BYTES)));if(!value||!Object.hasOwn(value,'expected'))throw Error();expected=value.expected;
         if(expected!==null&&(!expected||typeof expected.title!=='string'||!expected.title||expected.title.length>BOOK_METADATA_MAX_CHARS||expected.album!==undefined&&(typeof expected.album!=='string'||expected.album.length>4096)||!hashPattern.test(expected.sha256)||!Number.isSafeInteger(expected.bytes)||expected.bytes<1||!Number.isSafeInteger(expected.updatedAt)||expected.updatedAt<0))throw Error();

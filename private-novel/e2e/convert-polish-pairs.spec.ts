@@ -1,7 +1,7 @@
 import {test,expect,type Page} from '@playwright/test';
 const original='清晨花园很安静。小林打开门。\n'.repeat(160),book='paired-polish',chapter='paired-polish-1';
-async function seed(page:Page,repeat=160){
- const fixtureOriginal='清晨花园很安静。小林打开门。\n'.repeat(repeat);
+async function seed(page:Page,repeat=160,indexed=false){
+ const fixtureOriginal=indexed?Array.from({length:repeat},(_,i)=>`清晨花园很安静。小林打开门。 ${i+1000}\n`).join(''):'清晨花园很安静。小林打开门。\n'.repeat(repeat);
  await page.route('**/api/**',r=>r.fulfill({status:503,json:{error:'isolated synthetic fixture'}}));
  await page.goto('/');await expect(page.getByRole('button',{name:'Thêm truyện',exact:true})).toBeVisible();
  await page.evaluate(async({original,book,chapter})=>{
@@ -43,6 +43,97 @@ test('progressive prefix keeps tail Edit Name; second Convert cancels, clears ca
 for(const invalid of ['label','cut','refusal'])test(`does not accept or replay invalid part: ${invalid}`,async({page})=>{
  await seed(page);let calls=0;await page.route('**/api/ai/translate',r=>{calls++;const body=r.request().postDataJSON();if(invalid==='refusal')return r.fulfill({status:502,headers:{'X-AI-Failure-Reason':'upstream_finish_reason'},json:{error:'ai_incomplete_result'}});return r.fulfill({json:invalid==='cut'?{...reply(body),finishReason:'MAX_TOKENS'}:reply(body,'[Convert 1]\nKết quả có nhãn sai.')});});
  await start(page);await expect(page.getByRole('button',{name:'Thử lại phần lỗi',exact:true})).toBeVisible();expect(calls).toBeGreaterThan(0);await expect(page.locator('.polish-inline [role="alert"]')).toHaveCount(0);await expect(page.getByRole('button',{name:'Convert',exact:true})).toHaveAttribute('aria-pressed','true');await expect(page.getByRole('progressbar').locator('[data-state="done"]')).toHaveCount(0);expect((await snapshot(page)).cache).toHaveLength(0);await expect(page.locator('.prose')).toContainText('buổi sáng');
+});
+test('switching polish models retries only skipped roots and preserves accepted prose',async({page})=>{
+ await seed(page,360,true);
+ const a='gemini-2.5-flash',b='gemini-3.8-flash',c='gemini-3.7-flash';
+ const requests:{model:string;text:string}[]=[],failed:string[]=[];
+ let phase=0;
+ await page.route('**/api/ai/translate',r=>{
+  const body=r.request().postDataJSON();
+  const index=requests.push({model:body.model,text:body.text})-1;
+  if(!phase&&(index===1||index===3))failed.push(body.text);
+  if((phase<=1&&failed.includes(body.text))||(phase===2&&body.text===failed[1])){
+   return r.fulfill({status:502,headers:{'X-AI-Failure-Reason':'upstream_finish_reason'},json:{error:'ai_incomplete_result'}});
+  }
+  const phrase=body.model===a?'sớm mai':body.model===b?'bình minh vừa lên':'ban mai';
+  return r.fulfill({json:reply(body,edit(body).replaceAll('sớm mai',phrase))});
+ });
+ const applied=page.getByRole('status').filter({hasText:'Đã áp dụng bản trau chuốt'});
+ const retry=page.getByRole('button',{name:'Thử lại phần lỗi',exact:true});
+ const picker=page.getByRole('combobox',{name:'Model trau chuốt'});
+ const bar=page.getByRole('progressbar',{name:'Tiến độ trau chuốt từng phần'});
+ const fallback=bar.locator('[data-state="skipped"]');
+ await start(page);
+ await expect(applied).toBeVisible({timeout:20000});
+ expect(failed).toHaveLength(2);
+ expect(new Set(requests.map(row=>row.text)).size).toBe(requests.length);
+ expect(requests.every(row=>row.model===a)).toBe(true);
+ await expect(fallback).toHaveCount(2);
+ const initial=(await snapshot(page)).cache[0].value;
+ const initialCount=requests.length;
+ const oldRanges=initial.fallback as {targetStart:number;targetEnd:number}[];
+ expect(oldRanges).toHaveLength(2);
+
+ phase=1;
+ await picker.selectOption(b);
+ await expect(retry).toBeVisible();
+ expect(requests).toHaveLength(initialCount);
+ await retry.click();
+ await expect(applied).toBeVisible();
+ expect(requests.slice(initialCount)).toEqual(failed.map(text=>({model:b,text})));
+ expect((await snapshot(page)).cache[0].value.text).toBe(initial.text);
+ await expect(fallback).toHaveCount(2);
+
+ phase=2;
+ await retry.click();
+ await expect(applied).toBeVisible();
+ expect(requests.slice(initialCount+2)).toEqual(failed.map(text=>({model:b,text})));
+ const mixed=(await snapshot(page)).cache[0].value;
+ const newRange=mixed.fallback[0];
+ await expect(fallback).toHaveCount(1);
+ expect(mixed.models).toEqual([a,b]);
+ expect(mixed.text.slice(0,oldRanges[0].targetStart)).toBe(initial.text.slice(0,oldRanges[0].targetStart));
+ expect(mixed.text.slice(newRange.targetStart)).toBe(initial.text.slice(oldRanges[1].targetStart));
+ expect(mixed.text.slice(oldRanges[0].targetStart,newRange.targetStart)).toContain('bình minh');
+ expect(newRange.targetStart).not.toBe(oldRanges[1].targetStart);
+
+ phase=3;
+ await picker.selectOption(c);
+ await retry.click();
+ await expect(applied).toBeVisible();
+ expect(requests.slice(initialCount+4)).toEqual([{model:c,text:failed[1]}]);
+ await expect(fallback).toHaveCount(0);
+ const final=(await snapshot(page)).cache[0].value;
+ expect(final.models).toEqual([a,b,c]);
+ expect(final.text.slice(0,newRange.targetStart)).toBe(mixed.text.slice(0,newRange.targetStart));
+ expect(final.text.endsWith(mixed.text.slice(newRange.targetEnd))).toBe(true);
+ expect(final.text.slice(newRange.targetStart)).toContain('ban mai');
+});
+test('polish saves Vietphrase and shared AI Names with separate buttons',async({page})=>{
+ await seed(page);
+ const requests:any[]=[];
+ await page.route('**/api/ai/translate',r=>{
+  const body=r.request().postDataJSON();
+  requests.push(body);
+  if(body.text.startsWith('[Nguyên văn'))return r.fulfill({json:{...reply(body),result:'<BAN_TU_DIEN>\n{Khu vườn}: $花园=Vườn hoa\n</BAN_TU_DIEN>\n<BAN_DICH>\n'+edit(body)+'\n</BAN_DICH>'}});
+  return r.fulfill({json:{model:body.model,finishReason:'STOP',inputTokens:10,outputTokens:10,result:'Vườn hoa rất yên tĩnh. Tiểu Lâm mở cửa.\n'.repeat(160)}});
+ });
+ await start(page);
+ await expect(page.getByRole('status').filter({hasText:'Đã áp dụng bản trau chuốt'})).toBeVisible({timeout:20000});
+ await page.getByRole('checkbox',{name:'Chọn $花园=Vườn hoa'}).check();
+ const vietphrase=page.getByRole('button',{name:'Lưu Vietphrase đã chọn'});
+ const common=page.getByRole('button',{name:'Lưu Name chung cho AI'});
+ await vietphrase.click();
+ await expect(page.getByRole('status').filter({hasText:'Đã lưu 1 mục Vietphrase'})).toBeVisible();
+ await expect(vietphrase).toBeDisabled();
+ await expect(common).toBeEnabled();
+ await common.click();
+ await expect(page.getByRole('status').filter({hasText:'Đã lưu 1 mục Name chung cho AI'})).toBeVisible();
+ await page.getByRole('button',{name:'Đóng trau chuốt'}).click();
+ await page.getByRole('button',{name:'Bản gốc',exact:true}).click();
+ await page.getByRole('button',{name:'Dịch AI',exact:true}).click();
+ await expect.poll(()=>requests.find(body=>!body.text.startsWith('[Nguyên văn'))?.names).toMatchObject({'花园':'Vườn hoa'});
 });
 test('saving Edit Name preserves completed polish and active narration without a reload or restart',async({page})=>{
  await page.addInitScript(()=>{(window as any).__audios=[];(window as any).__plays=0;(window as any).Audio=class{onended?:()=>void;playbackRate=1;src='';currentTime=0;duration=30;readyState=1;constructor(){(window as any).__audios.push(this);}removeAttribute(){}load(){}play(){if(this.onended)(window as any).__plays++;return Promise.resolve();}pause(){}};});

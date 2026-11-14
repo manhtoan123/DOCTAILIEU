@@ -78,8 +78,8 @@ export default function NameManager({bookId,names,draft,setDraft,onSave,saving,o
   function saveOne(){
     if(disabled||busy.current)return;
     const source=canonicalNameKey(key),replacement=value.trim();
-    if(!source||!replacement||/[\r\n=]/.test(source)||source.startsWith('#')||/[\r\n]/.test(replacement)){
-      setError('Chữ nguồn và tên Việt cần nằm trên một dòng, không được để trống; chữ nguồn không chứa dấu = hoặc bắt đầu bằng #.');return;
+    if(!source||/[\r\n=]/.test(source)||source.startsWith('#')||/[\r\n]/.test(replacement)){
+      setError('Chữ nguồn không được để trống, chứa dấu = hoặc bắt đầu bằng #. Nghĩa phải nằm trên một dòng.');return;
     }
     if(source.length>256||replacement.length>4096){setError('Tên hoặc nghĩa quá dài (tối đa 256 / 4.096 ký tự).');return;}
     try{resolveNameKey(source,names);}catch(reason){setError(errorText(reason));return;}
@@ -114,7 +114,7 @@ export default function NameManager({bookId,names,draft,setDraft,onSave,saving,o
     <div className="name-manager-search"><label>Tìm Name<input type="search" aria-label="Tìm Name" placeholder="Chữ nguồn hoặc tên Việt…" value={query} onChange={event=>{setQuery(event.target.value);setPage(0);}}/></label><button type="button" disabled={disabled} onClick={()=>choose(null)}>Thêm tên</button></div>
     {editor&&<form className="name-manager-editor" onSubmit={event=>{event.preventDefault();saveOne();}}>
       <label>Chữ nguồn<input aria-label="Chữ nguồn của Name" value={key} readOnly={!!editing} disabled={disabled} onChange={event=>{setKey(event.target.value);setError('');setStatus('');}}/></label>
-      <label>Tên Việt<input aria-label="Tên Việt của Name" value={value} disabled={disabled} onChange={event=>{const next=event.target.value;setValue(next);if(editing){try{resolveNameKey(editing.key,names);setDraft(old=>mergeKey(old,editing.key,next));}catch{/* Keep conflicting legacy draft entries intact. */}}setError('');setStatus('');}}/></label>
+      <label>Tên Việt<input aria-label="Tên Việt của Name" placeholder="Để trống để ẩn trong Convert" value={value} disabled={disabled} onChange={event=>{const next=event.target.value;setValue(next);if(editing){try{resolveNameKey(editing.key,names);setDraft(old=>mergeKey(old,editing.key,next));}catch{/* Keep conflicting legacy draft entries intact. */}}setError('');setStatus('');}}/></label>
       <div className="name-manager-save"><small>Phạm vi: {scopeLabel}</small><button className="primary" type="submit" disabled={disabled}>{disabled?'Đang lưu…':'Lưu tên'}</button></div>
     </form>}
     {error&&<p className="name-manager-feedback" role="alert">{error}</p>}
@@ -129,7 +129,7 @@ export default function NameManager({bookId,names,draft,setDraft,onSave,saving,o
     </details>
     <p className="name-manager-count">Đã lưu: {names.filter(entry=>entry.bookId===bookId).length} · Tìm thấy: {filtered.length}</p>
     <ul className="name-manager-list" aria-label="Name đã lưu">
-      {entries.map(entry=><li key={entry.id}><button type="button" className="name-manager-row" aria-label={`Sửa Name ${displayNameKey(entry.key)}`} aria-pressed={editing?.key===entry.key} disabled={disabled} onClick={()=>choose(entry)}><span>{displayNameKey(entry.key)}</span><span>={entry.value}</span></button><button type="button" className="name-manager-delete" aria-label={`Xóa Name ${displayNameKey(entry.key)}`} disabled={disabled} onClick={()=>void remove(entry)}>×</button></li>)}
+      {entries.map(entry=><li key={entry.id}><button type="button" className="name-manager-row" aria-label={`Sửa Name ${displayNameKey(entry.key)}`} aria-pressed={editing?.key===entry.key} disabled={disabled} onClick={()=>choose(entry)}><span>{displayNameKey(entry.key)}</span><span>{entry.value?`=${entry.value}`:"(Ẩn trong Convert)"}</span></button><button type="button" className="name-manager-delete" aria-label={`Xóa Name ${displayNameKey(entry.key)}`} disabled={disabled} onClick={()=>void remove(entry)}>×</button></li>)}
     </ul>
     {!filtered.length&&<p className="muted">{query?'Không có Name khớp tìm kiếm.':'Chưa có Name riêng. Bấm Thêm tên để bắt đầu.'}</p>}
     {pages>1&&<nav className="name-manager-pager" aria-label="Trang Name"><button type="button" disabled={!currentPage} onClick={()=>setPage(currentPage-1)}>Trước</button><span>{currentPage+1} / {pages}</span><button type="button" disabled={currentPage+1>=pages} onClick={()=>setPage(currentPage+1)}>Tiếp</button></nav>}

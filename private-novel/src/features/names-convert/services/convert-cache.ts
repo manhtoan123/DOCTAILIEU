@@ -4,7 +4,7 @@ import {validNameImage,NAME_IMAGE_LIMIT} from './name-images';
 
 // Bump whenever conversion/token semantics change. This DB is disposable and
 // deliberately separate from the library, backups and their migrations.
-export const CONVERT_CACHE_VERSION=2;
+export const CONVERT_CACHE_VERSION=3;
 export const CONVERT_CACHE_DB='thu-phong-convert-cache-v1';
 export const CONVERT_CACHE_TOTAL_BYTES=16*1024*1024;
 export const CONVERT_CACHE_ENTRY_BYTES=2*1024*1024;

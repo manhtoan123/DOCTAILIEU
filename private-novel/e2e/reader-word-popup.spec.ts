@@ -2,7 +2,7 @@ import {test,expect,type Page} from '@playwright/test';
 async function isolate(page:Page){await page.route('**/api/cloud/**',r=>r.fulfill({json:r.request().url().includes('dictionaries')?{version:1,dictionaries:[]}:{books:[]}}));await page.route('**/api/state**',r=>r.fulfill({status:503,json:{error:'isolated'}}));await page.route('**/api/prompts**',r=>r.fulfill({json:{revision:0,rows:[]}}));}
 async function open(page:Page){
  await isolate(page);
- await page.goto('/');await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);await db.dictionaries.bulkPut([{kind:'vp',name:'Vietphrase.txt',blob:new Blob(['山门=sơn môn/cổng núi']),sha256:'fixture-vp',updatedAt:1},{kind:'hanviet',name:'HanViet.txt',blob:new Blob(['山=sơn\n门=môn']),sha256:'fixture-hv',updatedAt:1}]);await db.books.add({id:'popup-book',title:'Popup fixture',author:'',status:'ready',createdAt:1,updatedAt:1,chapterCount:1,charCount:6});await db.chapters.add({id:'popup-chapter',bookId:'popup-book',order:0,title:'Chương 1',text:'山门。山门。',revision:1,sourceId:''});});
+ await page.goto('/');await page.evaluate(async()=>{localStorage.setItem('convert-backend','local');const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);await db.dictionaries.bulkPut([{kind:'vp',name:'Vietphrase.txt',blob:new Blob(['山门=sơn môn/cổng núi']),sha256:'fixture-vp',updatedAt:1},{kind:'hanviet',name:'HanViet.txt',blob:new Blob(['山=sơn\n门=môn']),sha256:'fixture-hv',updatedAt:1}]);await db.books.add({id:'popup-book',title:'Popup fixture',author:'',status:'ready',createdAt:1,updatedAt:1,chapterCount:1,charCount:6});await db.chapters.add({id:'popup-chapter',bookId:'popup-book',order:0,title:'Chương 1',text:'山门。山门。',revision:1,sourceId:''});});
  await page.goto('/read/popup-book/popup-chapter');await page.getByRole('button',{name:'Convert',exact:true}).click();await expect(page.locator('.prose')).toContainText('Sơn môn.');
  await page.locator('.word-token').filter({hasText:/sơn môn/i}).first().click();const popup=page.getByRole('dialog',{name:'Chỉnh Name',exact:true});await expect(popup.getByLabel('Hán-Việt',{exact:true})).toHaveValue('sơn môn');return popup;
 }
@@ -17,6 +17,21 @@ test('Convert opens compact STV editor; temporary edit changes only chosen occur
  await popup.getByLabel('Cụm từ tùy chọn',{exact:true}).fill('Cổng Tạm');await page.screenshot({path:`docs/screenshots/word-popup-${test.info().project.name}.png`});
  await popup.getByRole('button',{name:'Áp dụng cụm từ tùy chọn',exact:true}).click();await expect(popup).toHaveCount(0);await expect(page.locator('.prose')).toContainText('Cổng Tạm. Sơn môn.');
  expect(await page.evaluate(async()=>{const path='/src/core/db.ts';const {db}=await import(/* @vite-ignore */path);return db.names.count();})).toBe(0);
+});
+test('blank Hán Việt hides a Name in Convert and preserves the original after reload',async({page})=>{
+ const popup=await open(page);
+ await popup.getByRole('button',{name:'Thêm Name',exact:true}).click();
+ const modal=page.getByRole('dialog',{name:'Thêm name/Chỉnh name',exact:true});
+ await modal.getByLabel('Tên Việt để lưu').fill('');
+ await modal.getByRole('button',{name:'Thêm Hán Việt',exact:true}).click();
+ await expect(modal).toHaveCount(0);
+ await expect(page.locator('.prose')).not.toContainText(/sơn môn/i);
+ await expect(page.locator('.prose')).toContainText('..');
+ await page.reload();
+ await page.getByRole('button',{name:'Convert',exact:true}).click();
+ await expect(page.locator('.prose')).toContainText('..');
+ await page.getByRole('button',{name:'Bản gốc',exact:true}).click();
+ await expect(page.locator('.prose')).toContainText('山门。山门。');
 });
 test('Add Name offers STV capitalization variants and persists the chosen spelling',async({page})=>{
  const popup=await open(page);await popup.getByRole('button',{name:'Thêm Name',exact:true}).click();

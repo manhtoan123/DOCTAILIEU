@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {db} from '../src/core/db';
-import {CONVERT_NAMES_KEY,readConvertNames,saveConvertNames,deleteConvertName,parseConvertNames,formatConvertNames,expandConvertSelection} from '../src/features/names-convert/services/convert-names';
+import {CONVERT_NAMES_KEY,readConvertNames,readAiCommonNames,saveConvertNames,deleteConvertName,parseConvertNames,formatConvertNames,expandConvertSelection} from '../src/features/names-convert/services/convert-names';
 import {prepareBackup,stageBackup,restoreBackup,hashBlob} from '../src/features/import-export/services/backup';
 import {LanguageEngine} from '../src/features/names-convert/services/language';
 
@@ -16,6 +16,16 @@ it('review: overlapping concurrent merges preserve all unrelated Names',async()=
   await saveConvertNames('甲=Giáp');
   await Promise.all(Array.from({length:12},(_,i)=>saveConvertNames(`名${i}=Name ${i}`)));
   expect(await readConvertNames()).toHaveLength(13);
+});
+it('uses only explicitly enabled Name List entries for AI and clears eligibility on deletion',async()=>{
+  await saveConvertNames('甲=Giáp\n乙=Ất');
+  expect(await readAiCommonNames()).toEqual([]);
+  await saveConvertNames('$甲=Giáp mới',{forAi:true});
+  expect(await readAiCommonNames()).toEqual([{key:'甲',value:'Giáp mới'}]);
+  expect(await readConvertNames()).toHaveLength(2);
+  await deleteConvertName('甲');
+  await saveConvertNames('甲=Giáp khác');
+  expect(await readAiCommonNames()).toEqual([]);
 });
 it('review: invalid draft never partially commits',async()=>{
   await saveConvertNames('甲=Giáp');

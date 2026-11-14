@@ -6,6 +6,8 @@ Rà soát hiện hành: [lỗi tích lũy qua các bản deploy — 26/10/2026](
 
 Rà soát thay đổi gần đây: [hồi quy AI/TTS/cache/tên TXT — 02/11/2026](REGRESSION-AUDIT-2026-11-02.md).
 
+Rà soát code web và ý tưởng GitHub: [so sánh hiện trạng và cơ hội cải tiến — 14/11/2026](WEB-CODE-GITHUB-IDEAS-REPORT-2026-11-14.md).
+
 ## Hướng dẫn sử dụng và phát triển
 
 - [Chạy ứng dụng](../README.md), [bản đồ code](../src/README.md), [scripts](../scripts/README.md).
@@ -22,9 +24,11 @@ Rà soát thay đổi gần đây: [hồi quy AI/TTS/cache/tên TXT — 02/11/20
 | Gemma 4 31B chậm/lỗi | [Nghiên cứu 02/11](GEMMA31-RESEARCH-2026-11-02.md) | Đối chiếu tài liệu Google, lượt2357ký tự/214,3s và khoảng trống telemetry; chưa đổi cấu hình |
 | Đồng bộ lỗi chữ/tên quá dài | [Metadata cloud thống nhất](CLOUD-METADATA-COMPATIBILITY-2026-11-01.md) | Tên 1.000 ký tự, migration0018 và lỗi ghi rõ trường/độ dài; giữ nguyên dữ liệu |
 | Chữ Hán còn sót và nghe sách | [Sửa đúng cụm chữ Hán](AI-HAN-REPAIR-2026-11-01.md) | Sửa trước khi chấp nhận phần dịch; giữ cache/vị trí nghe cũ, cùng model/key/lease |
+| Dư chữ 的 trong Convert | [Lọc đuôi 的 bị lặp nguyên văn](CONVERT-CHINESE-RESIDUE.md) | Chỉ bỏ sau tên Latin/dấu đóng khi kết quả trùng nguyên văn; không xóa trợ từ theo từ khóa toàn cục |
 | Sửa Auto và xem lỗi/thời gian từng model | [Lịch sử lượt dịch](AI-REPAIR-AND-TIMELINE-2026-11-01.md) | Warm pin, chuyển provider, trạng thái lỗi thật và lịch sử request riêng từng chương |
 | Key lỗi theo model, Groq dự phòng, reload chương | [Loại trừ key–model](AI-KEY-MODEL-EXCLUSION-2026-11-01.md) | Bảng0017, phân loại403/404, Groq sau2.5 và fallbackSPA cho URL đọc |
 | Tự động hạ model hoặc cố định model | [Hai chế độ AI](AI-DUAL-MODE-2026-11-01.md) | Hai nút chọn, thứ tự dự phòng, lưu lựa chọn độc lập với prompt; pin cùng model sau phần hoàn tất |
+| Sắp xếp mọi model dự phòng | [Thứ tự model dự phòng](AI-FALLBACK-ORDER-SETTINGS.md) | Danh sách toàn bộ model ở Cài đặt → Dịch AI; kéo thả và lưu dùng chung trên thiết bị |
 | Khôi phục CapCut, model cố định, Groq | [Khôi phục web 01/11](WEB-RECOVERY-2026-11-01.md) | Chẩn đoán production, retry cùng model, pool key server và phương án tách hai web riêng dữ liệu |
 | Chọn/sửa/xóa truyện và Album | [Quản lý Phòng tối](LIBRARY-MANAGEMENT.md) | Xem lại ID, giữ cây Series, cloud ACK trước local; trạng thái nghiệm thu trong tài liệu |
 | Xem trước truyện trong Album | [Thẻ Album và tìm kiếm](ALBUM-PREVIEW-2026-11-02.md) | 3 truyện trước, mở rộng 12; 2/1 cột; ưu tiên đang đọc; ô tích khi Quản lý |

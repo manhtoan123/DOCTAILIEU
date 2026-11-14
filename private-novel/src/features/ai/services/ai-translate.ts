@@ -32,6 +32,8 @@ export interface AiTranslateClientRequest {
 /** Safe lease evidence returned by the server: identifiers only, never credential material. */
 export interface AiLeaseInfo {requestId:string;leaseIdHash:string;keySlot?:number;keysAvailable?:number;freeKeys?:number}
 export interface AiTranslateClientResponse extends AiHanAudits {
+  /** Actual models in an assembled Convert polish result when they differ. */
+  polishModels?: string[];
   polishTerms?:PolishTerm[];
   polishSkipped?:SkippedPolishPart[];
   polishFallback?:PolishFallbackRange[];

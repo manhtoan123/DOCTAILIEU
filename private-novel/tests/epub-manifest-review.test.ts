@@ -1,0 +1,16 @@
+import {build} from 'esbuild';
+import {zipSync} from 'fflate';
+import {chromium,type Browser,type Page} from '@playwright/test';
+import {afterAll,beforeAll,describe,expect,it} from 'vitest';
+
+let browser:Browser,page:Page;
+const utf8=(value:string)=>new TextEncoder().encode(value);
+function archive(items:string,includeChapter=true){const files:Record<string,Uint8Array>={mimetype:utf8('application/epub+zip'),'META-INF/container.xml':utf8('<container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>'),'OPS/book.opf':utf8(`<package><metadata><title>Manifest review</title></metadata><manifest>${items}</manifest><spine><itemref idref="chapter"/></spine></package>`)};if(includeChapter)files['OPS/chapter.xhtml']=utf8('<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Text</p><img src="images/real.webp"/></body></html>');if(includeChapter)files['OPS/images/real.webp']=utf8('synthetic-webp');return Array.from(zipSync(files,{level:0}));}
+beforeAll(async()=>{const bundle=await build({stdin:{contents:"export {openEpubPackage,readEpubChapter} from './src/features/import-export/services/epub-package';",resolveDir:process.cwd(),sourcefile:'epub-manifest-review-entry.ts',loader:'ts'},bundle:true,write:false,format:'iife',globalName:'__epubManifestReview',platform:'browser',target:'es2022'});browser=await chromium.launch({channel:'msedge',headless:true});page=await browser.newPage();await page.addScriptTag({content:bundle.outputFiles[0].text});},30000);
+afterAll(async()=>{await browser?.close();});
+async function inspect(bytes:number[]){return page.evaluate(async data=>{const api=(window as any).__epubManifestReview;try{const pkg=await api.openEpubPackage(new Blob([new Uint8Array(data)])),layout=await api.readEpubChapter(pkg,pkg.spine[0].path);return {accepted:true,spine:pkg.spine,coverPath:pkg.coverPath,nodes:layout.nodes,entries:[...pkg.entries.keys()]};}catch(error){return {accepted:false,error:(error as Error).message};}},bytes);}
+describe('EPUB manifest asset references',()=>{
+ it('skips absent optional image entries but keeps a usable spine and source-relative resources',async()=>{const bytes=archive('<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="cover" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image"/><item id="unused" href="optional/missing.png" media-type="image/png"/>'),result=await inspect(bytes);expect(result).toMatchObject({accepted:true,spine:[{path:'OPS/chapter.xhtml'}],nodes:['Text']});expect(result.entries).toContain('OPS/images/real.webp');expect(result.coverPath).toBeUndefined();});
+ it('still rejects a spine reference whose chapter file is missing',async()=>{const bytes=archive('<item id="chapter" href="missing.xhtml" media-type="application/xhtml+xml"/>',false),result=await inspect(bytes);expect(result).toEqual({accepted:false,error:'Mục lục EPUB không hợp lệ.'});});
+ it('still rejects duplicate manifest IDs even when one optional resource is absent',async()=>{const bytes=archive('<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/><item id="asset" href="missing.png" media-type="image/png"/><item id="asset" href="images/real.webp" media-type="image/webp"/>'),result=await inspect(bytes);expect(result).toEqual({accepted:false,error:'Manifest EPUB không hợp lệ.'});});
+});

@@ -77,6 +77,22 @@ it('keeps Convert at a failed root, applies the roots after it and retries only 
  expect(sent.slice(before)).toHaveLength(1);
  expect(sent.at(-1)).toContain(badPair.original);
 });
+it('reassembles accepted polish after a model change without sending again when only saving remains',async()=>{
+ const source=fixture(15),settings=convertPolishSettings(model);
+ const switched=convertPolishSettings('gemini-3.8-flash');
+ const send=vi.fn(async()=>response('<BAN_TU_DIEN></BAN_TU_DIEN>\n<BAN_DICH>Bản tốt.</BAN_DICH>'));
+ const session=new AiReadingSession(send);
+ const run=(active:typeof settings)=>session.request(source,active,[],undefined,undefined,undefined,{skipFailedPolishParts:true});
+ expect(session.preparePolishRun(source,settings,false)).toBe(true);
+ const first=await run(settings);
+ expect(send.mock.calls.length).toBeGreaterThan(1);
+ send.mockClear();
+ expect(session.preparePolishRun(source,{...switched,systemPrompt:'Prompt mới'},true)).toBe(false);
+ expect(session.preparePolishRun({...source,revision:2},switched,true)).toBe(false);
+ expect(session.preparePolishRun(source,switched,true)).toBe(true);
+ expect(await run(switched)).toMatchObject({model,result:first.result,polishSkipped:[]});
+ expect(send).not.toHaveBeenCalled();
+});
 it('aligns changed punctuation through source tokens, never sentence indexes',()=>{
  const original='甲。乙！丙？',converted='An...Bình?Cường.';
  const tokens=[token('甲。','An...',0),token('乙！','Bình?',2),token('丙？','Cường.',4)];

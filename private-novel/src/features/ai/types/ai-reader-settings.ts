@@ -2,7 +2,6 @@ import {db} from '../../../core/db';
 import {AI_DEFAULTS,aiBookSettingsKey,queueAiSettings,readReadingAiSettings} from '../services/ai-settings';
 import type {ReadingAiSettings} from './ai-settings-type';
 import {normalizeAiModel} from './ai-models';
-import {AI_QUALITY_ORDER} from '../services/ai-fallback';
 import {DEFAULT_SECOND_HALF_PROMPT} from '../services/ai-hybrid-prompt';
 import {getEligibleProfiles,readStoredPromptStock} from '../prompt/prompt-stock';
 import {validatePromptSettings} from '../prompt/prompt-schema';
@@ -16,7 +15,7 @@ export function automaticAiSettings(value:unknown):ReadingAiSettings{
 /** Global templates/options; each book retains its chosen prompt and hybrid switch. */
 export function resolveReaderAiSettings(bookValue:unknown,commonValue:unknown):ReadingAiSettings{
  const common=automaticAiSettings(commonValue),base=automaticAiSettings(bookValue??commonValue);
- return {...base,temperature:commonValue===undefined?base.temperature:common.temperature,splitParts:readReadingAiSettings(bookValue).splitParts??common.splitParts};
+ return {...base,fallbackOrder:common.fallbackOrder,temperature:commonValue===undefined?base.temperature:common.temperature,splitParts:readReadingAiSettings(bookValue).splitParts??common.splitParts};
 }
 export async function readReaderAiPreferences(bookId:string){
  const [book,common]=await Promise.all([db.settings.get(aiBookSettingsKey(bookId)),db.settings.get(AI_COMMON_SETTINGS_KEY)]);
@@ -62,7 +61,7 @@ export function selectReaderPrompt(id:string,bookId?:string):Promise<ReadingAiSe
   const [row,common]=await Promise.all([db.settings.get(key),db.settings.get(AI_COMMON_SETTINGS_KEY)]),previous=readReadingAiSettings(row?.value);
   const template=profile.settings.hybrid??previous.hybrid;
   const model=automaticAiSettings(row?.value??common?.value).model;
-  const value={...profile.settings,model,modelMode:automaticAiSettings(row?.value??common?.value).modelMode,...(bookId?{splitParts:previous.splitParts??automaticAiSettings(common?.value).splitParts}:{}),hybrid:bookId?(previous.hybrid?{...previous.hybrid,...template}:undefined):template,chosenProfileId:profile.id,chosenProfileSettings:{...profile.settings}};
+  const value={...profile.settings,model,modelMode:automaticAiSettings(row?.value??common?.value).modelMode,fallbackOrder:automaticAiSettings(common?.value).fallbackOrder,...(bookId?{splitParts:previous.splitParts??automaticAiSettings(common?.value).splitParts}:{}),hybrid:bookId?(previous.hybrid?{...previous.hybrid,...template}:undefined):template,chosenProfileId:profile.id,chosenProfileSettings:{...profile.settings}};
   await db.settings.put({key,value});return bookId?resolveReaderAiSettings(value,common?.value):automaticAiSettings(value);
  }));
 }

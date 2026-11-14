@@ -25,7 +25,12 @@ export default {async fetch(request:Request,env:ConvertEnv):Promise<Response>{
  body=JSON.stringify({text:input.text,names:input.names,includeLookup:input.includeLookup===true});
  if(new TextEncoder().encode(body).byteLength>32768)return reply('body_limit',413);
  // Bound potentially expanded Name output before reserving shared resources.
- if(input.names.some((n:unknown)=>!n||typeof n!=='object'||Array.isArray(n)||typeof (n as any).key!=='string'||typeof (n as any).value!=='string'||!(n as any).key.trim()||!(n as any).value.trim()||/[\r\n=]/.test((n as any).key)||/[\r\n]/.test((n as any).value)||(n as any).key.length>256||(n as any).value.length>256))return reply('name_limit',413);
+ if(input.names.some((n:unknown)=>{
+  if(!n||typeof n!=='object'||Array.isArray(n))return true;
+  const {key,value}=n as {key?:unknown;value?:unknown};
+  return typeof key!=='string'||!key.trim()||/[\r\n=]/.test(key)||key.length>256||
+    typeof value!=='string'||(value!==''&&!value.trim())||/[\r\n]/.test(value)||value.length>256;
+ }))return reply('name_limit',413);
  const now=Date.now(),day=Math.floor(now/86400000),lease=crypto.randomUUID();
  try{
   const granted=await env.PROBE_DB.prepare('INSERT INTO convert_budget(day,spent,lease,until_ms) VALUES(?,?,?,?) ON CONFLICT(day) DO UPDATE SET spent=spent+excluded.spent,lease=excluded.lease,until_ms=excluded.until_ms WHERE spent<=? AND until_ms<=? RETURNING lease').bind(day,RESERVE,lease,now+120000,DAILY-RESERVE,now).first<{lease:string}>();

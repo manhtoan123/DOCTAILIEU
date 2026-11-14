@@ -65,6 +65,14 @@ it('deletes remote-only and local subtree books then removes only reviewed empty
  const plan=await previewLibraryDeletion([],['Author'],true);const result=await executeLibraryDeletion(plan);
  expect(result.failed).toEqual([]);expect(result.completed.sort()).toEqual(['a','remote']);expect(result.removedAlbums).toEqual(['Author/Series','Author']);expect((await db.books.toArray()).map(b=>b.id)).toEqual(['keep']);
 });
+it('deletes a reviewed batch with bounded concurrency and one execution catalog read',async()=>{
+ const rows=Array.from({length:9},(_,i)=>book(`book-${i}`));await db.books.bulkPut(rows);cloud.rows=rows;
+ const plan=await previewLibraryDeletion(rows.map(row=>row.id),[],true);cloud.list.mockClear();
+ let active=0,maximum=0;
+ cloud.remove.mockImplementation(async(id:string)=>{active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,8));cloud.rows=cloud.rows.filter(row=>row.id!==id);active--;});
+ const result=await executeLibraryDeletion(plan);
+ expect(result.failed).toEqual([]);expect(result.completed).toHaveLength(rows.length);expect(maximum).toBeGreaterThan(1);expect(maximum).toBeLessThanOrEqual(4);expect(cloud.list).toHaveBeenCalledTimes(1);
+});
 it('rename updates metadata only, retains exact source, chapters and progress, and rejects stale owner',async()=>{
  await db.books.put(book('a'));await db.sources.put({id:'s',bookId:'a',name:'original.txt',relativePath:'original.txt',encoding:'UTF-8',bytes:3,sha256:'immutable',blob:new Blob(['abc'])});await db.progress.put({bookId:'a',chapterId:'c',paragraph:2,offset:3,revision:1,updatedAt:10});
  const source=await db.sources.get('s'),progress=await db.progress.get('a');await renameManagedBook(book('a'),'New name');

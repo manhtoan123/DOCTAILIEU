@@ -51,7 +51,7 @@ export function validateCloudSnapshot(value:unknown):CloudSnapshot{
   const hidden=new Set(book.hiddenChapterIds??[]);if([...hidden].some(id=>!chapterIds.has(id)))throw Error('Thiếu chương đã xóa trong bản cloud.');const active=chapters.filter(c=>!hidden.has(c.id));
   if(active.length!==book.chapterCount||active.reduce((n,c)=>n+c.text.length,0)!==book.charCount)throw new Error('Tổng ký tự cloud không khớp.');
   const keys=new Set<string>();
-  const names=data.names.map((value,index)=>{const entry=object(value),key=text(entry.key,256,`Name ${index+1}: khóa`),meaning=text(entry.value,2048,`Name ${index+1}: nghĩa`);if(!key.trim()||!meaning.trim()||/[\r\n=]/.test(key)||/[\r\n]/.test(meaning)||keys.has(key))throw new Error('Name cloud không hợp lệ hoặc trùng khóa.');keys.add(key);return {key,value:meaning};});
+  const names=data.names.map((value,index)=>{const entry=object(value),key=text(entry.key,256,`Name ${index+1}: khóa`),meaning=text(entry.value,2048,`Name ${index+1}: nghĩa`);if(!key.trim()||(meaning!==''&&!meaning.trim())||/[\r\n=]/.test(key)||/[\r\n]/.test(meaning)||keys.has(key))throw new Error('Name cloud không hợp lệ hoặc trùng khóa.');keys.add(key);return {key,value:meaning};});
   return {format:'thu-phong-cloud',version:data.version as 1|2,book,chapters,names};
 }
 /** Read a consistent compact snapshot; originals/dictionaries/progress stay local. */

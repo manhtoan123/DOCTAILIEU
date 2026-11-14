@@ -4,7 +4,7 @@ import {db} from '../src/core/db';
 import {prepareBatchFiles} from '../src/features/import-export/services/batch-import';
 
 const pkg = vi.hoisted(() => ({open: vi.fn(), read: vi.fn()}));
-vi.mock('../src/features/import-export/services/epub-package', () => ({openEpubPackage: pkg.open, readEpubChapter: pkg.read}));
+vi.mock('../src/features/import-export/services/epub-package', () => ({openEpubPackage: pkg.open, readEpubChapter: pkg.read,readEpubChapterParts:async(...args:unknown[])=>{const result=await pkg.read(...args);return Array.isArray(result)?result:[result];}}));
 
 beforeEach(async () => {
   await db.delete();

@@ -22,3 +22,18 @@ it.each(['title','album'])('native HTTP rejects %s changed between catalog revie
 it('expected absence refuses a newly ready cloud book; absent ID can be tombstoned safely',async()=>{await seed(3);expect((await remove(3,null)).status).toBe(409);expect((await remove(4,null)).status).toBe(200);});
 it('malformed and oversized preconditions cannot create tombstones',async()=>{await seed(5);for(const expected of [{},false,{title:'x',sha256:'bad',bytes:1,updatedAt:1},{title:'x'.repeat(6000)}])expect((await remove(5,expected)).status).toBe(400);expect(await(await runtime.getD1Database('DB')).prepare('SELECT id FROM cloud_book_deletions WHERE id=?').bind(id(5)).first()).toBeNull();});
 it('legacy bodyless DELETE still works',async()=>{await seed(6);expect((await runtime.dispatchFetch(`https://synthetic.test/api/cloud/books/${id(6)}`,{method:'DELETE',headers:{Origin:'https://synthetic.test'}})).status).toBe(200);});
+it('empty-stream DELETE without body headers follows the legacy path; declared empty JSON is rejected',async()=>{
+ await seed(7);
+ const url=`https://synthetic.test/api/cloud/books/${id(7)}`;
+ const request=new Request(url,{method:'DELETE',headers:{Origin:'https://synthetic.test'},body:new ReadableStream<Uint8Array>({start(controller){controller.close();}}),duplex:'half'} as RequestInit & {duplex:'half'});
+ expect(request.body).not.toBeNull();
+ expect((await runtime.dispatchFetch(request as never)).status).toBe(200);
+ expect(await(await runtime.getD1Database('DB')).prepare('SELECT id FROM cloud_book_deletions WHERE id=?').bind(id(7)).first()).not.toBeNull();
+ await seed(9);
+ const zeroLength=await runtime.dispatchFetch(`https://synthetic.test/api/cloud/books/${id(9)}`,{method:'DELETE',headers:{Origin:'https://synthetic.test','Content-Length':'0'}});
+ expect(zeroLength.status).toBe(200);
+ await seed(8);
+ const invalid=await runtime.dispatchFetch(`https://synthetic.test/api/cloud/books/${id(8)}`,{method:'DELETE',headers:{Origin:'https://synthetic.test','Content-Type':'application/json'}});
+ expect(invalid.status).toBe(400);
+ expect(await(await runtime.getD1Database('DB')).prepare('SELECT id FROM cloud_book_deletions WHERE id=?').bind(id(8)).first()).toBeNull();
+});

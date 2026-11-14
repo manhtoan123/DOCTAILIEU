@@ -1,13 +1,14 @@
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useMemo,useRef,useState} from 'react';
 import {attachEpubOriginal,buildEpubFrame,epubFrameContent,loadEpubArchive} from '../../import-export/services/epub-render';
 import type {EpubAppearance,EpubWordRange} from '../../import-export/services/epub-render';
 import type {NameImage} from '../../names-convert/services/name-images';
 import type {EpubLayout} from '../../import-export/services/epub-layout-schema';
 interface Props {bookId:string;sourceKey?:string;layout:EpubLayout;nodes:string[];sentence?:{start:number;end:number};highlightColor?:string;selectedRange?:{start:number;end:number};words?:EpubWordRange[];nameImages?:NameImage[];appearance?:EpubAppearance;onReady?:(renderKey:string)=>void;onNavigate?:(key:' '|'PageUp'|'PageDown'|'Home'|'End',shift:boolean)=>void;onWordSelect?:(start:number,end:number,anchor:{left:number;top:number;right:number;bottom:number})=>void}
-export default function EpubFrame({bookId,sourceKey='',layout,nodes,sentence,highlightColor,selectedRange,words=[],nameImages=[],appearance,onWordSelect,onNavigate,onReady}:Props){
+const EMPTY_WORDS:EpubWordRange[]=[],EMPTY_NAME_IMAGES:NameImage[]=[];
+export default function EpubFrame({bookId,sourceKey='',layout,nodes,sentence,highlightColor,selectedRange,words=EMPTY_WORDS,nameImages=EMPTY_NAME_IMAGES,appearance,onWordSelect,onNavigate,onReady}:Props){
  const frame=useRef<HTMLIFrameElement>(null),[{html,frameKey},setFrameDocument]=useState({html:'',frameKey:''}),[height,setHeight]=useState(500),[error,setError]=useState(''),[retry,setRetry]=useState(0);
  const token=useRef(''),ready=useRef(false),sequence=useRef(0),pending=useRef<{id:number;key:string}|undefined>(undefined);
- const layoutSignature=JSON.stringify(layout),contentSignature=JSON.stringify([nodes,words,nameImages]);
+ const layoutSignature=useMemo(()=>JSON.stringify(layout),[layout]),contentSignature=useMemo(()=>JSON.stringify([nodes,words,nameImages]),[nodes,words,nameImages]);
  const interaction=useRef({appearance,onWordSelect,onNavigate,onReady,sentence,highlightColor,selectedRange,words,layout,nodes,nameImages,bookId,sourceKey});
  interaction.current={appearance,onWordSelect,onNavigate,onReady,sentence,highlightColor,selectedRange,words,layout,nodes,nameImages,bookId,sourceKey};
  const pushContent=useRef(()=>{});

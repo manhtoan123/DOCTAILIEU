@@ -1,6 +1,7 @@
 import {parseEntry,type DictKind} from '../../../core/domain';
 import {referenceConvert,normalizeKey} from './reference-convert';
 import {nameSourceKey,parseNameValue,NAME_IMAGE_LIMIT,type NameImage} from './name-images';
+import {PackedIndex} from './packed-index';
 export interface Token {sourceStart:number;sourceEnd:number;source:string;targetText:string;type:string;meanings:string[];hanviet:string;nameImage?:NameImage}
 export interface ConvertOptions {mode?:'vietphrase'|'hanviet';multipleMeanings?:boolean;standardizePunctuation?:boolean;capitalize?:boolean;reference?:boolean}
 export type ConvertBudget=(units:number)=>void;
@@ -11,7 +12,7 @@ export const punctuationMap=new Map<string,string>([
   ['〖','['],['〗',']'],['〔','['],['〕',']'],['——','—'],['—','—'],['……','...'],['…','...'],['•','·'],['·','·'],
   ['＃','#'],['＄','$'],['％','%'],['＆','&'],['＋','+'],['＝','='],['＠','@']
 ]);
-class Index {
+export class Index {
   values=new Map<string,string>(); max=new Map<string,number>();
   private normalizedOverrides=new Map<string,string>();
   add(k:string,v:string) {if(k.length>256)return;this.values.set(k,v);this.max.set(k[0],Math.max(this.max.get(k[0])||0,k.length));const normalized=normalizeKey(k);if(normalized!==k||this.normalizedOverrides.has(normalized))this.normalizedOverrides.set(normalized,v);this.max.set(normalized[0],Math.max(this.max.get(normalized[0])||0,normalized.length));}
@@ -28,7 +29,8 @@ export function boundedSuggestions(sets:string[][],limit=100):string[] {
 }
 interface RuleItem {key:string;before:string;after:string;value:string}
 export class LanguageEngine {
-  indexes:Record<DictKind,Index>={vp:new Index(),names:new Index(),names2:new Index(),hanviet:new Index(),rules:new Index(),chapter:new Index(),number:new Index(),pronouns:new Index(),blacklist:new Index(),english:new Index()};
+  indexes:Record<DictKind,Index|PackedIndex>={vp:new Index(),names:new Index(),names2:new Index(),hanviet:new Index(),rules:new Index(),chapter:new Index(),number:new Index(),pronouns:new Index(),blacklist:new Index(),english:new Index()};
+  setPacked(kind:'vp'|'hanviet',index:PackedIndex){this.indexes[kind]=index;}
   referenceRules=new Map<string,string>();
   private normalizedReferenceRules=new Map<string,string>();
   private rulesByPrefix=new Map<string,RuleItem[]>();
@@ -58,8 +60,8 @@ export class LanguageEngine {
   convert(text:string,names:{key:string;value:string}[],options:ConvertOptions={},budget?:ConvertBudget):Token[] {
     if(options.reference&&options.mode!=='hanviet')return referenceConvert(text,names,this.indexes,options.standardizePunctuation===false?this.referenceRules:this.normalizedReferenceRules,options,budget);
     const own=new Index();for(const e of names)own.add(nameSourceKey(e.key),e.value);
-    const nameLayers:[string,Index][]=[['name',own],['names2',this.indexes.names2],['names',this.indexes.names]];
-    const result:Token[]=[];let at=0,imageCount=0;let capitalizeNext=true;
+    const nameLayers:[string,Index][]=[['name',own],['names2',this.indexes.names2 as Index],['names',this.indexes.names as Index]];
+    const result:Token[]=[];let at=0,imageCount=0;let capitalizeNext=true;let previous:Token|undefined;
     const CLOSING_PUNCT=new Set([')',']','}','”','’','»','>',',','.','!','?',';',':']);
     const OPENING_PUNCT=new Set(['(','[','{','“','‘','«','<']);
     while(at<text.length) {
@@ -127,14 +129,13 @@ export class LanguageEngine {
         if(hv)found={key:c,value:hv,type:'hanviet'};
         else {found={key:c,value:c,type:'original'};}
       }
-      const choices=meanings(found.value);let target=(options.multipleMeanings?choices.join('/'):choices[0])||found.key;
+      const choices=meanings(found.value),hidden=found.type==='name'&&found.value==='';let target=hidden?'':(options.multipleMeanings?choices.join('/'):choices[0])||found.key;
       if(options.capitalize) {
         if(capitalizeNext&&/^[\p{L}]/u.test(target)){target=target[0].toUpperCase()+target.slice(1);capitalizeNext=false;}
         if(/[.!?]$/.test(target.trim())||found.key==='\n'||found.value==='\n')capitalizeNext=true;
         else if(target.trim()==='“'||target.trim()==='"')capitalizeNext=true;
       }
-      const previous=result[result.length-1];
-      if(options.standardizePunctuation||options.capitalize) {
+      if(!hidden&&(options.standardizePunctuation||options.capitalize)) {
         if(previous) {
           if(target.startsWith('\n') || previous.targetText.endsWith('\n')) {/* newline */}
           else if(CLOSING_PUNCT.has(target.trim())) {/* attach closing punct without space */}
@@ -147,7 +148,7 @@ export class LanguageEngine {
       }
       const image=found.type.startsWith('name')?parseNameValue(found.value).image:undefined;
       budget?.(160+6*(found.key.length+found.value.length+target.length)+choices.length*32);
-      result.push({sourceStart:at,sourceEnd:at+found.key.length,source:found.key,targetText:target,type:found.type,meanings:choices,hanviet:'',...(image&&imageCount++<NAME_IMAGE_LIMIT?{nameImage:image}:{})});at+=found.key.length;
+      result.push({sourceStart:at,sourceEnd:at+found.key.length,source:found.key,targetText:target,type:found.type,meanings:choices,hanviet:'',...(image&&imageCount++<NAME_IMAGE_LIMIT?{nameImage:image}:{})});if(!hidden)previous=result[result.length-1];at+=found.key.length;
     }
     return result;
   }

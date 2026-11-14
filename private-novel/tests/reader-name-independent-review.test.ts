@@ -4,6 +4,9 @@ import {db} from '../src/core/db';
 import {deleteReaderName,saveReaderName,expandReaderSelection} from '../src/features/reader/services/reader-word-edit';
 import {nameTombKey} from '../src/features/sync-cloud/services/shared-name-intents';
 import {CONVERT_NAMES_KEY,saveConvertNames} from '../src/features/names-convert/services/convert-names';
+import {readEffectiveBookNames} from '../src/features/names-convert/services/scoped-names';
+import {readConvertNames} from '../src/features/names-convert/services/convert-names';
+import {validateSharedRecord} from '../src/features/sync-cloud/services/shared-state-schema';
 import {LanguageEngine,type Token} from '../src/features/names-convert/services/language';
 
 const book='name-review-book',chapter='name-review-chapter',other='other-review-book',key='林儿';
@@ -18,6 +21,25 @@ describe('independent guarded book Name deletion',()=>{
  it('rolls back every Name deletion if the tomb write fails',async()=>{const names=await db.names.toArray();vi.spyOn(db.settings,'put').mockRejectedValueOnce(Error('Synthetic tomb failure'));await expect(deleteReaderName(book,chapter,1,key)).rejects.toThrow('Synthetic tomb failure');expect(await db.names.toArray()).toEqual(names);expect(await db.settings.get(nameTombKey(book,key))).toBeUndefined();});
  it('rejects invalid exact keys/revisions and absent-key deletion without broadening the match',async()=>{const names=await db.names.toArray();for(const bad of ['', ' '+key,key+' ','a=b','a\nb','a\rb','x'.repeat(257),'absent'])await expect(deleteReaderName(book,chapter,1,bad)).rejects.toThrow();for(const badRevision of [NaN,Infinity,1.5])await expect(deleteReaderName(book,chapter,badRevision,key)).rejects.toThrow();expect(await db.names.toArray()).toEqual(names);expect(await db.settings.get(nameTombKey(book,key))).toBeUndefined();});
  it('a later explicit book save replaces the deletion intent atomically and preserves the global Name',async()=>{const global=await db.settings.get(CONVERT_NAMES_KEY);await deleteReaderName(book,chapter,1,key);await saveReaderName(book,chapter,1,key,'New book name','book');expect(await db.names.where('bookId').equals(book).filter(row=>row.key===key).toArray()).toMatchObject([{key,value:'New book name'}]);expect(await db.settings.get(nameTombKey(book,key))).toBeUndefined();expect(await db.settings.get(CONVERT_NAMES_KEY)).toEqual(global);});
+});
+it.each(['book','album','global'] as const)('round-trips an empty reader Name in %s scope and keeps Convert spacing/source',async scope=>{
+ const hide='的',original={...(await db.chapters.get(chapter))!,text:'甲的乙。'};
+ await db.chapters.put(original);
+ if(scope==='album')await db.books.update(book,{album:'Author/Series'});
+ await saveReaderName(book,chapter,1,hide,'',scope==='global'?'global':'book',scope==='album'?'Author':null);
+ const rows=scope==='global'?await readConvertNames():await readEffectiveBookNames(book);
+ expect(rows).toEqual(expect.arrayContaining([expect.objectContaining({key:hide,value:''})]));
+ expect(await db.chapters.get(chapter)).toEqual(original);
+ const identity=scope==='album'?{kind:'album-name',key:JSON.stringify(['Author',hide])}:scope==='global'?{kind:'convert-name',key:hide}:{kind:'name',bookId:book,key:hide};
+ expect(validateSharedRecord({...identity,value:''}).value).toBe('');
+ expect(validateSharedRecord({...identity,value:null}).value).toBeNull();
+ const engine=new LanguageEngine();
+ engine.add('vp','甲=giáp');engine.add('vp','乙=ất');engine.add('vp','的=của');
+ for(const reference of [true,false]){
+  const tokens=engine.convert(original.text,rows,{reference,capitalize:true,standardizePunctuation:true});
+  expect(tokens.map(t=>t.targetText).join('')).toBe('Giáp ất.');
+  expect(tokens.find(t=>t.source===hide)).toMatchObject({sourceStart:1,sourceEnd:2,type:'name',targetText:''});
+ }
 });
 describe('independent Name lookup and paragraph expansion',()=>{
  it('keeps dictionary layers separate, dedupes stock Names and exposes English only when present',()=>{const engine=new LanguageEngine();engine.add('vp',`${key}=phrase one/phrase two`);engine.add('english',`${key}=English name/Other English`);engine.add('names',`${key}=Stock name/Same`);engine.add('names2',`${key}=Same/Stock two`);expect(engine.lookup(key)).toMatchObject({meanings:['phrase one','phrase two'],english:['English name','Other English'],names:['Stock name','Same','Stock two']});expect(engine.lookup('Absent').english).toBeUndefined();expect(engine.lookup('Absent').names).toBeUndefined();});

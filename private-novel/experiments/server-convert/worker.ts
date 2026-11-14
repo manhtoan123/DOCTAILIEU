@@ -29,7 +29,7 @@ export default {async fetch(request:Request,env:{PROBE_DB:D1Database;PROBE_STORA
  for(const row of (data.names??[]) as unknown[]){
   if(!row||typeof row!=='object'||Array.isArray(row))return reply({error:'invalid_names'},400);
   const {key,value}=row as {key?:unknown;value?:unknown};
-  if(typeof key!=='string'||!key.trim()||key.length>256||/[\r\n=]/.test(key)||typeof value!=='string'||!value.trim()||value.length>2048||/[\r\n]/.test(value))return reply({error:'invalid_names'},400);
+  if(typeof key!=='string'||!key.trim()||key.length>256||/[\r\n=]/.test(key)||typeof value!=='string'||(value!==''&&!value.trim())||value.length>2048||/[\r\n]/.test(value))return reply({error:'invalid_names'},400);
   names.push({key,value});
  }
  try{

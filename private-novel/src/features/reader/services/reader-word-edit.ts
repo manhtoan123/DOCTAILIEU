@@ -8,8 +8,9 @@ export interface ReaderWordEdit {sourceStart:number;sourceEnd:number;value:strin
 /** Guard and merge run in one transaction, including the nested Name writer. */
 export async function saveReaderName(bookId:string,chapterId:string,revision:number,key:string,value:string,scope:'book'|'global',expectedAlbum?:string|null):Promise<void> {
   if(/[\r\n=]/.test(key)||/[\r\n]/.test(value))throw new Error('Tên và nghĩa phải nằm trên một dòng; khóa không chứa dấu =.');
+  if(value!==''&&!value.trim())throw new Error('Nghĩa rỗng không được chứa khoảng trắng.');
   key=key.trim();value=value.trim();
-  if(!key||key.startsWith('#')||key.length>256||!value||value.length>2048)throw new Error('Khóa Name cần 1–256 ký tự, không bắt đầu bằng #; nghĩa cần 1–2.048 ký tự.');
+  if(!key||key.startsWith('#')||key.length>256||value.length>2048)throw new Error('Khóa Name cần 1–256 ký tự, không bắt đầu bằng #; nghĩa tối đa 2.048 ký tự.');
   if(scope!=='book'&&scope!=='global')throw new Error('Phạm vi Name không hợp lệ.');
   if(!Number.isSafeInteger(revision))throw new Error('Phiên bản chương không hợp lệ.');
   await db.transaction('rw',[db.books,db.chapters,db.settings,...(scope==='book'?[db.names]:[])],async()=>{

@@ -2,36 +2,42 @@ import {useState} from 'react';
 import {useLiveQuery} from 'dexie-react-hooks';
 import type {PolishTerm} from '../../ai/services/polish-output';
 import {readLocalVietphrase,saveLocalVietphrases} from '../../names-convert/services/local-vietphrase';
+import {readAiCommonNames,saveConvertNames} from '../../names-convert/services/convert-names';
+import {canonicalNameKey,formatNameList} from '../../names-convert/services/name-format';
 import {normalizeLibrarySearch} from '../../library/services/library-search';
 import {errorText} from '../../../shared/components/common';
 
 export function PolishTerms({terms,busy,saving,onSavingChange}:{terms:PolishTerm[];busy:boolean;saving:boolean;onSavingChange:(saving:boolean)=>void}){
   const [edits,setEdits] = useState<Record<string,string>>({});
   const [selected,setSelected] = useState<Record<string,string>>({});
-  const [saved,setSaved] = useState<Set<string>>(new Set());
   const [status,setStatus] = useState('');
   const [query,setQuery] = useState('');
   const [onlySelected,setOnlySelected] = useState(false);
   const stored=useLiveQuery(()=>readLocalVietphrase().catch(()=>undefined),[]);
+  const aiNames=useLiveQuery(()=>readAiCommonNames().catch(()=>undefined),[]);
   const idOf = (term:PolishTerm)=>JSON.stringify([term.source,term.meaning]);
   const meaningOf = (term:PolishTerm)=>(edits[idOf(term)]??term.meaning).trim();
   const existing=new Map(stored?.entries.map(entry=>[entry.key,entry.value]));
-  const available=terms.filter(term=>existing.get(term.source)!==term.meaning&&!saved.has(idOf(term)));
+  const existingAi=new Map(aiNames?.map(entry=>[canonicalNameKey(entry.key),entry.value]));
+  const available=terms.filter(term=>existing.get(term.source)!==meaningOf(term)||existingAi.get(term.source)!==meaningOf(term));
   const chosen = available.filter(term=>selected[term.source]===idOf(term));
   const validSelection=chosen.length>0&&chosen.every(meaningOf);
+  const pendingVietphrase=chosen.filter(term=>existing.get(term.source)!==meaningOf(term));
+  const pendingName=chosen.filter(term=>existingAi.get(term.source)!==meaningOf(term));
   const needle=normalizeLibrarySearch(query).replace(/^\$/,'');
   const visible=available.filter(term=>(!onlySelected||selected[term.source]===idOf(term))&&
     (!needle||normalizeLibrarySearch([term.convert,term.source,meaningOf(term)].join(' ')).includes(needle)));
 
-  async function save(){
+  async function save(destination:'vietphrase'|'name'){
     if(busy||saving||!validSelection)return;
+    const selectedTerms=destination==='name'?pendingName:pendingVietphrase;
+    if(!selectedTerms.length)return;
     onSavingChange(true);
     try{
-      await saveLocalVietphrases(chosen.map(term=>({key:term.source,value:meaningOf(term)})));
-      setSaved(old=>new Set([...old,...chosen.map(idOf)]));
-      setSelected({});
-      setOnlySelected(false);
-      setStatus(`Đã lưu ${chosen.length} mục Vietphrase.`);
+      const rows=selectedTerms.map(term=>({key:term.source,value:meaningOf(term)}));
+      if(destination==='name')await saveConvertNames(formatNameList(rows),{forAi:true});
+      else await saveLocalVietphrases(rows);
+      setStatus(`Đã lưu ${rows.length} mục ${destination==='name'?'Name chung cho AI':'Vietphrase'}.`);
     }catch(error){setStatus(errorText(error));}
     finally{onSavingChange(false);}
   }
@@ -71,7 +77,8 @@ export function PolishTerms({terms,busy,saving,onSavingChange}:{terms:PolishTerm
       </table>
     </div>
     <div className="name-discovery-save">
-      <button type="button" className="name-discovery-primary" disabled={busy||saving||!validSelection} onClick={()=>void save()}>{saving?'Đang lưu…':'Lưu Vietphrase đã chọn'}</button>
+      <button type="button" className="name-discovery-primary" disabled={busy||saving||!validSelection||!pendingVietphrase.length} onClick={()=>void save('vietphrase')}>Lưu Vietphrase đã chọn</button>
+      <button type="button" disabled={busy||saving||!validSelection||!pendingName.length} onClick={()=>void save('name')}>Lưu Name chung cho AI</button>
       <button disabled={!validSelection} onClick={()=>void copy()}>Sao chép đã chọn</button>
       {status&&<small role="status">{status}</small>}
     </div>

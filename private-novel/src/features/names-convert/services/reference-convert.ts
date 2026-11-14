@@ -3,7 +3,7 @@ import type {DictKind} from '../../../core/domain';
 import {nameSourceKey,parseNameValue,NAME_IMAGE_LIMIT,type NameImage} from './name-images';
 
 // Reimplemented from the observed ZXC pipeline; no upstream code/data is bundled.
-type DictionaryIndex={values:Map<string,string>;get(key:string,normalized?:boolean):string|undefined;match(text:string,at:number,normalized?:boolean):[string,string]|undefined};
+type DictionaryIndex={values:Map<string,string>|{get(key:string):string|undefined;has(key:string):boolean};get(key:string,normalized?:boolean):string|undefined;match(text:string,at:number,normalized?:boolean):[string,string]|undefined};
 type Indexes=Record<DictKind,DictionaryIndex>;
 type Mapped={text:string;starts:number[];ends:number[]};
 const punctuation=new Map<string,string>([
@@ -57,12 +57,20 @@ function replaceRanges(input:Mapped,replacements:{start:number;end:number;text:s
 }
 const escape=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 
+function omitUntranslatedTrailingDe(source:string,target:string){
+ if(source!==target||!source.endsWith('的'))return target;
+ const previous=Array.from(source.slice(0,-1)).at(-1);
+ // A literal dictionary echo after a Latin name or a closing quote/bracket is
+ // residue, while Han-to-Han possessives such as 老人的 remain untouched.
+ return previous&&(/[\p{Script=Latin}\p{P}]$/u.test(previous))?target.slice(0,-1):target;
+}
+
 export function referenceConvert(source:string,names:{key:string;value:string}[],indexes:Indexes,rules:Map<string,string>,options:ConvertOptions,budget?:ConvertBudget):Token[]{
  const normalized=options.standardizePunctuation!==false;
  const capitalize=options.capitalize!==false;
  let mapped=normalize(source,normalized);
  const combined=new Map<string,{value:string;type:string;user:boolean;order:number}>();let order=0;
- for(const kind of ['names','names2'] as const)for(const[rawKey,rawValue]of indexes[kind].values){const key=normalized?normalizeKey(rawKey):rawKey,value=indexes[kind].get(key,normalized)??rawValue;const old=combined.get(key);combined.set(key,{value,type:kind,user:false,order:old?.order??order++});}
+ for(const kind of ['names','names2'] as const){const values=indexes[kind].values;if(values instanceof Map)for(const[rawKey,rawValue]of values){const key=normalized?normalizeKey(rawKey):rawKey,value=indexes[kind].get(key,normalized)??rawValue;const old=combined.get(key);combined.set(key,{value,type:kind,user:false,order:old?.order??order++});}}
  for(const {key,value}of names){const sourceKey=nameSourceKey(key),normalizedKey=normalized?normalizeKey(sourceKey):sourceKey;const old=combined.get(normalizedKey);combined.set(normalizedKey,{value,type:'name',user:true,order:old?.order??order++});}
  // Gather only keys present in the paragraph, then protect globally longest names.
  // This also protects names that start inside a longer ordinary phrase or rule.
@@ -115,7 +123,7 @@ export function referenceConvert(source:string,names:{key:string;value:string}[]
   const start=at;let key='';let target='';let type='original';let choices:string[]=[];let nameImage:NameImage|undefined;
   if(mapped.text.startsWith(marker,at)){
    const end=mapped.text.indexOf('\uE002',at)+1;key=mapped.text.slice(at,end);const item=protectedWords.get(key);
-   if(item){target=first(item.value)||item.sourceKey;choices=splitMeanings(item.value);type=item.type;const image=parseNameValue(item.value).image;if(image&&imageCount++<NAME_IMAGE_LIMIT)nameImage=image;}
+   if(item){target=item.value===""?"":first(item.value)||item.sourceKey;choices=splitMeanings(item.value);type=item.type;const image=parseNameValue(item.value).image;if(image&&imageCount++<NAME_IMAGE_LIMIT)nameImage=image;}
   }
   if(!key){const match=matchAt(at);if(match){key=match.key;choices=splitMeanings(match.value);type=match.type;target=type==='blacklist'?'':options.multipleMeanings?`(${choices.join('/')})`:choices[0]??'';}}
   if(!key){
@@ -141,8 +149,10 @@ export function referenceConvert(source:string,names:{key:string;value:string}[]
   if(quote){if(!openingQuote)sentenceStart=false;if(key==='"')doubleQuote=!doubleQuote;else singleQuote=!singleQuote;}
   if(isNewline){lineStart=true;sentenceStart=false;doubleQuote=false;singleQuote=false;}
   if(budget)budget(160+6*(key.length+target.length+choices.reduce((sum,choice)=>sum+choice.length,0))+32*choices.length);
-  raw.push({sourceStart:mapped.starts[start],sourceEnd:mapped.ends[at-1],source:source.slice(mapped.starts[start],mapped.ends[at-1]),targetText:space+target,type,meanings:choices,hanviet:'',...(nameImage?{nameImage}:{})});
-  last=isNewline?'':key.slice(-1);
+  const original=source.slice(mapped.starts[start],mapped.ends[at-1]);
+  target=omitUntranslatedTrailingDe(original,target);
+  raw.push({sourceStart:mapped.starts[start],sourceEnd:mapped.ends[at-1],source:original,targetText:space+target,type,meanings:choices,hanviet:'',...(nameImage?{nameImage}:{})});
+  if(type!=='name'||target)last=isNewline?'':key.slice(-1);
  }
  // Rule replacements may span several output words: merge overlapping origins so
  // every editing token still refers to a single exact range in the raw source.

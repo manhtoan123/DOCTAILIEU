@@ -22,14 +22,15 @@ export default function ConvertPolishDialog({input,onClose,cancelRef}:{input:Con
  const session=useRef<AiReadingSession|null>(null),alive=useRef(true),locked=useRef(false);
  useEffect(()=>{const cancel=()=>{loadAbort.current?.abort();stoppedRun.current=undefined;stoppedTermsWrite.current?.abort();runAbort.current?.abort();session.current?.clear();};if(cancelRef)cancelRef.current=cancel;return()=>{if(cancelRef?.current===cancel)cancelRef.current=undefined;};},[cancelRef]);
  const [progress,setProgress]=useState<AiPartsProgress>();
+ const [runApplied,setRunApplied]=useState(false);
  const [savedTerms,setSavedTerms]=useState<PolishTerm[]>([]);
  const [savedSkipped,setSavedSkipped]=useState(0);
  const [model,setModel]=useState(normalizeAiModel(input.model)??DEFAULT_AI_MODEL);
- const [runModel,setRunModel]=useState('');
  const [savingTerms,setSavingTerms]=useState(false);
  const [parallel]=useState(input.splitParts??true);
  const [prompt,setPrompt]=useState(DEFAULT_POLISH_PROMPT);
  const [key,setKey]=useState(''),[result,setResult]=useState(''),[busy,setBusy]=useState(false),[status,setStatus]=useState(''),[error,setError]=useState('');
+ const canResume=!!progress&&(progress.done<progress.total||!runApplied);
  useEffect(()=>{
   alive.current=true;
   let current=true;
@@ -44,12 +45,13 @@ export default function ConvertPolishDialog({input,onClose,cancelRef}:{input:Con
    if(!current||loading.signal.aborted)return;
    setKey(key);
    setPrompt(polishPrompt(savedPrompt?.value));
-   const value=saved?.value as {applied?:boolean;text?:unknown;model?:unknown;terms?:PolishTerm[];skipped?:unknown[]}|undefined;
+   const value=saved?.value as {applied?:boolean;text?:unknown;model?:unknown;models?:unknown;terms?:PolishTerm[];skipped?:unknown[]}|undefined;
    if(typeof value?.text==='string'){
     if(value.applied!==false)setResult(value.text);
     setSavedTerms(Array.isArray(value.terms)?value.terms.filter(term=>typeof term?.source==='string'&&typeof term?.convert==='string'&&typeof term?.meaning==='string'):[]);
     setSavedSkipped(Array.isArray(value.skipped)?value.skipped.length:0);
-    setStatus('Đã lưu · '+aiModelLabel(typeof value.model==='string'?value.model:input.model));
+    const models=Array.isArray(value.models)?value.models.filter((entry):entry is string=>typeof entry==='string'):[];
+    setStatus('Đã lưu · '+(models.length>1?models.map(aiModelLabel).join(' + '):aiModelLabel(typeof value.model==='string'?value.model:input.model)));
    }
   }).catch(e=>{if(current&&!loading.signal.aborted){setError(errorText(e));setStatus('Không mở được Trau chuốt');}});
   return()=>{current=false;loading.abort();alive.current=false;stoppedRun.current=undefined;stoppedTermsWrite.current?.abort();runAbort.current?.abort();session.current?.clear();};
@@ -57,23 +59,24 @@ export default function ConvertPolishDialog({input,onClose,cancelRef}:{input:Con
  async function run(){
   if(locked.current||savingTerms||!key||!prompt.trim())return;
   locked.current=true;setBusy(true);setError('');setStatus('Đang trau chuốt');
-  const resume=runModel===model&&!!progress&&progress.done<progress.total;
+  const resume=canResume;
   const keepPrevious=!!result;
   if(!resume)setProgress(undefined);
-  setRunModel(model);
   const controller=new AbortController();runAbort.current=controller;
   const runningSession=session.current??=new AiReadingSession();
   let taskKey:string|undefined;
   let runProgress:AiPartsProgress|undefined;
   const abort=()=>{if(taskKey)runningSession.cancel(taskKey);};
   controller.signal.addEventListener('abort',abort,{once:true});
- let writes=Promise.resolve(),lastEnd=0,runPrompt=prompt,runParallel=parallel,knownTerms=savedTerms;
+ let writes=Promise.resolve(),lastEnd=0,lastPrefix='',lastFallbackSignature='',runPrompt=prompt,runParallel=parallel,knownTerms=savedTerms;
  const saveProgress=(state:AiPartsProgress,terms:PolishTerm[])=>{
     const end=state.completedSourceEnd??0,prefix=state.completedText??'';
-    const text=!keepPrevious&&state.done>0&&end>lastEnd&&prefix?progressivePolish(input.text,prefix,end):undefined;
+    const fallbackSignature=!keepPrevious&&state.done>0&&prefix?JSON.stringify(state.polishFallback??[]):undefined;
+    const changed=end>lastEnd||(end===lastEnd&&(prefix!==lastPrefix||fallbackSignature!==lastFallbackSignature));
+    const text=fallbackSignature&&changed?progressivePolish(input.text,prefix,end):undefined;
     const hasNewTerms=terms.length>knownTerms.length;
     if(!text&&!hasNewTerms)return;
-    if(text)lastEnd=end;
+    if(text&&fallbackSignature){lastEnd=end;lastPrefix=prefix;lastFallbackSignature=fallbackSignature;}
     knownTerms=terms;
     writes=writes.then(async()=>{
       if(!alive.current||controller.signal.aborted)return;
@@ -83,7 +86,8 @@ export default function ConvertPolishDialog({input,onClose,cancelRef}:{input:Con
         return;
       }}
       await writePolishResult(key,{version:4,applied:true,partial:true,sourceEnd:end,originalEnd:polishOriginalEnd(input.pairs,end),prefix,
-        baseConvert:input.text,fallback:locatePolishFallback(input.pairs,state.polishFallback),text,model,prompt:runPrompt,terms,skipped:state.polishSkipped,updatedAt:Date.now()},controller.signal);
+        baseConvert:input.text,fallback:locatePolishFallback(input.pairs,state.polishFallback),text,model:state.polishModels?.at(-1)??model,
+        ...(state.polishModels&&state.polishModels.length>1?{models:state.polishModels}:{}),prompt:runPrompt,terms,skipped:state.polishSkipped,updatedAt:Date.now()},controller.signal);
     });
     void writes.catch(()=>{});
   };
@@ -94,8 +98,13 @@ export default function ConvertPolishDialog({input,onClose,cancelRef}:{input:Con
    controller.signal.throwIfAborted();
    const source={bookId:input.bookId,id:'polish:'+input.chapterId,revision:input.revision,text:input.text,polishPairs:input.pairs,polishPreserveLines:!!input.nodes};
    const settings={...convertPolishSettings(model,runPrompt),splitParts:runParallel};
+   if(!runningSession.preparePolishRun(source,settings,resume)){
+     setProgress(undefined);
+     setStatus('Cài đặt đã đổi · Bắt đầu lượt trau chuốt mới');
+     return;
+   }
+   setRunApplied(false);
    const activeKey=taskKey=aiReadingKey(source,settings,[]);
-   runningSession.retain(resume?[activeKey]:[]);
    const publish=(p:AiPartsProgress)=>{
      if(!alive.current||controller.signal.aborted)return;
      runProgress=p;
@@ -112,12 +121,13 @@ export default function ConvertPolishDialog({input,onClose,cancelRef}:{input:Con
    if(!alive.current||controller.signal.aborted)return;
    if(input.nodes)polishedEpubNodes(input.nodes,response.result);
    const terms=combinePolishTerms([knownTerms,response.polishTerms]), skipped=response.polishSkipped??[];
-   await writePolishResult(key,{version:4,applied:true,text:response.result,model:response.model,prompt:runPrompt,terms,skipped,
+   await writePolishResult(key,{version:4,applied:true,text:response.result,model:response.model,...(response.polishModels?{models:response.polishModels}:{}),prompt:runPrompt,terms,skipped,
      ...(response.polishFallback?.length?{baseConvert:input.text,fallback:locatePolishFallback(input.pairs,response.polishFallback)}:{}),updatedAt:Date.now()},controller.signal);
    if(alive.current&&!controller.signal.aborted){
      setResult(response.result);
      setSavedTerms(terms);
      setSavedSkipped(skipped.length);
+     setRunApplied(true);
      setStatus('Đã áp dụng bản trau chuốt');
    }
   }catch(e){
@@ -136,7 +146,6 @@ export default function ConvertPolishDialog({input,onClose,cancelRef}:{input:Con
   }
  finally{controller.signal.removeEventListener('abort',abort);if(runAbort.current===controller)runAbort.current=undefined;if(stoppedRun.current===controller)stoppedRun.current=undefined;locked.current=false;if(alive.current)setBusy(false);}
  }
- const canResume=runModel===model&&!!progress&&progress.done<progress.total;
  const skippedCount=progress?.polishSkipped?.length??0;
  const retrySkipped=canResume&&skippedCount>0&&progress.done+skippedCount>=progress.total;
  const startLabel=canResume?(retrySkipped?'Thử lại phần lỗi':'Tiếp tục trau chuốt'):result?'Trau chuốt lại':'Bắt đầu trau chuốt';

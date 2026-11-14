@@ -11,7 +11,7 @@ export const validCompletedAi=(result:AiTranslateClientResponse)=>result.finishR
 export function completedAiCandidates(settings:ReadingAiSettings):ReadingAiSettings[]{
   if(!mayReuseCompletedAi(settings))return [settings];
   return [settings,...AI_MODELS.flatMap(({id})=>[undefined,'auto','fixed'].flatMap(modelMode=>
-    [settings.fallbackModels,undefined,[],recommendedFallbackModels(id)].map(fallbackModels=>({...settings,model:id,modelMode,fallbackModels} as ReadingAiSettings))))];
+    [settings.fallbackModels,undefined,[],recommendedFallbackModels(id),recommendedFallbackModels(id,settings.fallbackOrder)].map(fallbackModels=>({...settings,model:id,modelMode,fallbackModels} as ReadingAiSettings))))];
 }
 function stable(value:unknown):unknown{
   if(Array.isArray(value))return value.map(stable);
@@ -19,7 +19,7 @@ function stable(value:unknown):unknown{
   return value;
 }
 function identity(source:AiReadingSource,settings:ReadingAiSettings,names:Names):string{
-  const {model:_model,modelMode:_mode,fallbackModels:_fallback,...contentSettings}=settings;
+  const {model:_model,modelMode:_mode,fallbackModels:_fallback,fallbackOrder:_fallbackOrder,...contentSettings}=settings;
   return JSON.stringify(stable([source.bookId,source.id,source.revision,source.text,contentSettings,filterNamesForText(source.text,names)]));
 }
 /** Survives retain() during a preference change, bounded to current + next chapter.

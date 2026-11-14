@@ -4,7 +4,7 @@ import {db} from '../src/core/db';
 import {prepareBatchFiles,prepareBatchDocuments,commitBatchImports,validateBatchSelection} from '../src/features/import-export/services/batch-import';
 const mocks=vi.hoisted(()=>({prepare:vi.fn(),read:vi.fn()}));
 vi.mock('../src/features/import-export/services/document-convert',async original=>({...await original<typeof import('../src/features/import-export/services/document-convert')>(),prepareDocument:mocks.prepare}));
-vi.mock('../src/features/import-export/services/epub-package',()=>({openEpubPackage:async(blob:Blob)=>({blob,entries:new Map(),title:'Synthetic',author:'',spine:[{path:'one.xhtml',title:'Chapter 1'}]}),readEpubChapter:mocks.read}));
+vi.mock('../src/features/import-export/services/epub-package',()=>({openEpubPackage:async(blob:Blob)=>({blob,entries:new Map(),title:'Synthetic',author:'',spine:[{path:'one.xhtml',title:'Chapter 1'}]}),readEpubChapter:mocks.read,readEpubChapterParts:async(...args:unknown[])=>{const result=await mocks.read(...args);return Array.isArray(result)?result:[result];}}));
 const file=(name:string)=>new File(['same raw original'],name),archive=()=>new File(['converted archive'],'reading.epub');
 const prepare=(files:File[],signal=new AbortController().signal,documents?:ReadonlyMap<File,File>)=>prepareBatchFiles(files,'auto','',true,()=>{},signal,0,undefined,documents);
 beforeEach(async()=>{await db.delete();await db.open();vi.clearAllMocks();vi.stubGlobal('navigator',{storage:{estimate:async()=>({quota:1e9,usage:0})}});mocks.prepare.mockImplementation(async()=>archive());mocks.read.mockResolvedValue({path:'one.xhtml',body:'<body><p>Text</p></body>',styles:[],nodes:['Text']});});

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import Dexie from 'dexie';
 import {afterEach,expect,it,vi} from 'vitest';
-import {ConvertCache,CONVERT_CACHE_DB,convertCacheKey,effectiveConvertOptions,convertCacheMetrics,type CacheInputs} from '../src/features/names-convert/services/convert-cache';
+import {ConvertCache,CONVERT_CACHE_DB,CONVERT_CACHE_VERSION,convertCacheKey,effectiveConvertOptions,convertCacheMetrics,type CacheInputs} from '../src/features/names-convert/services/convert-cache';
 import {LanguageEngine,type Token} from '../src/features/names-convert/services/language';
 
 const text='张三，你好！😀\r\n中国。';
@@ -18,6 +18,7 @@ it('persists exact Chinese conversion tokens and UTF16 source ranges across reop
  expect(hit!.find(t=>t.source.includes('😀'))!.sourceEnd-hit!.find(t=>t.source.includes('😀'))!.sourceStart).toBeGreaterThanOrEqual(2);
 });
 it('invalidates every semantic input while canonical defaults share a key',async()=>{
+ expect(CONVERT_CACHE_VERSION).toBe(3);
  const key=await convertCacheKey(base);expect(await convertCacheKey({...base,options:effectiveConvertOptions()})).toBe(key);
  const changes:CacheInputs[]=[{...base,text:text+' '},{...base,options:{mode:'hanviet'}},{...base,options:{capitalize:false}},{...base,options:{reference:false}},{...base,options:{multipleMeanings:true}},{...base,options:{standardizePunctuation:false}},{...base,globalNames:names},{...base,bookNames:[{key:'张三',value:'Tên mới'}]},{...base,bookNames:[{key:'李四',value:'Trương Tam'}]},{...base,dictionarySignature:'[["vp","changed",1,20]]'},{...base,dictionarySignature:'[["vp","abc",2,20]]'},{...base,dictionarySignature:'[["vp","abc",1,21]]'},{...base,dictionarySignature:'[["names","abc",1,20]]'}];
  for(const input of changes)expect(await convertCacheKey(input)).not.toBe(key);

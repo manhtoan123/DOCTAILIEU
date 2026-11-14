@@ -21,3 +21,15 @@ Nghiệm thu: targeted schema/store/rollback/legacy conflict/scope; request-resp
 - Wrangler local Pages/workerd + D1 cô lập: HTTP200/409/200/200/400 pass, CAS/tomb/schema đúng; runtime-report.json/runtime-server.log. Không ghi remote hay dữ liệu truyện.
 - Pages a74180c0 deploy thành công, bundle index-Dr67jMWw.js; rollback b07246d0. Smoke production2/2 desktop/mobile: Album/series, save/reload, Convert truyện cùng Album, legacy giữ nguyên, 320px không tràn; zero AI/zero actual cloud writes (mọi API bị chặn trong browser context mới). album-names-production.log và album-names/production-report.json. Không thay Worker AI/Convert, config, schema D1 remote hoặc tier.
 - Giới hạn: Android-layout là mô phỏng; AI E2E dùng phản hồi tổng hợp, không kiểm chất lượng upstream/key thật. Legacy fallback chỉ quan sát truyện đã có local; Name mới là record Album đồng bộ riêng.
+
+## Name có nghĩa rỗng — 10/11/2026
+
+Trong hộp thoại **Thêm name/Chỉnh name** của bản Convert, xóa nội dung ô Hán Việt rồi bấm **Thêm Hán Việt** như bình thường. Ví dụ `$的=` lưu một mục Name có nghĩa rỗng ở phạm vi đã chọn (Album tác giả, riêng truyện hoặc Name chung). Convert giữ vị trí token nguồn và bỏ phần hiển thị của cụm khớp. Bản gốc và bản dịch AI đã lưu giữ nguyên; prompt dịch không gửi nhãn rỗng. Trong kho Name có thể nhập nghĩa mới hoặc xóa mục để bỏ quy tắc.
+
+Đối chiếu [OpenCC](https://github.com/BYVoid/OpenCC/blob/master/README.md): dùng ý tưởng ghi đè theo từ điển; ở đây chuỗi rỗng là một giá trị ghi đè có chủ ý, còn `null` vẫn dành cho lệnh xóa đồng bộ. Không thay định dạng từ điển mặc định hay thêm dependency.
+
+Kiểm chứng: 67 ca engine/kho/Worker, 19 ca compact cloud snapshot và Album HTTP, 14 ca reviewer độc lập đều qua; build qua. Smoke bản build bằng Edge desktop và cấu hình Pixel 7: lưu, ẩn, tải lại, kiểm Bản gốc đều qua trên dữ liệu tổng hợp; lượt Playwright dùng Vite dev bị timeout khi tải trang. Chưa kiểm Android thật hoặc ghi cloud thật.
+
+Đã deploy Pages `7d654427` và Worker Convert `4d446a93`. Bundle production `index-Cxd09fhi.js` khớp SHA bản build; smoke production 2/2 trên Edge desktop và Pixel 7 mô phỏng, chặn API và dùng dữ liệu mẫu. Không thay schema hay ghi dữ liệu cloud. Client cũ từ chối giá trị rỗng; cần tải lại trang và lưu ý khi rollback sau khi kho đã có mục rỗng.
+
+Full trước sửa cuối: 2.789 pass / 46 fail / 7 skip. Ca Reader từ chối chỉ khoảng trắng đã được giữ lại và kiểm lại 36/36 ca Reader; không chạy lại toàn bộ suite. Log: `.dsh-tmp/name-empty/`.

@@ -28,7 +28,8 @@ export async function previewLibraryDeletion(bookIds:string[],albumNames:string[
   return {books,albums:registry.albums.filter(a=>roots.some(root=>albumContains(root,a.name))),roots,shared:shared||cloud.length>0||albumNames.length>0};
 }
 export interface DeletionResult {completed:string[];cloudDeleted:string[];localDeleted:string[];removedAlbums:string[];failed:{id:string;message:string}[]}
-/** Remote batch is intentionally partial: stop on first failure and report exact completion. */
+const DELETE_CONCURRENCY=4;
+/** Bounded remote batch: each item remains guarded and local cleanup follows its own cloud ACK. */
 export async function executeLibraryDeletion(plan:DeletionPlan):Promise<DeletionResult>{
   const result:DeletionResult={completed:[],cloudDeleted:[],localDeleted:[],removedAlbums:[],failed:[]};
   try{
@@ -37,14 +38,15 @@ export async function executeLibraryDeletion(plan:DeletionPlan):Promise<Deletion
     const registryBefore=await readStoredAlbumRegistry();
     for(const album of plan.albums)if(registryBefore?.albums.find(a=>a.id===album.id)?.name!==album.name)throw Error('Album đã thay đổi; hãy xem lại lựa chọn trước khi xóa.');
     for(const target of plan.books){const local=await db.books.get(target.id),remote=cloud.find(b=>b.id===target.id);if(!sameRemote(remote,target.remote)||local&&(!sameSnapshot(local,target)||local.status!=='ready')||!local&&(!remote||!sameSnapshot(remote,target)))throw Error('Danh sách đã thay đổi; hãy xem lại lựa chọn trước khi xóa.');}
-    for(const target of plan.books){
+    let next=0,stopped=false;
+    const removeOne=async(target:ManagedBook)=>{
       try{await withBookLock(target.id,async()=>{
         const current=await db.books.get(target.id);
         if(current&&(!sameSnapshot(current,target)||current.status!=='ready'))throw Error('Truyện đã thay đổi hoặc đang nhập; giữ bản local.');
         const uploaded=!!await db.settings.get(`cloud-uploaded:${location.origin}:${target.id}`);
         if(plan.shared||uploaded||cloud.some(b=>b.id===target.id)){
-          const remote=(await listCloudBooks()).find(b=>b.id===target.id);
-          if(!sameRemote(remote,target.remote))throw Error('Truyện trên kho đã thay đổi; dừng xóa.');
+          // The DELETE carries the reviewed snapshot as a server-side conditional;
+          // another full catalog fetch per book only serialized extra network waits.
           await deleteCloudBook(target.id,target.remote??null);
           result.cloudDeleted.push(target.id);
         }
@@ -57,8 +59,11 @@ export async function executeLibraryDeletion(plan:DeletionPlan):Promise<Deletion
         await db.settings.delete(`cloud-delete-review:${location.origin}:${target.id}`);
       });result.completed.push(target.id);}catch(error){
         if(error&&typeof error==='object'&&'cloudDeleted'in error&&error.cloudDeleted===true&&'bookId'in error&&error.bookId===target.id&&!result.cloudDeleted.includes(target.id))result.cloudDeleted.push(target.id);
-        if(!await db.books.get(target.id)){if(target.localPresent&&!result.localDeleted.includes(target.id))result.localDeleted.push(target.id);await db.settings.delete(`cloud-delete-review:${location.origin}:${target.id}`);}result.failed.push({id:target.id,message:error instanceof Error?error.message:String(error)});return result;}
-    }
+        if(!await db.books.get(target.id)){if(target.localPresent&&!result.localDeleted.includes(target.id))result.localDeleted.push(target.id);await db.settings.delete(`cloud-delete-review:${location.origin}:${target.id}`);}result.failed.push({id:target.id,message:error instanceof Error?error.message:String(error)});}
+    };
+    const worker=async()=>{while(!stopped){const index=next++;if(index>=plan.books.length)return;const target=plan.books[index];const before=result.failed.length;await removeOne(target);if(result.failed.length>before)stopped=true;}};
+    await Promise.all(Array.from({length:Math.min(DELETE_CONCURRENCY,plan.books.length)},worker));
+    if(result.failed.length)return result;
     if(plan.roots.length){
       const [local,cloud,registry]=await Promise.all([db.books.toArray(),listCloudBooks(),readStoredAlbumRegistry()]);
       if([...local,...cloud].some(b=>plan.roots.some(root=>albumContains(root,b.album))))throw Error('Album có truyện mới hoặc đã thay đổi; giữ Album. Hãy xem lại lựa chọn.');

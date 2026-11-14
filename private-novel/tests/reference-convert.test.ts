@@ -34,3 +34,9 @@ it('blacklist and unknown Han are hidden but retained in editable source ranges'
 it('preserves quote spacing, adjacent closing marks, original English and supplementary Unicode',()=>{
  const e=new LanguageEngine();e.add('vp','他说=hắn nói');e.add('vp','你好=xin chào');expect(out(e,'他说："你好！" hello world🙂')).toBe('Hắn nói: "Xin chào!" hello world🙂');
 });
+it('omits only identity-mapped 的 after Latin names or closing punctuation',()=>{
+ const e=new LanguageEngine();e.add('names','Saber的=Saber的');e.add('vp','”的=」的');e.add('vp','老人的=老人的');
+ expect(out(e,'Saber的')).toBe('Saber');
+ expect(out(e,'」的')).toBe('」');
+ expect(out(e,'老人的')).toBe('老人的');
+});

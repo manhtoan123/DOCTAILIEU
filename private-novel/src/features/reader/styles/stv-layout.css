@@ -132,6 +132,6 @@ button,input,select,textarea{border-radius:3px}button{padding:8px 13px;transitio
 .reader .word-token.word-selected{background:#e9bc4d88;box-shadow:inset 0 -2px #a56e00}
 .prose::highlight(reader-picked){background:#e9bc4d88}
 .prose [data-paragraph]{touch-action:manipulation}
-.reader .word-token{user-select:none}
+.reader .word-token{user-select:text}
 .reader-text-actions{position:fixed;z-index:82;bottom:max(16px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:flex;gap:4px;padding:4px;border:1px solid var(--border);border-radius:8px;background:var(--paper);white-space:nowrap}
 .reader-text-actions button{min-height:44px}

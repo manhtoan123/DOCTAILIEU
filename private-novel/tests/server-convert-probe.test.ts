@@ -17,6 +17,13 @@ it('can omit the unused paragraph lookup while preserving every token meaning',a
  const response=await send({text:'林儿打开门。林儿打开门。',includeLookup:false});expect(response.status).toBe(200);const result=await response.json() as any;
  expect(result.lookup).toEqual({hanviet:'',meanings:[]});expect(result.lookups).toEqual(result.tokens.filter((t:any)=>t.source.trim()).map((t:any)=>({source:t.source,...full.lookup(t.source)})));
 });
+it('accepts an explicit blank Name over a dictionary match without losing source offsets',async()=>{
+ const response=await send({text:'林儿打开门。',names:[{key:'林儿',value:''}]});
+ expect(response.status).toBe(200);
+ const {tokens}=await response.json() as {tokens:ReturnType<LanguageEngine['convert']>};
+ expect(tokens.map(token=>token.targetText).join('')).toBe('Mở cửa.');
+ expect(tokens[0]).toMatchObject({type:'name',source:'林儿',sourceStart:0,sourceEnd:2,targetText:''});
+});
 beforeAll(async()=>{
  const bundle=await build({entryPoints:['experiments/server-convert/worker.ts'],bundle:true,write:false,format:'esm',platform:'browser'});
  workerScript=bundle.outputFiles[0].text;

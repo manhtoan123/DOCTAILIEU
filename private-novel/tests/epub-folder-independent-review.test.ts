@@ -8,7 +8,7 @@ import {hashBlob} from '../src/features/import-export/services/backup';
 // Archive XML/ZIP is covered by browser regressions. This synthetic package
 // fixture exercises the real folder dispatcher, EPUB importer and Dexie commits.
 const packageFixture=vi.hoisted(()=>({open:vi.fn(),read:vi.fn()}));
-vi.mock('../src/features/import-export/services/epub-package',()=>({openEpubPackage:packageFixture.open,readEpubChapter:packageFixture.read}));
+vi.mock('../src/features/import-export/services/epub-package',()=>({openEpubPackage:packageFixture.open,readEpubChapter:packageFixture.read,readEpubChapterParts:async(...args:unknown[])=>{const result=await packageFixture.read(...args);return Array.isArray(result)?result:[result];}}));
 const bytes=new Uint8Array([80,75,3,4,11,12,13,14]);
 const layout={path:'OPS/ch.xhtml',body:'<body><p>甲😀乙</p></body>',styles:[],nodes:['甲😀乙']};
 function file(path:string,size?:number){const value=new File([bytes],path.split('/').at(-1)!);Object.defineProperty(value,'webkitRelativePath',{value:path});if(size!==undefined)Object.defineProperty(value,'size',{value:size});return value;}

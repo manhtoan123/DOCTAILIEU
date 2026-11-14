@@ -26,7 +26,7 @@ import {googleMeaningUrl,googleTranslationUrl} from '../services/word-tools';
 import NameEditDialog from '../../names-convert/components/NameEditDialog';
 import EpubFrame from './EpubFrame';
 import NameImageText from '../../names-convert/components/NameImageText';
-import {findNameImages,nameImagesForSource} from '../../names-convert/services/name-images';
+import {findNameImages,nameImagesForSource,nameSourceKey} from '../../names-convert/services/name-images';
 import {convertedEpubNodes,convertedEpubWords} from '../../import-export/services/epub-render';
 import {AI_MODELS} from '../../ai/types/ai-models';
 import {EpubAiSession,epubAiStorageSettings} from '../../import-export/services/epub-ai';
@@ -47,7 +47,7 @@ import {installDefaultDictionaries} from '../../sync-cloud/services/cloud-dictio
 const NameManager=lazy(()=>import('../../names-convert/components/NameManager'));
 const CommonNamesPanel=lazy(()=>import('../../names-convert/components/CommonNamesPanel'));
 import {captureReadingAnchor,restoreReadingAnchor,type ReadingAnchor} from '../services/reader-scroll-anchor';
-import {CONVERT_NAMES_KEY,readConvertNames} from '../../names-convert/services/convert-names';
+import {CONVERT_NAMES_KEY,readConvertNames,readAiCommonNames} from '../../names-convert/services/convert-names';
 import {applyCompatibleReaderWordEdits,applyReaderWordEdits,expandReaderSelection,saveReaderName,deleteReaderName} from '../services/reader-word-edit';
 import WordPopup from './WordPopup';
 import {readerRangeSource,readerTextRange} from '../services/reader-text-selection';
@@ -74,6 +74,13 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
   const names=nameScope?.album===nameAlbumRoot(book?.album)?nameScope?.rows:undefined;
   const globalNamesRevision=useLiveQuery(async()=>JSON.stringify((await db.settings.get(CONVERT_NAMES_KEY))?.value??[]),[]);
   const aiGlobalNames=useLiveQuery(()=>readConvertNames(),[]);
+  const sharedAiNames=useLiveQuery(()=>readAiCommonNames(),[]);
+  const liveAiNames=useMemo(()=>{
+    if(!names||!sharedAiNames)return undefined;
+    if(!sharedAiNames.length)return names;
+    const scopedKeys=new Set(names.map(row=>nameSourceKey(row.key)));
+    return [...sharedAiNames.filter(row=>!scopedKeys.has(nameSourceKey(row.key))),...names];
+  },[names,sharedAiNames]);
   const[conversionRun,setConversionRun]=useState(0);const[mode,setMode]=useState<'raw'|'convert'|'ai'>('raw');
   const backend=useConvertBackend();
   const localDictionaryRevision=useLiveQuery(()=>mode==='convert'&&backend==='local'?localDictionarySignature():undefined,[mode,backend]);
@@ -224,22 +231,22 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
   },[chapterId,chapter?.id,chapter?.revision,chapter?.text,mode,semanticSignature]);
   const conversionReady=sameSource&&snapshot?.signature===semanticSignature;
   const nameSnapshots=useRef(new AiNameSnapshots());
-  const snapshotNames=(source:AiReadingSource,settings:ReadingAiSettings)=>nameSnapshots.current.get(source,settings,names??[]);
-  const aiNames=(mode==='ai'||mode==='convert'&&convertAiNext?.bookId===bookId&&convertAiNext.chapterId===chapterId)&&aiLoaded&&chapter?.id===chapterId&&names!==undefined?snapshotNames({bookId,id:mode==='ai'?chapter.id:'background:'+chapter.id,revision:chapter.revision,text:chapter.text},requestAiSettings):names??[];
+  const snapshotNames=(source:AiReadingSource,settings:ReadingAiSettings)=>nameSnapshots.current.get(source,settings,liveAiNames??[]);
+  const aiNames=(mode==='ai'||mode==='convert'&&convertAiNext?.bookId===bookId&&convertAiNext.chapterId===chapterId)&&aiLoaded&&chapter?.id===chapterId&&liveAiNames!==undefined?snapshotNames({bookId,id:mode==='ai'?chapter.id:'background:'+chapter.id,revision:chapter.revision,text:chapter.text},requestAiSettings):liveAiNames??[];
   const aiSemantic=JSON.stringify([requestAiSettings,aiNames]);
   const aiSemanticOwner=JSON.stringify([bookId,chapterId]);
   const lastAiSemantic=useRef<{owner:string;value:string}|undefined>(undefined);
   useLayoutEffect(()=>{
     // A chapter hydration gap uses live Names before its source snapshot is ready.
     // Only compare stable semantics within the same chapter, never across a handoff.
-    if(mode!=='ai'||chapter?.id!==chapterId||!aiLoaded||names===undefined)return;
+    if(mode!=='ai'||chapter?.id!==chapterId||!aiLoaded||liveAiNames===undefined)return;
     const previous=lastAiSemantic.current;
     if(previous?.owner===aiSemanticOwner&&previous.value!==aiSemantic)stopReading();
     lastAiSemantic.current={owner:aiSemanticOwner,value:aiSemantic};
-  },[aiSemantic,aiSemanticOwner,mode,chapter?.id,aiLoaded,names===undefined]);
+  },[aiSemantic,aiSemanticOwner,mode,chapter?.id,aiLoaded,liveAiNames===undefined]);
   const currentAiSource=chapter?.id===chapterId?{bookId,id:chapter.id,revision:chapter.revision,text:chapter.text}:undefined;
 
-  const aiNamesSnapshot=useRef({bookId,names:aiNames});aiNamesSnapshot.current={bookId,names:names??[]};
+  const aiNamesSnapshot=useRef({bookId,names:aiNames});aiNamesSnapshot.current={bookId,names:liveAiNames??[]};
   const [pendingAiListen,setPendingAiListen]=useState('');
   const [showCommonNames,setShowCommonNames]=useState(false);
   const aiKey=currentAiSource?aiReadingKey(currentAiSource,requestAiSettings,aiNames):'';
@@ -252,12 +259,12 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
   const modelLookupKey=JSON.stringify([aiKey,nextListedId,nextRequestAiSettings]);
   const [modelCache,setModelCache]=useState<{key:string;current?:string;next?:string;currentDivision?:AiTranslateClientResponse['division'];nextDivision?:AiTranslateClientResponse['division'];currentExecution?:AiTranslateClientResponse['execution'];nextExecution?:AiTranslateClientResponse['execution']}>();
   useEffect(()=>{
-    if(tool!=='ai'||!currentAiSource||!aiLoaded||names===undefined)return;const stop=new AbortController();let alive=true;setModelCache({key:modelLookupKey});const timer=setTimeout(()=>stop.abort(),2000);
-    const read=async(source:AiReadingSource,epub:boolean,settings:ReadingAiSettings,target:'current'|'next')=>{const hit=await readCompletedAiReadingCache(source,epub?epubAiStorageSettings(settings):settings,nameSnapshots.current.peek(source,settings,names??[]),stop.signal);if(alive&&!stop.signal.aborted&&hit)setModelCache(old=>({...old,key:modelLookupKey,[target]:aiResultModelLabel(hit),[target+'Division']:aiResultFacts(hit).division,[target+'Execution']:hit.execution}));};
+    if(tool!=='ai'||!currentAiSource||!aiLoaded||liveAiNames===undefined)return;const stop=new AbortController();let alive=true;setModelCache({key:modelLookupKey});const timer=setTimeout(()=>stop.abort(),2000);
+    const read=async(source:AiReadingSource,epub:boolean,settings:ReadingAiSettings,target:'current'|'next')=>{const hit=await readCompletedAiReadingCache(source,epub?epubAiStorageSettings(settings):settings,nameSnapshots.current.peek(source,settings,liveAiNames??[]),stop.signal);if(alive&&!stop.signal.aborted&&hit)setModelCache(old=>({...old,key:modelLookupKey,[target]:aiResultModelLabel(hit),[target+'Division']:aiResultFacts(hit).division,[target+'Execution']:hit.execution}));};
     const next=nextListedId?activeChapter(bookId,nextListedId).then(c=>c?.bookId===bookId?read({bookId,id:c.id,revision:c.revision,text:c.text},!!c.epub,nextRequestAiSettings,'next'):undefined):Promise.resolve();
     void Promise.allSettled([read(currentAiSource,!!chapter?.epub,requestAiSettings,'current'),next]).finally(()=>clearTimeout(timer));
     return()=>{alive=false;clearTimeout(timer);stop.abort();};
-  },[tool,modelLookupKey,aiLoaded,names===undefined]);
+  },[tool,modelLookupKey,aiLoaded,liveAiNames===undefined]);
   const aiPreview=aiParts?.key===aiKey?aiParts.state:undefined;
   const waitingForConvert=mode==='convert'&&(!conversionReady||converting)||mode==='ai'&&!aiReady;
   useEffect(()=>{
@@ -290,7 +297,7 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
     const nextGeneration=aiNextStopGeneration.current;
     let alive=true;if(!continuing){setAiError('');setAiFailureCode('');setAiFailureId('');setAiHistory([]);setAiActiveModel('');setAiParts(undefined);}setPreloadError('');setAiPreloadCode('');setNextAiState({key:aiKey,status:'idle'});
     if(mode!=='ai')foregroundAttempt.current=undefined;
-    if(mode!=='ai'&&!backgroundAi){aiSession.current!.clear();epubSession.current!.clear();return;}if(!currentAiSource)return; /* Keep pending prewarm through the live chapter lookup gap. */if(!aiLoaded||names===undefined)return;
+    if(mode!=='ai'&&!backgroundAi){aiSession.current!.clear();epubSession.current!.clear();return;}if(!currentAiSource)return; /* Keep pending prewarm through the live chapter lookup gap. */if(!aiLoaded||liveAiNames===undefined)return;
     const session=chapter?.epub?epubSession.current!:aiSession.current!,source=currentAiSource;let requestedNextKey:string|undefined;
     const failed=(e:unknown,isPrewarm:boolean)=>{
       const error=e as {name?:string;code?:string;requestId?:string};
@@ -337,16 +344,16 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
       if(alive&&!aiStoppedTargets.current.has(nextKey)&&nextGeneration===aiNextStopGeneration.current&&foregroundPrewarm.current?.key===nextKey){setNextAiState({key:aiKey,status:'ready',execution:nextResult.execution,division:(next.epub?epubSession.current:aiSession.current)?.facts(nextKey)?.division});if(aiAutomaticRetry.current&&aiAutoAttempt.current>0){aiAutoAttempt.current=0;notify('Đã phục hồi bản AI chương sau.');}setAiNextModel(aiResultModelLabel(nextResult));setAiModelNotice({key:aiKey,text:'Chương sau: '+aiResultModelLabel(nextResult)});}
     }).catch(e=>{const isPrewarm=!!session.get(aiKey);if(isPrewarm||!attempt.errorHandled){if(alive&&!isPrewarm&&e?.name!=='AbortError')attempt.errorHandled=true;failed(e,isPrewarm);}});
     return()=>{alive=false;};
-  },[mode,aiKey,aiLoaded,names===undefined,preloadAi,aiRetry,aiPrewarmRetry,list,backgroundAi,backgroundContext,nextRequestAiSettings,foregroundPrewarmContext]);
+  },[mode,aiKey,aiLoaded,liveAiNames===undefined,preloadAi,aiRetry,aiPrewarmRetry,list,backgroundAi,backgroundContext,nextRequestAiSettings,foregroundPrewarmContext]);
   const displayTokens=useMemo(()=>{if(!chapter)return tokens;const edits=tempWordEdits.filter(e=>e.chapterId===chapter.id&&e.revision===chapter.revision);return applyCompatibleReaderWordEdits(chapter.text,tokens,edits).tokens;},[chapter?.id,chapter?.revision,tokens,tempWordEdits]);
-  const baseEpubNodes=chapter?.epub?(mode==='raw'?chapter.epub.nodes:mode==='ai'?(aiReady?aiText!.nodes:aiPreview?.text?aiPreview.nodes:undefined):sameSource?convertedEpubNodes(chapter.epub,displayTokens,dictionaryRevision==='[]'):undefined):undefined;
+  const baseEpubNodes=useMemo(()=>chapter?.epub?(mode==='raw'?chapter.epub.nodes:mode==='ai'?(aiReady?aiText!.nodes:aiPreview?.text?aiPreview.nodes:undefined):sameSource?convertedEpubNodes(chapter.epub,displayTokens,dictionaryRevision==='[]'):undefined):undefined,[chapter?.epub,mode,aiReady,aiText?.nodes,aiPreview?.text,aiPreview?.nodes,sameSource,displayTokens,dictionaryRevision]);
   const polishCancel=useRef<(()=>void)|undefined>(undefined);
   const [clearingPolish,setClearingPolish]=useState(false),[suppressedPolish,setSuppressedPolish]=useState('');
   const [polishInput,setPolishInput]=useState<ConvertPolishInput>();
   const [nameDiscovery,setNameDiscovery]=useState<NameDiscoveryInput>();
   useEffect(()=>setNameDiscovery(undefined),[chapterId,chapter?.revision,chapter?.text]);
   useEffect(()=>setPolishInput(undefined),[chapterId,chapter?.revision,chapter?.text]);
-  const baseConvert=sameSource?(baseEpubNodes?baseEpubNodes.join('\n'):displayTokens.map(t=>t.targetText).join('')):'';
+  const baseConvert=useMemo(()=>sameSource?(baseEpubNodes?baseEpubNodes.join('\n'):displayTokens.map(t=>t.targetText).join('')):'',[sameSource,baseEpubNodes,displayTokens]);
   const polishIdentity=JSON.stringify([chapterId,chapter?.revision,chapter?.text]);
   const [polishKey,setPolishKey]=useState<{identity:string;key:string}>();
   useEffect(()=>{let alive=true;if(chapter&&baseConvert)void convertPolishKey(chapterId,chapter.revision,baseConvert,chapter.text).then(key=>{if(alive)setPolishKey({identity:polishIdentity,key});});return()=>{alive=false;};},[polishIdentity,!!baseConvert]);
@@ -355,9 +362,8 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
   const livePolishPairs=useMemo(()=>chapter&&baseConvert?pairPolishSource(chapter.text,baseConvert,displayTokens,chapter.epub?.nodes,baseEpubNodes):[],[chapter?.text,baseConvert,displayTokens,baseEpubNodes]);
   useEffect(()=>{if(!chapter||!baseConvert||polishKey?.identity!==polishIdentity)return;const controller=new AbortController();void convertPolishKey(chapterId,chapter.revision,baseConvert).then(legacy=>adoptLegacyPolish(polishKey.key,legacy,baseConvert,livePolishPairs,controller.signal)).catch(error=>{if(!controller.signal.aborted)notify(errorText(error));});return()=>controller.abort();},[polishKey?.key,polishIdentity,baseConvert]);
   const replacement=useMemo(()=>rebasePolishResult(baseConvert,livePolishPairs,storedReplacement),[baseConvert,livePolishPairs,storedReplacement]);
-  let polishedText=mode==='convert'&&replacement?.applied===true&&typeof replacement.text==='string'?replacement.text:undefined;
-  let epubNodes=baseEpubNodes;
-  if(polishedText!==undefined&&baseEpubNodes){try{epubNodes=polishedEpubNodes(baseEpubNodes,polishedText);}catch{polishedText=undefined;}}
+  const epubNodeResult=useMemo(()=>{let polishedText=mode==='convert'&&replacement?.applied===true&&typeof replacement.text==='string'?replacement.text:undefined;let epubNodes=baseEpubNodes;if(polishedText!==undefined&&baseEpubNodes){try{epubNodes=polishedEpubNodes(baseEpubNodes,polishedText);}catch{polishedText=undefined;}}return {polishedText,epubNodes};},[mode,replacement?.applied,replacement?.text,baseEpubNodes]);
+  const {polishedText,epubNodes}=epubNodeResult;
   polishedConvertActive.current=polishedText!==undefined;
   const renderedText=mode==='ai'?(aiReady?aiText!.text:aiPreview?.text||aiPreview?.previewText||''):mode==='convert'?(polishedText??baseConvert):chapter?.id===chapterId?chapter.text:'';
   const untouchedRanges=useMemo(()=>polishedText===undefined?[]:untouchedPolishRanges(baseConvert,polishedText,replacement),[baseConvert,polishedText,replacement]);
@@ -370,7 +376,7 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
   const chapterImages=useMemo(()=>mode==='ai'?nameImagesForSource(chapter?.text||'',aiNames):mode==='convert'?displayTokens.flatMap(t=>t.nameImage?[t.nameImage]:[]):[],[mode,chapter?.text,aiNames,displayTokens]);
   const imageMatches=useMemo(()=>findNameImages(renderedText,chapterImages),[renderedText,chapterImages]);
   const [epubVisibleKey,setEpubVisibleKey]=useState('');
-  const epubRenderKey=JSON.stringify([bookId,JSON.stringify(book?.epub?.source)??'',chapter?.epub,epubNodes]);
+  const epubRenderKey=useMemo(()=>JSON.stringify([bookId,JSON.stringify(book?.epub?.source)??'',chapter?.epub,epubNodes]),[bookId,book?.epub?.source,chapter?.epub,epubNodes]);
   // Observe committed reader content only; background progress and hidden tabs are not visible.
   useEffect(()=>{if(mode!=='ai'||!aiKey)return;const visible=()=>{if(document.visibilityState==='hidden')return;const frameReady=!chapter?.epub||epubVisibleKey===epubRenderKey;(chapter?.epub?epubSession.current:aiSession.current)?.visible(aiKey,frameReady&&!!aiPreview?.previewText,frameReady&&(aiReady||!!aiPreview?.text));};visible();document.addEventListener('visibilitychange',visible);return()=>document.removeEventListener('visibilitychange',visible);},[mode,aiKey,chapter?.epub,aiReady,aiPreview?.previewText,aiPreview?.text,epubVisibleKey,epubRenderKey]);
   // TXT stream previews contain only closed paragraphs, not the unfinished tail.
@@ -391,12 +397,12 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
     void Promise.all([ttsHash(chapter.text),ttsHash(cursorSemantic),ttsHash(speechText)]).then(([sourceHash,semanticHash,renderedHash])=>{if(alive)setTtsIdentity({key:identityKey,value:{bookId,chapterId,revision:chapter.revision,mode,sourceHash,semanticHash,renderedHash}});}).catch(()=>{});
     return()=>{alive=false;};
   },[identityKey]);
-  useEffect(()=>{if(cursorRestoreDone.current||!chapter||chapter.id!==chapterId||!settingsHydrated||!aiLoaded||names===undefined||aiGlobalNames===undefined||dictionaryRevision===undefined)return;
+  useEffect(()=>{if(cursorRestoreDone.current||!chapter||chapter.id!==chapterId||!settingsHydrated||!aiLoaded||liveAiNames===undefined||aiGlobalNames===undefined||dictionaryRevision===undefined)return;
     let alive=true;const cursor=restoredCursor.current;
     if(!cursor||cursor.chapterId!==chapterId){cursorRestoreDone.current=true;return;}
     void ttsHash(chapter.text).then(hash=>{if(!alive)return;cursorRestoreDone.current=true;if(cursor.revision!==chapter.revision||cursor.sourceHash!==hash){restoredCursor.current=undefined;clearTtsCursor(bookId);return;}if(!modeTouched.current&&cursor.mode!=='convert'&&resumedReading.current?.chapterId!==chapterId)setMode(cursor.mode);settingsValue.current={...settingsValue.current,voiceId:cursor.voiceId,ttsRate:cursor.rate};setSettingsState(settingsValue.current);}).catch(()=>{});
     return()=>{alive=false;};
-  },[chapterId,chapter?.id,chapter?.revision,chapter?.text,settingsHydrated,aiLoaded,names,aiGlobalNames,dictionaryRevision]);
+  },[chapterId,chapter?.id,chapter?.revision,chapter?.text,settingsHydrated,aiLoaded,liveAiNames,aiGlobalNames,dictionaryRevision]);
   checkpointRef.current=()=>{const cursor=activeCursor.current;if(!cursor)return;const position=playerRef.current!.position();const marker=`${position.offset}:${position.audioTime}`;if(marker===lastCheckpoint.current)return;lastCheckpoint.current=marker;const updated={...cursor,...position,grouping:playerRef.current!.chunking(),updatedAt:Date.now()};activeCursor.current=updated;restoredCursor.current=updated;writeTtsCursor(updated);};
   useEffect(()=>{
     const started=listeningSource.current;
@@ -552,7 +558,7 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
     let alive=true;const player=playerRef.current!;if(continueRef.current)return;player.prepareNext();
     if(mode!=='ai'||!autoNext||nextAiState.key!==aiKey||nextAiState.status!=='ready')return;
     const nextId=list?.[currentIndex+1]?.id;if(!nextId)return;
-    void activeChapter(bookId,nextId).then(next=>{if(!alive||!next||next.bookId!==bookId)return;const source={bookId,id:next.id,revision:next.revision,text:next.text},key=aiReadingKey(source,nextRequestAiSettings,nameSnapshots.current.peek(source,nextRequestAiSettings,names??[]));const cached=next.epub?epubSession.current!.get(key):aiSession.current!.get(key);if(cached)player.prepareNext('nodes' in cached?(cached.nodes as string[]).join('\n'):cached.result);}).catch(()=>{});
+    void activeChapter(bookId,nextId).then(next=>{if(!alive||!next||next.bookId!==bookId)return;const source={bookId,id:next.id,revision:next.revision,text:next.text},key=aiReadingKey(source,nextRequestAiSettings,nameSnapshots.current.peek(source,nextRequestAiSettings,liveAiNames??[]));const cached=next.epub?epubSession.current!.get(key):aiSession.current!.get(key);if(cached)player.prepareNext('nodes' in cached?(cached.nodes as string[]).join('\n'):cached.result);}).catch(()=>{});
     return()=>{alive=false;};
   },[mode,autoNext,aiKey,nextAiState,chapterId,list,nextRequestAiSettings,speech==='playing'||speech==='loading'||speech==='paused']);
   useEffect(()=>{setTtsTextOverride('');},[chapter?.id,mode]);
@@ -564,6 +570,7 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
   const aiNameOrigin=useRef<HTMLElement|null>(null);
   const lastNameTap=useRef<{element:HTMLElement;at:number;x:number;y:number;count:number}|undefined>(undefined);
   const expandOrigin=useRef<{word:HTMLElement;fragment:number;lineRatio:number;start:number}|undefined>(undefined);
+  const pointerStart=useRef<{x:number;y:number}|undefined>(undefined);
   const [pickedText,setPickedText]=useState<{text:string;start:number;element:HTMLElement;range:Range}>();
   function clearPickedText(){
     if(!pickedText)return;
@@ -597,6 +604,9 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
     const word=(event.target as HTMLElement).closest<HTMLButtonElement>('.word-token');
     const token=word?pieces[Number(word.dataset.wordIndex)]?.token:undefined;
     if(token&&word){
+      const textSelection=paragraph.ownerDocument.getSelection();
+      const gestureStart=pointerStart.current;
+      if(detail>0&&gestureStart&&Math.hypot(x-gestureStart.x,y-gestureStart.y)>4&&textSelection&&!textSelection.isCollapsed&&textSelection.containsNode(paragraph,true))return;
       const rects=[...word.getClientRects()],fragment=rects.findIndex(rect=>y>=rect.top&&y<rect.bottom);
       const lineRatio=fragment>=0?(y-rects[fragment].top)/rects[fragment].height:.5;
       expandOrigin.current={word,fragment:Math.max(0,fragment),lineRatio,start};
@@ -663,7 +673,7 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
     const context=selection.current,active=currentChapter.current,key=nameKey.trim(),replacement=value.trim();
     if(mode==='ai'&&(!persistent||scope!=='book'))return;
     if(wordBusy||waitingForConvert&&mode!=='ai'||!context||!active||active.id!==context.chapterId||active.revision!==context.revision)return;
-    if(!key||!replacement||/[\r\n=]/.test(key)||/[\r\n]/.test(replacement)||key.length>256||replacement.length>2048){setWordError('Chữ Trung và nghĩa cần nằm trên một dòng, tối đa 256 / 2.048 ký tự.');return;}
+    if(!key||(!replacement&&(!persistent||mode!=='convert'))||/[\r\n=]/.test(key)||/[\r\n]/.test(replacement)||key.length>256||replacement.length>2048){setWordError('Chữ Trung và nghĩa cần nằm trên một dòng, tối đa 256 / 2.048 ký tự.');return;}
     setWordBusy(true);setWordError('');
     try{
       if(persistent){
@@ -678,7 +688,7 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
         applyReaderWordEdits(active.text,compatible.tokens,[edit]);
         setTempWordEdits([...otherContexts,...compatible.accepted.map(item=>({...item,chapterId:edit.chapterId,revision:edit.revision})),edit]);
       }
-      if(readerAlive.current&&selection.current===context){closeSelection();notify(mode==='ai'?'Đã lưu Name cho lần dịch sau.':persistent?(scope==='global'?'Đã lưu Name chung.':'Đã lưu Name cố định cho truyện này.'):'Đã áp dụng tạm cho cụm đang chọn.');}
+      if(readerAlive.current&&selection.current===context){closeSelection();notify(mode==='ai'?'Đã lưu Name cho lần dịch sau.':!replacement?'Đã lưu Name rỗng để ẩn trong Convert.':persistent?(scope==='global'?'Đã lưu Name chung.':'Đã lưu Name cố định cho truyện này.'):'Đã áp dụng tạm cho cụm đang chọn.');}
     }catch(e){if(readerAlive.current&&selection.current===context)setWordError(errorText(e));}
     finally{if(readerAlive.current&&selection.current===context)setWordBusy(false);}
   }
@@ -721,9 +731,9 @@ export default function Reader({bookId,initialChapterId,backLabel='← Tủ sác
     {waitingForConvert&&<div className="reader-convert-status" role="status">{mode==='ai'?currentAiView.label:conversionError?'Chưa cập nhật: '+conversionError:renderedText?'Đang cập nhật bản Convert…':'Đang chuẩn bị bản Convert…'}{mode==='ai'&&!aiReady&&<button onClick={stopAi}>Dừng chương này</button>}{mode==='ai'&&(aiLoadError||aiError)?<button onClick={()=>{if(aiFailureAction(aiFailureCode)==='settings'){setTool('ai');return;}retryAi();}}>{aiFailureAction(aiFailureCode)==='settings'?'Sửa cấu hình AI':aiPreview?.done||aiPreview?.half===2?'Tiếp tục phần còn thiếu':'Thử lại AI'}</button>:conversionError&&<button onClick={()=>setConversionRun(n=>n+1)}>Thử lại Convert</button>}</div>}
     {aiModelNotice?.key===aiKey&&(mode==='ai'||backgroundAi)&&<div className="reader-convert-status ai-model-notice" role="status">{aiModelNotice.text}</div>}
     {backgroundAi&&!waitingForConvert&&nextAiStatus!=='ready'&&<div className="reader-convert-status" role="status">Chương sau: {nextAiView.label}{aiLoadError||preloadError?<button onClick={()=>retryAi(true)}>Thử lại chương sau</button>:nextAiStatus==='loading'&&<button onClick={()=>{pauseAiRecovery();setConvertAiNext(undefined);}}>Dừng chương sau</button>}</div>}
-    <article ref={article} className="prose" style={{maxWidth:settings.width,fontSize:settings.fontSize,lineHeight:settings.lineHeight,fontFamily:readerFonts[settings.font]||readerFonts.arial,textAlign:settings.align||'left',textShadow:settings.textShadow?'0 0 1px currentColor':'none'}}>
+    <article ref={article} className="prose" onPointerDown={event=>{pointerStart.current={x:event.clientX,y:event.clientY};}} style={{maxWidth:settings.width,fontSize:settings.fontSize,lineHeight:settings.lineHeight,fontFamily:readerFonts[settings.font]||readerFonts.arial,textAlign:settings.align||'left',textShadow:settings.textShadow?'0 0 1px currentColor':'none'}}>
       <div className="chapter-kicker">CHƯƠNG / PHẦN {Math.max(0,currentIndex)+1} TRÊN {list?.length||0}</div>
-      {chapter?.epub&&epubNodes?<EpubFrame onReady={setEpubVisibleKey} bookId={bookId} sourceKey={JSON.stringify(book?.epub?.source)??''} layout={chapter.epub} nodes={epubNodes} nameImages={chapterImages} sentence={!ttsTextOverride?sentence:undefined} highlightColor={settings.highlightColor} selectedRange={mode==='convert'&&selected?{start:selected.sourceStart,end:selected.sourceEnd}:undefined} words={convertEpubWords} onNavigate={(key,shift)=>{if(tool||namePanel||toc||selected||edit!==null||ttsEditor)return;readingScrollEpoch.current++;manualScrollUntil.current=Date.now()+3000;const amount=Math.max(80,window.innerHeight*.85);if(key==='Home'||key==='End')window.scrollTo({top:key==='Home'?0:document.documentElement.scrollHeight,behavior:'smooth'});else window.scrollBy({top:(key==='PageUp'||key===' '&&shift?-1:1)*amount,behavior:'smooth'});}} appearance={{paper:settings.background||({light:'#ffffff',sepia:'#eae4d3',dark:'#161b19',gray:'#2b3030'}[settings.theme]),ink:settings.textColor||({light:'#26332c',sepia:'#26332c',dark:'#cbd1c8',gray:'#dde0d8'}[settings.theme]),font:settings.font,fontSize:settings.fontSize,lineHeight:settings.lineHeight,align:settings.align||'left',textShadow:!!settings.textShadow}} onWordSelect={(start,end,anchor)=>{if(mode!=='convert'||waitingForConvert)return;const token=displayTokens.find(token=>token.sourceStart===start);if(token&&chapter){setTool('');setNamePanel(false);selectToken({...token,sourceStart:start,sourceEnd:end,source:chapter.text.slice(start,end)});setPopupAnchor(anchor);}}}/>:!renderedText&&waitingForConvert?<p className="notice">{mode==='ai'?currentAiView.label:conversionError?'Không cập nhật được bản Convert.':'Đang Convert trong Worker…'}</p>:paragraphs.map((p,i)=><p key={`${chapterId}-${mode}-${i}`} style={{background:'transparent'}} data-paragraph={i} tabIndex={(mode==='ai'||polishedText!==undefined)&&!chapter?.epub?0:undefined} onClick={event=>readerClick(event,p.start,blocks[i]??[])} onKeyDown={e=>{if(e.target===e.currentTarget&&e.key==='Enter'&&(mode==='ai'||polishedText!==undefined)){e.preventDefault();openAiName(p.start,e.currentTarget);}}} data-empty={!p.text.trim()} className={!ttsTextOverride&&sentence&&sentence.start<p.start+p.text.length&&sentence.end>p.start?'speaking':''}>{mode==='convert'?(blocks[i]||[]).map((x,j)=>x.token?<button type="button" key={`${x.token.sourceStart}-${x.token.sourceEnd}-${j}`} className={'word-token'+(selected&&!pickedText&&mode==='convert'&&x.sourceStart<selected.sourceEnd&&x.sourceEnd>selected.sourceStart?' word-selected':'')} aria-disabled={waitingForConvert} data-source-start={x.sourceStart} data-source-end={x.sourceEnd} data-source-literal={x.literal} data-source-complete={x.literal||x.text===x.token.targetText} data-word-index={j}><NameImageText text={x.text} matches={x.token.nameImage?findNameImages(x.text,[x.token.nameImage],1):[]}/></button>:<NameImageText key={j} text={x.text} matches={imageMatches} offset={p.start+(blocks[i]||[]).slice(0,j).reduce((n,item)=>n+item.text.length,0)} highlight={!ttsTextOverride?sentence:undefined} color={settings.highlightColor}/>):<NameImageText text={p.text} matches={mode==='ai'?imageMatches:[]} offset={p.start} highlight={!ttsTextOverride?sentence:undefined} color={settings.highlightColor}/>}{!p.text.trim()&&'\u00a0'}</p>)}
+      {chapter?.epub&&epubNodes?<EpubFrame onReady={setEpubVisibleKey} bookId={bookId} sourceKey={JSON.stringify(book?.epub?.source)??''} layout={chapter.epub} nodes={epubNodes} nameImages={chapterImages} sentence={!ttsTextOverride?sentence:undefined} highlightColor={settings.highlightColor} selectedRange={mode==='convert'&&selected?{start:selected.sourceStart,end:selected.sourceEnd}:undefined} words={convertEpubWords} onNavigate={(key,shift)=>{if(tool||namePanel||toc||selected||edit!==null||ttsEditor)return;readingScrollEpoch.current++;manualScrollUntil.current=Date.now()+3000;const amount=Math.max(80,window.innerHeight*.85);if(key==='Home'||key==='End')window.scrollTo({top:key==='Home'?0:document.documentElement.scrollHeight,behavior:'smooth'});else window.scrollBy({top:(key==='PageUp'||key===' '&&shift?-1:1)*amount,behavior:'smooth'});}} appearance={{paper:settings.background||({light:'#ffffff',sepia:'#eae4d3',dark:'#161b19',gray:'#2b3030'}[settings.theme]),ink:settings.textColor||({light:'#26332c',sepia:'#26332c',dark:'#cbd1c8',gray:'#dde0d8'}[settings.theme]),font:settings.font,fontSize:settings.fontSize,lineHeight:settings.lineHeight,align:settings.align||'left',textShadow:!!settings.textShadow}} onWordSelect={(start,end,anchor)=>{if(mode!=='convert'||waitingForConvert)return;const token=displayTokens.find(token=>token.sourceStart===start);if(token&&chapter){setTool('');setNamePanel(false);selectToken({...token,sourceStart:start,sourceEnd:end,source:chapter.text.slice(start,end)});setPopupAnchor(anchor);}}}/>:!renderedText&&waitingForConvert?<p className="notice">{mode==='ai'?currentAiView.label:conversionError?'Không cập nhật được bản Convert.':'Đang Convert trong Worker…'}</p>:paragraphs.map((p,i)=><p key={`${chapterId}-${mode}-${i}`} style={{background:'transparent'}} data-paragraph={i} tabIndex={(mode==='ai'||polishedText!==undefined)&&!chapter?.epub?0:undefined} onClick={event=>readerClick(event,p.start,blocks[i]??[])} onKeyDown={e=>{if(e.target===e.currentTarget&&e.key==='Enter'&&(mode==='ai'||polishedText!==undefined)){e.preventDefault();openAiName(p.start,e.currentTarget);}}} data-empty={!p.text.trim()} className={!ttsTextOverride&&sentence&&sentence.start<p.start+p.text.length&&sentence.end>p.start?'speaking':''}>{mode==='convert'?(blocks[i]||[]).map((x,j)=>x.token?<button type="button" key={`${x.token.sourceStart}-${x.token.sourceEnd}-${j}`} className={'word-token'+(selected&&!pickedText&&mode==='convert'&&x.sourceStart<selected.sourceEnd&&x.sourceEnd>selected.sourceStart?' word-selected':'')} aria-disabled={waitingForConvert} data-source-start={x.sourceStart} data-source-end={x.sourceEnd} data-source-literal={x.literal} data-source-complete={x.literal||x.text===x.token.targetText} data-word-index={j}>{x.token.nameImage?<NameImageText text={x.text} matches={findNameImages(x.text,[x.token.nameImage],1)}/>:x.text}</button>:<NameImageText key={j} text={x.text} matches={imageMatches} offset={p.start+(blocks[i]||[]).slice(0,j).reduce((n,item)=>n+item.text.length,0)} highlight={!ttsTextOverride?sentence:undefined} color={settings.highlightColor}/>):<NameImageText text={p.text} matches={mode==='ai'?imageMatches:[]} offset={p.start} highlight={!ttsTextOverride?sentence:undefined} color={settings.highlightColor}/>}{!p.text.trim()&&'\u00a0'}</p>)}
     <ChapterNavigation bookId={bookId} previousId={currentIndex>0?list?.[currentIndex-1]?.id:undefined} nextId={list?.[currentIndex+1]?.id} onChapterChange={changeChapter} onOpenToc={openToc}/>
     </article>
     {tool==='speech'&&<ReaderPanel title="Nghe sách" kind="speech" onClose={()=>setTool('')}><p className="muted">Câu đang đọc được gửi đến {usesCapcutTts(import.meta.env.VITE_TTS_GATEWAY)?'CapCut qua máy chủ của thư phòng':'gateway TikTok cộng đồng'}. Có {tiktokVoices.filter(v=>v.available).length} giọng tiếng Việt.</p><div className="tts-bar"><button className="primary" disabled={!chapter||speech==='loading'||(mode==='ai'&&!speechText.trim())} onClick={()=>speech==='playing'?playerRef.current?.pause():speech==='paused'?playerRef.current?.resume():handleListen()}>{speech==='playing'?'Ⅱ Tạm dừng':speech==='paused'?'▶ Tiếp tục':speech==='loading'?`Đang tải ${usesCapcutTts(import.meta.env.VITE_TTS_GATEWAY)?'CapCut':'TikTok'}…`:`▶ Nghe ${usesCapcutTts(import.meta.env.VITE_TTS_GATEWAY)?'CapCut':'TikTok'}`}</button><button aria-label="Dừng đọc" onClick={()=>stopReading()}>■</button><button onClick={openTtsEditor}>Câu ({ttsSentenceDraft(speechText).length})</button><label>Giọng<select aria-label="Giọng đọc" value={tiktokVoices.some(v=>v.available&&v.id===settings.voiceId)?settings.voiceId:tiktokVoices[0].id} onChange={e=>{stopReading();setSettings(s=>({...s,voiceId:e.target.value}));}}>{tiktokVoices.filter(v=>v.available).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}</select></label><label>Tốc độ<input aria-label="Tốc độ đọc" type="range" min="0.5" max="5" step="0.1" value={settings.ttsRate} onChange={e=>{stopReading();setSettings(s=>({...s,ttsRate:+e.target.value}));}}/></label><output>{settings.ttsRate}</output><label>Màu highlight<input aria-label="Màu làm nổi bật văn bản" type="color" value={settings.highlightColor} onChange={e=>setSettings(s=>({...s,highlightColor:e.target.value}))}/></label><button disabled={!settingsHydrated} onClick={()=>persistSettings(settings)}>Lưu cài đặt</button><label className="check"><input type="checkbox" checked={autoNext} onChange={e=>{changeReaderOptions({autoNext:e.target.checked});}}/>Qua chương</label><small>{usesCapcutTts(import.meta.env.VITE_TTS_GATEWAY)?'CapCut':'TikTok TTS'} · tiếng Việt. Audio giữ phiên được tạo trên máy, không tải qua mạng.</small></div><p className="muted">Tốc độ được điều chỉnh trên thiết bị. Khi sửa câu đọc, highlight trên bản gốc tạm tắt để tránh tô sai đoạn.</p></ReaderPanel>}
