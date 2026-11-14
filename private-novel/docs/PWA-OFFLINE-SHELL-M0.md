@@ -32,3 +32,9 @@ Trạng thái: production deploy `a7804aa5` (`master`, code `a4261c2`). Pages `/
 Follow-up: release `1c0d940e` (`75a0e26`) chứa build ID `1839862ac648a243`. Sau deploy kế tiếp này, Edge production E2E lại cài shell phiên bản mới và pass cùng ca offline; đây là browser profile mới, chưa kiểm tra update trong tab cũ còn mở.
 
 Chưa nghiệm thu Android phần cứng. Lần đầu và browser không hỗ trợ service worker vẫn cần mạng. Offline shell không bảo đảm cloud, AI, TTS mới hoặc backup hoạt động offline; các asset PDF/import lớn bị loại khỏi cache.
+
+## Kiểm tra vòng đời worker mới (14/11/2026)
+
+Edge local phục vụ worker hiện hành với build ID cũ giả lập, mở app và để tab cũ được worker điều khiển. Sau khi đổi script worker sang build ID mới, registration.update() cài worker mới ở trạng thái installed/waiting, trong khi worker cũ tiếp tục active và cache của cả hai phiên bản còn nguyên. Đóng tab cũ làm worker mới active; cache cũ được dọn, cache mới được giữ. Đây kiểm tra lifecycle thật của service worker bằng cùng public/sw.js, nhưng fixture đổi ID và dùng cùng một bộ asset; không thay cho kiểm tra hai bộ hashed asset production hoặc tab production đang mở. Script tạm: .dsh-tmp/pwa-update-lifecycle.mjs.
+
+Production deploy 97962f61 (48b1e9cdcbd76e96) sau đó có Edge offline-shell E2E 1/1 pass trong profile riêng; API và dữ liệu người dùng không cache. Tab phiên bản cũ thực tế trên production chưa được giữ qua một lần deploy.
