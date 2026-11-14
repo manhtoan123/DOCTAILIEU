@@ -6,7 +6,7 @@ Rà soát hiện hành: [lỗi tích lũy qua các bản deploy — 26/10/2026](
 
 Rà soát thay đổi gần đây: [hồi quy AI/TTS/cache/tên TXT — 02/11/2026](REGRESSION-AUDIT-2026-11-02.md).
 
-Rà soát code web và ý tưởng GitHub: [so sánh hiện trạng và cơ hội cải tiến — 14/11/2026](WEB-CODE-GITHUB-IDEAS-REPORT-2026-11-14.md). PWA shell: [phạm vi, update lifecycle và nghiệm thu](PWA-OFFLINE-SHELL-M0.md).
+Rà soát code web và ý tưởng GitHub: [so sánh hiện trạng và cơ hội cải tiến — 14/11/2026](WEB-CODE-GITHUB-IDEAS-REPORT-2026-11-14.md). PWA shell: [phạm vi, update lifecycle và nghiệm thu](PWA-OFFLINE-SHELL-M0.md). Hiệu năng Album: [gom nhóm theo cây và benchmark](ALBUM-GROUPING-PERF.md).
 
 ## Hướng dẫn sử dụng và phát triển
 
@@ -33,6 +33,7 @@ Rà soát code web và ý tưởng GitHub: [so sánh hiện trạng và cơ hộ
 | Khôi phục CapCut, model cố định, Groq | [Khôi phục web 01/11](WEB-RECOVERY-2026-11-01.md) | Chẩn đoán production, retry cùng model, pool key server và phương án tách hai web riêng dữ liệu |
 | Chọn/sửa/xóa truyện và Album | [Quản lý Phòng tối](LIBRARY-MANAGEMENT.md) | Xem lại ID, giữ cây Series, cloud ACK trước local; trạng thái nghiệm thu trong tài liệu |
 | Xem trước truyện trong Album | [Thẻ Album và tìm kiếm](ALBUM-PREVIEW-2026-11-02.md) | 3 truyện trước, mở rộng 12; 2/1 cột; ưu tiên đang đọc; ô tích khi Quản lý |
+| Hiệu năng danh sách Album | [Gom sách theo đường dẫn Album](ALBUM-GROUPING-PERF.md) | Index một lượt theo mọi Album tổ tiên; có kiểm tra cây legacy và microbenchmark tổng hợp |
 | Lọc quảng cáo lúc nhập | [Quy tắc lọc và bảo toàn nguồn](IMPORT-ADVERTISING-CLEANUP.md) | Tên/chương TXT, EPUB, PDF, DOCX; chỉ nhận diện rõ; giữ original và sách cũ |
 | Trau chuốt Convert | [Prompt riêng, thay Convert](CONVERT-POLISH.md) | Công cụ → Trau chuốt bản Convert; bản hoàn tất thay Convert để đọc/nghe; giữ nguồn |
 | Convert/tra Name cục bộ | [Chỉ dùng từ điển trên máy](LOCAL-CONVERT-ONLY.md) | Bỏ nhánh máy chủ trong Reader và khung chọn cụm từ |

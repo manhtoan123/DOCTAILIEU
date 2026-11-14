@@ -13,6 +13,19 @@ export function albumContains(parent:string,album?:string):boolean{
   return album===parent||Boolean(album?.split('/').every(Boolean)&&parent.split('/').every(Boolean)&&album.startsWith(`${parent}/`));
 }
 
+/** Index books once by every valid Album ancestor, preserving the tree's path semantics. */
+export function groupBooksByAlbumPath<T extends Pick<Book,'album'>>(books:readonly T[]):Map<string,T[]>{
+  const groups=new Map<string,T[]>();
+  for(const book of books){
+    const album=book.album;if(!album)continue;
+    const parts=album.split('/');
+    if(!parts.every(Boolean)){const group=groups.get(album)??[];group.push(book);groups.set(album,group);continue;}
+    let path='';
+    for(const part of parts){path=path?`${path}/${part}`:part;const group=groups.get(path)??[];group.push(book);groups.set(path,group);}
+  }
+  return groups;
+}
+
 export function buildAlbumTree(albums:string[],books:Pick<Book,'album'>[]){
   const nodes=new Map<string,AlbumNode>();
   const roots:AlbumNode[]=[];

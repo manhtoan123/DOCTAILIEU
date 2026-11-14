@@ -30,7 +30,7 @@ Checkout được rà là `DOCTAILIEU/private-novel` (package `private-novel`, c
 | Ưu tiên | Trước | Ý tưởng tham khảo | Sau có thể kỳ vọng | Bằng chứng còn cần |
 |---|---|---|---|---|
 | **P1: Offline app shell** | Vite/source không khai báo registration hoặc PWA plugin; `/sw.js` và `/service-worker.js` trên Pages trả `200 text/html` (route fallback), chưa chứng minh có worker | Workbox precaching và fallback điều hướng | Đã deploy: giao diện và truyện local đọc được offline sau khi shell cài; API/AI/TTS vẫn cần mạng | Production Edge E2E xác nhận registration/controller, mở deep route offline, local story và không cache API; lần deploy app tiếp theo cài build ID mới và offline test pass trong profile sạch. Chưa kiểm update khi tab bản cũ còn mở; không cache `/api/**`/dữ liệu cá nhân |
-| **P2: Album grouping** | `AlbumShelf` map Album và mỗi Album lọc lại toàn bộ `books` | Gom một lượt vào Map theo Album/path | Nếu thêm sách vào mọi Album tổ tiên, grouping gần `O(N×D + M)` (D là độ sâu), cộng chi phí sort; không mặc định `M+N` | Unit cho nested Albums/Album cha và fixture nhiều Album; profile thực tế |
+| **P2: Album grouping** | `AlbumShelf` map Album và mỗi Album lọc lại toàn bộ `books` | Đã gom một lượt vào Map theo Album/path; giữ sách trong mọi Album tổ tiên hợp lệ | Microbenchmark synthetic 5.000 sách/150 path: dựng nhóm p50 1.139,34→17,42 ms (65,4×); membership/order giống nhau. App vẫn filter/sort sau đó; bộ nhớ index tăng theo N×D | Unit 4/4 và local hierarchy E2E; xem [đo và giới hạn](ALBUM-GROUPING-PERF.md). Số tổng hợp không thay cho profile browser/thư viện thật/Android |
 | **P2: List virtualization** | `App.tsx` render tất cả sách đang lọc; mục lục chương đã phân trang 60 | TanStack Virtual là công cụ headless cho danh sách dài | Chỉ giảm DOM khi profile cho thấy list sách lớn gây chậm | Fixture 1k/5k; kiểm bàn phím, focus, selection, chiều cao item, scroll restore, Android; không virtualize reader/chapter trước |
 | **P3: Fuzzy metadata search** | So khớp substring sau chuẩn hóa dấu; hỗ trợ tên/author/Album và tìm tên chương đã Convert | Fuse.js hỗ trợ fuzzy, trọng số trường và match indices | Tìm tên sách gần đúng dễ hơn, nếu ranking tốt | Test typo tiếng Việt, chữ Hán, tên gốc/Convert, query ngắn; không fuzzy nội dung chương mặc định |
 | **P3: EPUB navigation** | Renderer riêng giữ bố cục/Name/word selection; iframe sandbox/CSP/bridge | Readium TS Toolkit có navigator, preferences, positions và decorations | Có thể tham khảo locators, accessibility metadata hay điều hướng EPUB qua adapter | Spike cô lập trên EPUB synthetic; so parity với Name, TTS, AI, source mapping và sandbox. Readium Web tự ghi đang phát triển |
@@ -49,6 +49,7 @@ Checkout được rà là `DOCTAILIEU/private-novel` (package `private-novel`, c
 - [GoogleChrome/Workbox](https://github.com/GoogleChrome/workbox): thư viện service worker/cache cho offline; không tự chứng minh app này offline toàn phần.
 - [johnfactotum/foliate-js](https://github.com/johnfactotum/foliate-js): có paginator, overlayer và progress; README nói thư viện chưa ổn định, CSS multi-column có thể chậm/giới hạn.
 - [TanStack/virtual](https://github.com/TanStack/virtual): virtualization headless cho danh sách dài; chỉ áp dụng nếu profile hiện trạng biện minh.
+- [tc39/proposal-array-grouping](https://github.com/tc39/proposal-array-grouping): ý tưởng nhóm theo khóa thành Map; app tự gom một sách vào từng Album tổ tiên vì cây cần nhiều bucket cho một item, không thêm dependency.
 - [krisk/Fuse](https://github.com/krisk/Fuse): fuzzy/weighted search; tokenizer/ranking CJK cần kiểm riêng.
 - [readium/ts-toolkit](https://github.com/readium/ts-toolkit) và [readium/web](https://github.com/readium/web): tham khảo API reader/position; Readium Web ghi trạng thái đang phát triển.
 - [regosen/Gapless-5](https://github.com/regosen/Gapless-5): phối hợp HTML Audio và Web Audio cho mục tiêu gapless; không đảm bảo 0ms trên TTS stream động của app.
@@ -56,7 +57,7 @@ Checkout được rà là `DOCTAILIEU/private-novel` (package `private-novel`, c
 
 ## Thứ tự làm việc đề xuất
 
-1. Profile list sách với fixture tổng hợp; nếu chậm, làm grouping Map trước, virtualization sau.
+1. **Album grouping Map đã triển khai và đo microbenchmark tổng hợp** (chi tiết [ALBUM-GROUPING-PERF.md](ALBUM-GROUPING-PERF.md)). Profile list sách trên browser/thư viện đại diện trước khi quyết định virtualization.
 2. **PWA app shell đã triển khai** (xem [PWA-OFFLINE-SHELL-M0.md](PWA-OFFLINE-SHELL-M0.md)); bước còn lại là test worker update trên deploy kế tiếp.
 3. Chạy corpus tìm kiếm typo đa ngôn ngữ trước khi chọn fuzzy library hoặc tự triển khai.
 4. Đo audio gap trên thiết bị/browser thật trước khi thử Web Audio; không cam kết 0 ms.

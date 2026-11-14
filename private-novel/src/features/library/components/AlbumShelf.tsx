@@ -1,7 +1,7 @@
 import {useId,useMemo,useState} from 'react';
 import {NavigationLink} from '../../../shared/components/NavigationLink';
 import type {Book,Progress} from '../../../core/domain';
-import {albumContains,type AlbumNode} from '../services/album-tree';
+import {groupBooksByAlbumPath,type AlbumNode} from '../services/album-tree';
 import {normalizeLibrarySearch} from '../services/library-search';
 import {readerRoutePath} from '../../reader/services/reader-route';
 import {ConvertedTitle} from '../../names-convert/components/ConvertedTitle';
@@ -19,11 +19,12 @@ export function AlbumShelf({albums,heading,onSelect,books,titles,progress,search
  const [albumTitles,setAlbumTitles]=useState<Record<string,{source:string;value:string}>>({});
  const albumIdentity=JSON.stringify(albums.map(album=>[album.path,album.name]));
  const titleCallbacks=useMemo(()=>Object.fromEntries(albums.map(album=>[album.path,(result:{value:string})=>setAlbumTitles(old=>old[album.path]?.source===album.name&&old[album.path]?.value===result.value?old:{...old,[album.path]:{source:album.name,value:result.value}})])),[albumIdentity]);
+ const booksByAlbum=useMemo(()=>groupBooksByAlbumPath(books),[books]);
  const needle=normalizeLibrarySearch(search),reading=new Map(progress.filter(p=>p.reading).map(p=>[p.bookId,p]));
  const title=(book:Book)=>titles[book.id]||book.displayTitle||book.title;
  const matches=(book:Book)=>normalizeLibrarySearch(`${title(book)} ${book.title} ${book.author} ${book.album??''}`).includes(needle);
  const groups=albums.map(album=>{
-  const all=books.filter(book=>albumContains(album.path,book.album)),translated=albumTitles[album.path];
+  const all=booksByAlbum.get(album.path)??[],translated=albumTitles[album.path];
   const albumMatch=normalizeLibrarySearch(`${album.name} ${album.path} ${translated?.source===album.name?translated.value:''}`).includes(needle);
   const items=all.filter(book=>!needle||albumMatch||matches(book)).sort((a,b)=>{
    if(needle){const match=Number(matches(b))-Number(matches(a));if(match)return match;}

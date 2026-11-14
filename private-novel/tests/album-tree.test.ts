@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {albumContains,buildAlbumTree} from '../src/features/library/services/album-tree';
+import {albumContains,buildAlbumTree,groupBooksByAlbumPath} from '../src/features/library/services/album-tree';
 
 describe('author and series Album hierarchy',()=>{
   it('builds missing parents and counts direct books separately from all descendant books',()=>{
@@ -28,5 +28,16 @@ describe('author and series Album hierarchy',()=>{
     expect(tree.roots.map(node=>node.path)).toEqual(['An//Series']);
     expect(tree.roots[0].bookCount).toBe(1);
     expect(albumContains('An','An//Series')).toBe(false);
+  });
+
+  it('groups books under each valid ancestor and preserves malformed legacy paths exactly',()=>{
+    const books=[{id:'author',album:'An'},{id:'series',album:'An/Series'},{id:'nested',album:'An/Series/Volume 2'},{id:'other',album:'Anh/Series'},{id:'legacy',album:'An//Series'}, {id:'none'}];
+    const groups=groupBooksByAlbumPath(books);
+    for(const parent of ['An','An/Series','An/Series/Volume 2','Anh','Anh/Series','An//Series']){
+      expect(groups.get(parent)??[]).toEqual(books.filter(book=>albumContains(parent,book.album)));
+    }
+    expect(groups.get('An')?.map(book=>book.id)).toEqual(['author','series','nested']);
+    expect(groups.get('An//Series')?.map(book=>book.id)).toEqual(['legacy']);
+    expect(groups.has('An//')).toBe(false);
   });
 });
