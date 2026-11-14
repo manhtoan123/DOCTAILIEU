@@ -21,6 +21,9 @@ Chỉ mục metadata được chuẩn bị theo lô nền. Khi người dùng ng
 - Edge desktop production preview, thư viện tổng hợp 5.000 sách, năm query typo không có kết quả chính xác: 491,9–812,1 ms, median 693,8 ms. Long task 68 ms ở query đầu, 0 ms ở bốn query sau. Đây là mẫu nhỏ, máy tính desktop và dữ liệu tổng hợp; không phải benchmark Android hoặc dữ liệu người dùng.
 - `npm.cmd audit --omit=dev --json`: 0 lỗ hổng dependency production ở thời điểm kiểm tra.
 
+## Triển khai production
+
+Commit e7f9bb2 được push lên master và deploy Pages production 97962f61-e7d4-4b73-ac47-3d17889809fc. Build ID PWA là 48b1e9cdcbd76e96; /sw.js trả HTTP 200 JavaScript. Fuzzy E2E và offline-shell E2E trên Edge production đều pass.
 ## Giới hạn và bước còn lại
 
 Chưa đo trên Android thật hoặc kho sách thực tế. Fuzzy dựa trên tiêu đề chuyển đổi đã lưu; tên chỉ được chuyển đổi tạm thời trong RAM không vào fuzzy index. Chưa kiểm corpus typo thực tế của người dùng hay hiệu quả thứ hạng qua đánh giá thủ công. Nếu Worker không khả dụng, app tiếp tục exact search mà không làm hỏng luồng chính.
