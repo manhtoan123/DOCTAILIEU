@@ -38,3 +38,7 @@ Deployed by explicit user request to Pages production branch `master`: deploymen
 Build cache lần đầu mất 3.213 ms; packed Vietphrase index chiếm 55,55 MiB. Map và packed trả output giống nhau trên input CJK tổng hợp. Đỉnh RSS khoảng 1,30 GiB và heap 538 MiB là giá trị gộp qua các phase, không tách được từng engine.
 
 Đây là Node benchmark trên máy tính, Convert dùng câu CJK lặp tổng hợp và IndexedDB giả chỉ ở RAM; không đo disk IndexedDB, Worker/main-thread jank, chương thật, browser hay Android. Kết quả cho thấy cache hit packed nhanh, nhưng cold build và Convert trực tiếp của packed chậm hơn Map ở lượt này. Chưa đổi thuật toán/storage vì kết quả chưa đại diện runtime của app. Bản sao Vietphrase lên Android được người dùng cho phép riêng qua USB, không gửi mạng và phải xóa khỏi điện thoại sau phép đo; file nguồn `D:` tiếp tục read-only.
+
+## Trạng thái sau khi chốt phạm vi web (14/11/2026)
+
+Edge production-build persistence/Convert E2E dùng dictionary tổng hợp đã pass 1/1; nó xác nhận IndexedDB cache và Convert hoạt động trong browser, nhưng không đo hiệu năng của dictionary thật. Benchmark bốn file thật ở trên là Node-only, không đại diện IndexedDB trên disk hay jank trong browser. Người dùng sau đó xác nhận không cần kết nối điện thoại cho công việc web hiện tại; Android thật chưa đo và không chặn phần web. Chưa có bằng chứng để nói Packed cải thiện cold load hoặc Convert trên thiết bị người dùng.
