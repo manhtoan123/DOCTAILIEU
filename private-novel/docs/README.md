@@ -46,6 +46,7 @@ Rà soát code web và ý tưởng GitHub: [so sánh hiện trạng và cơ hộ
 | Nhập nhiều file và thư mục | [Kho truyện lớn](BULK-LIBRARY-PLAN.md) | [Bộ chia chương](CHAPTER-REPAIR-M0.md) |
 | Một TXT chứa nhiều truyện | [Nhập tuyển tập](ANTHOLOGY-IMPORT-1.md) | Xem/sửa mốc truyện rồi chia chương trong từng truyện |
 | EPUB | [Nhập EPUB](EPUB-IMPORT-2.md) | [Reader EPUB](EPUB-READER-3.md), [file lớn](EPUB-LARGE-1.md), [bìa](EPUB-COVER-1.md) |
+| EPUB navigation spike | [Readium TOC/locator comparison](EPUB-NAVIGATION-SPIKE-2026-11-14.md) | Synthetic EPUB only; no engine/package change |
 | Sửa Name không tải lại tài liệu | [Cập nhật tại chỗ](EPUB-LIVE-NAME-UPDATE-2026-11-01.md) | Dùng chung EPUB và PDF/DOCX đã nhập; giữ iframe, CSS và tài nguyên gốc |
 | PDF / DOCX có ảnh | [Nhập tài liệu thành truyện](PDF-DOCX-IMPORT.md) | Chọn nhiều file, mỗi file một truyện; chia theo tiêu đề chương, giữ ảnh/gốc; xem trước và trạng thái deploy trong tài liệu |
 | Convert và Name | [Name STV](NAME-STV-2.md) | [Đồng bộ Name](NAME-SYNC-1.md), [hình ảnh Name](NAME-IMAGE-1.md), [Convert → AI](CONVERT-AI-NEXT-1.md) |
