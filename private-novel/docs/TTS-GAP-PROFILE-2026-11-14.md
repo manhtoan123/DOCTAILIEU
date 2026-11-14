@@ -22,6 +22,8 @@ Khoảng p50/p95 là độ trễ sự kiện media trong fixture playback, khôn
 
 Không thay đổi player. Trong điều kiện fixture không có độ trễ mạng, phần chuyển media ngắn; sample MP3 lại có im lặng biên đáng kể. Chưa có kết luận về gateway CapCut production, độ trễ mạng/inference, chất lượng giọng, cảm nhận người nghe, chạy nền hay Android thật. Do đó không gọi hệ thống gapless và không bật MediaSource thử nghiệm.
 
+Không gửi request live trong lượt rà này. `functions/api/tts.ts` gọi `handleCapcutTts`; trước khi gọi CapCut, `server/capcut-tts.ts` dùng `admit()` để ghi các bucket giới hạn lượt vào D1 production. Không có binding cô lập, nên chỉ giữ phép đo fixture desktop; gap với audio gateway thật và Android vẫn chưa đo.
+
 Script tạm tái hiện trong checkout: .dsh-tmp/tts-direct-probe.mjs. Lượt chạy scripts/check-tts-acceptance.mjs không tạo số liệu: Reader fixture mắc ở chờ AI, báo cáo ghi 0 request TTS; không được tính là lỗi audio hoặc gateway.
 
 Nguồn tham khảo: [Gapless-5](https://github.com/regosen/Gapless-5) (HTML Audio/Web Audio scheduling), [Media Session API](https://developer.chrome.com/blog/media-session). Chỉ tham khảo; không sao chép hay thêm dependency.
