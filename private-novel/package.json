@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
+    "build": "tsc -b && tsc -p tsconfig.server.json && vite build && node scripts/build-pwa-shell.mjs",
     "build:convert-server": "tsc -p convert-server/tsconfig.json && vite build --config convert-server/vite.config.ts",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node scripts/run-tests.mjs vitest run",

@@ -6,7 +6,7 @@ Rà soát hiện hành: [lỗi tích lũy qua các bản deploy — 26/10/2026](
 
 Rà soát thay đổi gần đây: [hồi quy AI/TTS/cache/tên TXT — 02/11/2026](REGRESSION-AUDIT-2026-11-02.md).
 
-Rà soát code web và ý tưởng GitHub: [so sánh hiện trạng và cơ hội cải tiến — 14/11/2026](WEB-CODE-GITHUB-IDEAS-REPORT-2026-11-14.md).
+Rà soát code web và ý tưởng GitHub: [so sánh hiện trạng và cơ hội cải tiến — 14/11/2026](WEB-CODE-GITHUB-IDEAS-REPORT-2026-11-14.md). PWA shell: [phạm vi, update lifecycle và nghiệm thu](PWA-OFFLINE-SHELL-M0.md).
 
 ## Hướng dẫn sử dụng và phát triển
 
@@ -19,6 +19,7 @@ Rà soát code web và ý tưởng GitHub: [so sánh hiện trạng và cơ hộ
 | Chủ đề | Tài liệu đầu vào | Tài liệu chi tiết khi cần |
 |---|---|---|
 | Giao diện đọc gọn | [Tủ sách, nhập, thông tin truyện và cài đặt](QUIET-UI.md) | Đường dẫn Album, tìm kiếm, điều hướng và bằng chứng kiểm tra |
+| Mở app và truyện đã lưu khi offline | [PWA app shell](PWA-OFFLINE-SHELL-M0.md) | Chỉ cache shell/versioned assets; không cache API, dữ liệu truyện hay sync |
 | Nghe trong lúc AI streaming | [Nghe streaming TXT](AI-STREAMING-LISTEN-2026-11-02.md) | Đọc đoạn đã đóng, tự chờ/nối theo thứ tự khi bản dịch đổi; EPUB chỉ prefix đã kiểm tra |
 | Đổi model giữ chương đã dịch | [Giữ cache hoàn tất](AI-COMPLETED-CHAPTER-REUSE-2026-11-02.md) | Auto/Fixed/model mới chỉ áp dụng khi chưa có bản hoàn tất tương thích; không tái dùng từng phần khác model |
 | Gemma 4 31B chậm/lỗi | [Nghiên cứu 02/11](GEMMA31-RESEARCH-2026-11-02.md) | Đối chiếu tài liệu Google, lượt2357ký tự/214,3s và khoảng trống telemetry; chưa đổi cấu hình |

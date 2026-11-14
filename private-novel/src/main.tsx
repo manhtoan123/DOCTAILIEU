@@ -8,10 +8,12 @@ import './features/names-convert/styles/convert-panel.css';
 import './features/library/styles/library.css';
 import './shared/styles/ui-theme.css';
 import {bootstrapUiTheme} from './shared/ui-theme';
+import {registerOfflineShell} from './pwa/register-offline-shell';
 // Strip connection fragments and share the pending storage transaction before
 // React mounts its database queries or StrictMode replays startup effects.
 void initializeCloudDevice().catch(() => {});
 bootstrapUiTheme();
+registerOfflineShell();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
