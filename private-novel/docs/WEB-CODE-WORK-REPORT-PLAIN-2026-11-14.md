@@ -33,9 +33,13 @@
 - Một lượt kiểm tra unit tổng thể ghi nhận **2.676 test đạt, 105 bỏ qua và 83 lỗi trên 48 file**. Lỗi nằm ở nhiều nhóm khác nhau; đã phân loại một số lỗi môi trường, timeout, mạng và sai khác kỳ vọng, nhưng chưa xử lý để làm toàn bộ suite xanh.
 - Chưa đo các kết quả trên điện thoại Android thật, mạng cloud thật hoặc toàn bộ dữ liệu sách của người dùng. Các kết quả mobile hiện có là mô phỏng viewport trong Edge.
 - Đợt ghi nhận có hai bản checkout không trùng nhau: bản đang mở trong thư mục làm việc ở commit `b84f718` và nhiều thay đổi chưa commit; bản sạch dùng để ghi kết quả GitHub ở `0e33424`. `HANDOFF.md` của bản đang mở ghi Pages production `591d1c98`, trong khi báo cáo của bản sạch ghi `97962f61`. Vì vậy cần đối chiếu lại commit nguồn với bản đang chạy trước khi khẳng định mọi mục ở trên cùng nằm trong một bản production hiện hành.
-- Tài liệu này được tạo trong thư mục làm việc hiện tại; **chưa commit hoặc đẩy riêng báo cáo này lên GitHub**.
+- Hai báo cáo đã được lưu trên GitHub master.
 - Đối chiếu source, commit, bằng chứng và checklist cho lần AI review sau nằm trong [WEB-CODE-CHANGELOG-AI-CHECK-2026-11-14.md](WEB-CODE-CHANGELOG-AI-CHECK-2026-11-14.md).
 
 ## Kết luận
 
 Các cải tiến có lợi ích rõ nhất trong phép thử là giảm số phần tử giao diện cho thư viện lớn, gom Album nhanh hơn và xử lý nhiều yêu cầu xóa song song mà vẫn giữ truyện chưa được xác nhận xóa. Tìm gần đúng và mở sách offline bổ sung cách dùng mới. Dù vậy, số liệu hiệu năng hiện chủ yếu từ dữ liệu tổng hợp; việc đối chiếu hai bản source/deploy và làm rõ các lỗi còn lại của unit suite vẫn cần hoàn tất trước khi coi toàn bộ kế hoạch là đã nghiệm thu xong.
+
+## Rà lại ngày 15/11/2026
+
+Domain chính khớp các tệp frontend của Pages 97962f61 trước lượt sửa này. Tệp offline nay được kiểm đúng phiên bản trước khi lưu. Kệ lớn cập nhật vị trí khi phần phía trên đổi chiều cao. Khi không nhập tìm kiếm, tủ sách hiện ngay từ danh sách sẵn có. [Đối chiếu kỹ thuật và nguồn GitHub](WEB-CODE-CHANGELOG-AI-CHECK-2026-11-14.md#rà-lại-ngày-15112026).

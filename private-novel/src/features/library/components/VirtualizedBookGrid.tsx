@@ -29,13 +29,20 @@ export function VirtualizedBookGrid({items,view,renderItem}:{
       const nextColumns=view!=='grid'?1:window.innerWidth<=700?2:Math.max(1,Math.floor((width+gap)/(172+gap)));
       setContentWidth(current=>Math.abs(current-width)<1?current:width);
       setColumns(current=>current===nextColumns?current:nextColumns);
+      const spacer=spacerRef.current;
+      if(spacer){
+        const next=Math.max(0,spacer.getBoundingClientRect().top+window.scrollY);
+        setScrollMargin(current=>Math.abs(current-next)<1?current:next);
+      }
     };
     const observer=new ResizeObserver(measure);
     observer.observe(grid);
+    // Controls and status messages above the list can move it without resizing it.
+    if(virtualized&&grid.parentElement)observer.observe(grid.parentElement);
     window.addEventListener('resize',measure);
     measure();
     return()=>{observer.disconnect();window.removeEventListener('resize',measure);};
-  },[view]);
+  },[view,virtualized]);
 
   const rows=useMemo(()=>{
     const result:Array<Array<{book:Book;index:number}>>=[];
@@ -44,13 +51,6 @@ export function VirtualizedBookGrid({items,view,renderItem}:{
     }
     return result;
   },[items,columns]);
-
-  useLayoutEffect(()=>{
-    const spacer=spacerRef.current;
-    if(!spacer)return;
-    const next=Math.max(0,spacer.getBoundingClientRect().top+window.scrollY);
-    setScrollMargin(current=>Math.abs(current-next)<1?current:next);
-  },[items.length,rows.length,view]);
 
   const rangeExtractor=useCallback((range:Parameters<typeof defaultRangeExtractor>[0])=>{
     const indexes=defaultRangeExtractor(range);

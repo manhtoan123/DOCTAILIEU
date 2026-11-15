@@ -25,10 +25,11 @@ for(const entry of rootFiles){
 const urls=['/index.html',...files.map(path=>`/${relative(dist,path).split(sep).join('/')}`)].sort();
 const revision=await Promise.all(urls.map(async url=>{
   const content=await readFile(join(dist,url.slice(1)));
-  return {url,hash:createHash('sha256').update(content).digest('hex'),size:(await stat(join(dist,url.slice(1)))).size};
+  return {url,integrity:`sha256-${createHash('sha256').update(content).digest('base64')}`,size:(await stat(join(dist,url.slice(1)))).size};
 }));
-const buildId=createHash('sha256').update(template).update(revision.map(row=>`${row.url}:${row.hash}`).join('\n')).digest('hex').slice(0,16);
-if(!template.includes('__BUILD_ID__')||!template.includes('__PRECACHE_URLS__'))throw new Error('PWA shell worker markers are missing');
-const output=template.replace('__BUILD_ID__',buildId).replace('__PRECACHE_URLS__',JSON.stringify(urls));
+const manifest=JSON.stringify(revision.map(({url,integrity})=>({url,integrity})));
+const buildId=createHash('sha256').update(template).update(manifest).digest('hex').slice(0,16);
+if(!template.includes('__BUILD_ID__')||!template.includes('__PRECACHE_ENTRIES__'))throw new Error('PWA shell worker markers are missing');
+const output=template.replace('__BUILD_ID__',buildId).replace('__PRECACHE_ENTRIES__',manifest);
 await writeFile(workerPath,output);
 console.log(`Prepared PWA shell ${buildId}: ${urls.length} URLs, ${Math.round(revision.reduce((total,row)=>total+row.size,0)/1024)} KiB.`);

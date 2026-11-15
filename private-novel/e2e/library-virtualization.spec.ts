@@ -45,6 +45,23 @@ test('large shelves virtualize measured rows and preserve keyboard, scroll, and 
   await expect(page.locator('[data-virtual-book-index="0"]')).toHaveAttribute('aria-posinset','1');
   await expect(page.locator('[data-virtual-book-index="0"]')).toHaveAttribute('aria-setsize','1000');
 
+  // Shift the shelf without changing any of its items, as an expanded Album/status area can.
+  await grid.evaluate(element=>{
+    const spacer=document.createElement('div');
+    spacer.id='synthetic-shelf-offset';
+    spacer.style.height='3000px';
+    element.before(spacer);
+  });
+  await expect.poll(()=>grid.evaluate(element=>{
+    window.scrollTo(0,window.scrollY+element.getBoundingClientRect().top);
+    return !!element.querySelector('[data-virtual-book-index="0"]');
+  })).toBe(true);
+  await grid.evaluate(()=>{
+    document.getElementById('synthetic-shelf-offset')?.remove();
+    window.scrollTo(0,0);
+  });
+  await expect(page.locator('[data-virtual-book-index="0"]')).toBeInViewport();
+
   const keyboard=await page.evaluate(()=>{
     const rows=Array.from(document.querySelectorAll<HTMLElement>('[data-virtual-row-index]'));
     const last=rows.at(-1)!;

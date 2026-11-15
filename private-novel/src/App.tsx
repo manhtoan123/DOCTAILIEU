@@ -249,13 +249,16 @@ export default function App(){
   },[currentBooks,currentSearchSnapshot,shelf]);
   const currentBooksById=useMemo(()=>new Map(currentBooks.map(book=>[book.id,book])),[currentBooks]);
   const searchNeedle=normalizeLibrarySearch(search);
-  const exactFiltered=currentBooks.filter(book=>{
-    if(chapterSearch.matches[book.id])return true;
-    if(!currentSearchSnapshot)return false;
-    if(currentSearchSnapshot.normalizedById.get(book.id)?.includes(searchNeedle))return true;
-    const converted=titleIndex[book.id];
-    return Boolean(!book.displayTitle&&converted?.text===book.title&&converted.signature===titleSignatures.get(book.id)&&converted.normalizedValue.includes(searchNeedle));
-  });
+  const exactFiltered=useMemo(()=>{
+    if(!hasSearch)return currentBooks;
+    return currentBooks.filter(book=>{
+      if(chapterSearch.matches[book.id])return true;
+      if(!currentSearchSnapshot)return false;
+      if(currentSearchSnapshot.normalizedById.get(book.id)?.includes(searchNeedle))return true;
+      const converted=titleIndex[book.id];
+      return Boolean(!book.displayTitle&&converted?.text===book.title&&converted.signature===titleSignatures.get(book.id)&&converted.normalizedValue.includes(searchNeedle));
+    });
+  },[hasSearch,currentBooks,chapterSearch.matches,currentSearchSnapshot,searchNeedle,titleIndex,titleSignatures]);
   const metadataSearchPending=hasSearch&&!currentSearchSnapshot;
   const fuzzySearch=useFuzzyLibrarySearch(fuzzyRows,search,hasSearch&&!!currentSearchSnapshot&&tab==='library'&&!readingRoute&&!detail&&exactFiltered.length===0&&!chapterSearch.pending);
   const fuzzyUsed=exactFiltered.length===0&&!fuzzySearch.pending&&fuzzySearch.matches.length>0;

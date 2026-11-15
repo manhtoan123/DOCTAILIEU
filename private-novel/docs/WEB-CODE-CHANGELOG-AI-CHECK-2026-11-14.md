@@ -13,7 +13,7 @@
 
 ## Comparison boundary
 
-This report compares baseline **`29e47f3`** with the app-code snapshot **`0e33424`**. At the time of source comparison, `git ls-remote` reported `0e33424` as current `origin/master`. These two reports were later added by documentation-only commit **`9a5aa1b`**, which is now the remote `master` tip and does not change app code. The code diff is 41 files, +1,342 / -92 lines; that count includes documentation, E2E specs, benchmark scripts and build support, so it is not 1,342 lines of product behavior.
+This report compares baseline **`29e47f3`** with the app-code snapshot **`0e33424`**. At the time of source comparison, `git ls-remote` reported `0e33424` as current `origin/master`. These two reports were later added by documentation-only commit **`9a5aa1b`**, which did not change app code. The code diff is 41 files, +1,342 / -92 lines; that count includes documentation, E2E specs, benchmark scripts and build support, so it is not 1,342 lines of product behavior.
 
 This is not the same as the open workspace checkout. The open workspace is detached at `b84f718`, has many pre-existing modified files, and lacks the PWA, virtualization and fuzzy-search source files present on remote `master`. Its `HANDOFF.md` records Pages deployment `591d1c98`; the clean-checkout release notes record `97962f61`. A live read on 2026-11-14 returned `/` HTTP 200, `/assets/index-BiyQs2jW.js`, and `/sw.js` HTTP 200 with JavaScript build ID `48b1e9cdcbd76e96`. That confirms the live site serves a worker and the reported app bundle, but does not independently map the live response to either deployment ID. Treat the remote clean checkout, the open dirty checkout, and production as three states until their commit/artifact mapping is reconciled.
 
@@ -27,7 +27,7 @@ This is not the same as the open workspace checkout. The open workspace is detac
 
 **Tracked evidence notes on the recorded remote `master`:** `docs/WEB-CODE-GITHUB-IDEAS-REPORT-2026-11-14.md`, `docs/PWA-OFFLINE-SHELL-M0.md`, `docs/DICTIONARY-PACKED-CACHE.md`, `docs/ALBUM-GROUPING-PERF.md`, `docs/LIST-VIRTUALIZATION-PERF.md`, `docs/FUZZY-LIBRARY-SEARCH.md`, `docs/EPUB-NAVIGATION-SPIKE-2026-11-14.md`, `docs/TTS-GAP-PROFILE-2026-11-14.md`, and the 14/11 entries in `docs/HANDOFF-LOG.md`. The two bulk-delete profiling scripts were named `profile-bulk-delete-31books.mjs` and `profile-bulk-delete-partial-retry.mjs` under ignored `.dsh-tmp/`; they were not committed. The full-suite log was `.dsh-tmp/full-unit-baseline-20261114.log`, also not committed.
 
-**Availability:** this report is currently an untracked local Markdown file in the open workspace. Another AI using that same workspace can read it. An AI working from GitHub or a separate clean clone will not see this file until it is added to Git and pushed. The feature source/docs on remote `master` are separate from this new local report.
+**Availability:** This report and its plain-language companion are tracked on GitHub master.
 
 ### Source commits to compare
 
@@ -154,3 +154,11 @@ One full `npm.cmd test` run recorded 2,676 passed, 105 skipped and 83 failed acr
 ## Bottom line
 
 Compared with the selected pre-chat GitHub baseline, the remote web code gained offline shell support, consistent packed-dictionary parsing, faster Album grouping, a virtualized large-book list and typo-tolerant metadata search. The chat also measured deletion retry behavior but did not change deletion code, and it left TTS untouched. The live site currently serves the app bundle and service worker, but the precise mapping between production deployment `591d1c98`, report deployment `97962f61`, remote `master` and the open dirty checkout remains to be verified before a later AI signs off on the whole state.
+
+## Rà lại ngày 15/11/2026
+
+- Bản Pages 97962f61 là mốc frontend trước lượt sửa này. Domain chính và URL deployment có cùng SHA-256 cho trang chủ, service worker và cả 11 URL trong manifest offline. Bản 591d1c98 dùng bundle khác và /sw.js trả HTML. Kiểm này chỉ xác nhận tệp frontend.
+- Service worker đính SHA-256 từng tệp từ bước build qua Request.integrity. Chỉ lưu tệp trả 200 và đúng loại HTML, JavaScript hoặc CSS. Nếu một tệp không khớp, lượt cài thất bại và cache tạo dở được dọn. Ý tưởng lấy từ [integrity của Workbox](https://github.com/GoogleChrome/workbox/blob/v7/packages/workbox-precaching/src/_types.ts).
+- Kệ ảo đo lại scrollMargin khi kệ hoặc vùng chứa đổi kích thước, kể cả lúc số truyện giữ nguyên. Thư viện trả danh sách hiện có ngay khi ô tìm kiếm trống. Kết quả tìm chính xác được ghi nhớ theo đầu vào. Tham khảo [scrollMargin trong TanStack Virtual](https://github.com/TanStack/virtual/blob/main/docs/api/virtualizer.md#scrollmargin).
+- Rà Album, fuzzy và packed cache: giữ cách xếp nhóm, thứ hạng và định dạng cache. Bộ đọc từ điển đã kiểm tra dòng bằng parseEntry trước bước dựng cache. Chưa tái hiện sai khác dữ liệu cần buộc dựng lại cache cũ. Code xóa, Reader EPUB và TTS nằm ngoài diff.
+- Edge built preview đạt 6/6 ca PWA, ảo hóa, fuzzy và từ điển. Album đạt 4/4 với Vite dev vì fixture import /src/core/db.ts. Unit chọn lọc đạt 15/15. Xem log cục bộ trong private-novel/.dsh-tmp/followup/. Các ô hiệu năng trong báo cáo trước vẫn là số của lượt đo cũ.

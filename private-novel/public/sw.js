@@ -1,18 +1,21 @@
 /* Build script replaces these two markers with the current hashed shell. */
 const BUILD_ID='__BUILD_ID__';
-const PRECACHE_URLS=__PRECACHE_URLS__;
+const PRECACHE_ENTRIES=__PRECACHE_ENTRIES__;
 const CACHE_PREFIX='private-novel-shell-';
 const CACHE_NAME=`${CACHE_PREFIX}${BUILD_ID}`;
-const PRECACHED_PATHS=new Set(PRECACHE_URLS);
+const PRECACHED_PATHS=new Set(PRECACHE_ENTRIES.map(({url})=>url));
 
 self.addEventListener('install',event=>{
   event.waitUntil((async()=>{
     const cache=await caches.open(CACHE_NAME);
     try{
-      for(const url of PRECACHE_URLS){
-        const request=new Request(new URL(url,self.location.origin),{cache:'reload'});
+      for(const {url,integrity} of PRECACHE_ENTRIES){
+        const request=new Request(new URL(url,self.location.origin),{cache:'reload',integrity});
         const response=await fetch(request);
-        if(!response.ok)throw new Error(`Shell asset failed: ${url} (${response.status})`);
+        const contentType=response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+        const expected=url.endsWith('.js')?['text/javascript','application/javascript']:
+          url.endsWith('.css')?['text/css']:['text/html'];
+        if(response.status!==200||!expected.includes(contentType))throw new Error(`Invalid shell response: ${url} (${response.status}, ${contentType})`);
         const headers=new Headers(response.headers);
         headers.delete('content-encoding');
         headers.delete('content-length');
