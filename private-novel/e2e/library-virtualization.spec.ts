@@ -52,10 +52,11 @@ test('large shelves virtualize measured rows and preserve keyboard, scroll, and 
     spacer.style.height='3000px';
     element.before(spacer);
   });
-  await expect.poll(()=>grid.evaluate(element=>{
+  await grid.evaluate(element=>{
     window.scrollTo(0,window.scrollY+element.getBoundingClientRect().top);
-    return !!element.querySelector('[data-virtual-book-index="0"]');
-  })).toBe(true);
+    return new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
+  });
+  await expect(page.locator('[data-virtual-book-index="0"]')).toBeInViewport();
   await grid.evaluate(()=>{
     document.getElementById('synthetic-shelf-offset')?.remove();
     window.scrollTo(0,0);

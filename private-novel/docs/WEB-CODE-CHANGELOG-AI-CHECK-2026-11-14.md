@@ -39,7 +39,7 @@ This is not the same as the open workspace checkout. The open workspace is detac
 | `06dd051` | Virtualize large library shelves. |
 | `e7f9bb2` | Add fuzzy library metadata search. |
 
-These code commits are on the recorded remote `master` sequence. Later commits through `0e33424` mainly record verification, benchmarks, research and unit-suite triage. Production deployment IDs in the tracked notes include `1c0d940e` for the parser/PWA follow-up, `603c6577` for Album grouping, `82fd26db` for virtualization and `97962f61` for fuzzy search plus the PWA shell. The open workspace separately records `591d1c98`; mapping the live artifact to one deployment remains unresolved.
+These code commits are on the recorded remote `master` sequence. Later commits through `0e33424` mainly record verification, benchmarks, research and unit-suite triage. Production deployment IDs in the tracked notes include `1c0d940e` for the parser/PWA follow-up, `603c6577` for Album grouping, `82fd26db` for virtualization and `97962f61` for fuzzy search plus the PWA shell. The open workspace separately records `591d1c98`; the artifact comparison from 15/11 is recorded below.
 
 ## Product code changes
 
@@ -153,7 +153,7 @@ One full `npm.cmd test` run recorded 2,676 passed, 105 skipped and 83 failed acr
 
 ## Bottom line
 
-Compared with the selected pre-chat GitHub baseline, the remote web code gained offline shell support, consistent packed-dictionary parsing, faster Album grouping, a virtualized large-book list and typo-tolerant metadata search. The chat also measured deletion retry behavior but did not change deletion code, and it left TTS untouched. The live site currently serves the app bundle and service worker, but the precise mapping between production deployment `591d1c98`, report deployment `97962f61`, remote `master` and the open dirty checkout remains to be verified before a later AI signs off on the whole state.
+Compared with the selected pre-chat GitHub baseline, the remote web code gained offline shell support, consistent packed-dictionary parsing, faster Album grouping, a virtualized large-book list and typo-tolerant metadata search. The chat also measured deletion retry behavior but did not change deletion code, and it left TTS untouched. The live site currently serves the app bundle and service worker, but the precise mapping between production deployment `591d1c98`, report deployment `97962f61`, remote `master` and the open dirty checkout was unresolved at the initial snapshot. The frontend comparison is recorded in the 15/11 follow-up below.
 
 ## Rà lại ngày 15/11/2026
 
@@ -162,3 +162,4 @@ Compared with the selected pre-chat GitHub baseline, the remote web code gained 
 - Kệ ảo đo lại scrollMargin khi kệ hoặc vùng chứa đổi kích thước, kể cả lúc số truyện giữ nguyên. Thư viện trả danh sách hiện có ngay khi ô tìm kiếm trống. Kết quả tìm chính xác được ghi nhớ theo đầu vào. Tham khảo [scrollMargin trong TanStack Virtual](https://github.com/TanStack/virtual/blob/main/docs/api/virtualizer.md#scrollmargin).
 - Rà Album, fuzzy và packed cache: giữ cách xếp nhóm, thứ hạng và định dạng cache. Bộ đọc từ điển đã kiểm tra dòng bằng parseEntry trước bước dựng cache. Chưa tái hiện sai khác dữ liệu cần buộc dựng lại cache cũ. Code xóa, Reader EPUB và TTS nằm ngoài diff.
 - Edge built preview đạt 6/6 ca PWA, ảo hóa, fuzzy và từ điển. Album đạt 4/4 với Vite dev vì fixture import /src/core/db.ts. Unit chọn lọc đạt 15/15. Xem log cục bộ trong private-novel/.dsh-tmp/followup/. Các ô hiệu năng trong báo cáo trước vẫn là số của lượt đo cũ.
+- Phát hành Cloudflare Pages e5ec48c7-a75e-40d0-aa5d-67ff60fada69 từ master 7e6615b, bundle index-DX_ckW6E.js, worker f9706e36c60e8bc5. Domain chính khớp SHA-256 của worker và 11 tệp offline với dist. Edge production đạt 4/4 ca với API chặn và dữ liệu tổng hợp. Ca kệ dịch vị trí cho thấy truyện đầu biến mất khỏi vùng nhìn thấy trên Pages 97962f61 nhưng hiện đúng trên e5ec48c7. Rollback Pages 97962f61.
